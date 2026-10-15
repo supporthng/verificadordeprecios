@@ -8,7 +8,7 @@ import streamlit as st
 
 
 # ==========================================
-# CONFIGURACION DE LA PAGINA
+# CONFIGURACION GENERAL
 # ==========================================
 
 st.set_page_config(
@@ -33,185 +33,213 @@ SUPABASE_ANON_KEY = str(
 
 
 # ==========================================
-# ESTILOS MODERNOS
+# ESTILOS DE LA APLICACION
 # ==========================================
 
 st.markdown(
     """
-    <style>
+<style>
 
-    .stApp {
-        background: #f4f7fc;
-    }
+.stApp {
+    background: #f4f7fc;
+}
+
+.block-container {
+    max-width: 950px;
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+}
+
+/* ENCABEZADO */
+
+.main-header {
+    background: linear-gradient(
+        135deg,
+        #0c2e59,
+        #0759c9
+    );
+
+    border-radius: 25px;
+    padding: 32px 20px;
+    text-align: center;
+    color: white;
+
+    margin-bottom: 25px;
+
+    box-shadow:
+        0 8px 25px rgba(10, 50, 110, 0.15);
+}
+
+.main-header h1 {
+    color: white !important;
+    font-size: clamp(28px, 5vw, 43px);
+    font-weight: 850;
+    line-height: 1.2;
+    margin: 0;
+}
+
+.main-header p {
+    color: #dceaff;
+    font-size: 18px;
+    margin-top: 12px;
+    margin-bottom: 0;
+}
+
+/* BUSCADOR */
+
+div[data-testid="stTextInput"] label {
+    font-size: 20px !important;
+    font-weight: 750 !important;
+    color: #17365c !important;
+}
+
+div[data-testid="stTextInput"] input {
+    font-size: 23px !important;
+    padding: 16px !important;
+    min-height: 62px;
+
+    border-radius: 15px;
+    border: 2px solid #d5e1f1;
+
+    background: white;
+    color: #102b50;
+}
+
+div[data-testid="stTextInput"] input:focus {
+    border-color: #0862ce;
+
+    box-shadow:
+        0 0 0 2px rgba(8, 98, 206, 0.12);
+}
+
+/* TARJETA DE PRODUCTO */
+
+.product-card {
+    background: white;
+
+    border: 1px solid #dce5f2;
+    border-radius: 24px;
+
+    padding: 42px 24px;
+    margin: 22px 0;
+
+    text-align: center;
+
+    box-shadow:
+        0 7px 25px rgba(20, 50, 90, 0.06);
+}
+
+/* ETIQUETA PRODUCTO */
+
+.product-label {
+    color: #64748b;
+
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: 2px;
+
+    margin-bottom: 20px;
+}
+
+/* NOMBRE DEL PRODUCTO */
+
+.product-name {
+    color: #102b50;
+
+    font-size: clamp(27px, 4.5vw, 40px);
+    font-weight: 850;
+    line-height: 1.3;
+
+    overflow-wrap: anywhere;
+
+    margin-bottom: 20px;
+}
+
+/* CODIGO DE BARRAS */
+
+.product-code {
+    color: #64748b;
+
+    font-size: clamp(18px, 3vw, 22px);
+
+    overflow-wrap: anywhere;
+
+    margin-bottom: 36px;
+}
+
+/* ETIQUETA PRECIO */
+
+.price-label {
+    color: #64748b;
+
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+
+    margin-bottom: 14px;
+}
+
+/* PRECIO GRANDE */
+
+.product-price {
+    color: #0757c3;
+
+    font-size: clamp(42px, 8vw, 70px);
+    font-weight: 900;
+    line-height: 1.15;
+
+    overflow-wrap: anywhere;
+}
+
+/* PIE DE PAGINA */
+
+.footer {
+    text-align: center;
+    color: #8a98ac;
+
+    font-size: 13px;
+    padding-top: 30px;
+}
+
+/* ADAPTACION A CELULARES */
+
+@media (max-width: 600px) {
 
     .block-container {
-        max-width: 950px;
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-    }
-
-    h1, h2, h3 {
-        font-family: Arial, sans-serif;
+        padding-left: 13px;
+        padding-right: 13px;
     }
 
     .main-header {
-        background: linear-gradient(
-            135deg,
-            #0c2e59,
-            #0759c9
-        );
-        border-radius: 25px;
-        padding: 30px 20px;
-        text-align: center;
-        color: white;
-        margin-bottom: 22px;
-        box-shadow: 0 8px 25px
-            rgba(10, 50, 110, 0.15);
-    }
-
-    .main-header h1 {
-        color: white !important;
-        font-size: clamp(28px, 5vw, 43px);
-        font-weight: 850;
-        margin: 0;
-        line-height: 1.2;
-    }
-
-    .main-header p {
-        color: #dceaff;
-        font-size: 17px;
-        margin-top: 12px;
-        margin-bottom: 0;
-    }
-
-    .catalog-count {
-        text-align: center;
-        font-size: 17px;
-        font-weight: 700;
-        color: #1354a1;
-        padding: 12px;
-        margin-bottom: 16px;
-    }
-
-    div[data-testid="stTextInput"] label {
-        font-size: 19px !important;
-        font-weight: 750 !important;
-        color: #17365c !important;
-    }
-
-    div[data-testid="stTextInput"] input {
-        font-size: 22px !important;
-        padding: 16px !important;
-        min-height: 60px;
-        border-radius: 14px;
-        border: 2px solid #d5e1f1;
-        background: white;
-        color: #102b50;
-    }
-
-    div[data-testid="stTextInput"] input:focus {
-        border-color: #0862ce;
-        box-shadow: 0 0 0 2px
-            rgba(8, 98, 206, 0.12);
+        padding: 25px 14px;
+        border-radius: 20px;
     }
 
     .product-card {
-        background: white;
-        border: 1px solid #dce5f2;
-        border-radius: 24px;
-        padding: 40px 24px;
-        margin: 22px 0;
-        text-align: center;
-        box-shadow: 0 7px 25px
-            rgba(20, 50, 90, 0.06);
-    }
-
-    .product-label {
-        color: #64748b;
-        font-size: 16px;
-        font-weight: 800;
-        letter-spacing: 2px;
-        margin-bottom: 18px;
-    }
-
-    .product-name {
-        color: #102b50;
-        font-size: clamp(25px, 4.5vw, 38px);
-        font-weight: 850;
-        line-height: 1.3;
-        overflow-wrap: anywhere;
-        margin-bottom: 18px;
+        padding: 34px 14px;
+        border-radius: 20px;
     }
 
     .product-code {
-        color: #64748b;
-        font-size: clamp(17px, 3vw, 21px);
-        margin-bottom: 34px;
-        overflow-wrap: anywhere;
+        margin-bottom: 28px;
     }
+}
 
-    .price-label {
-        color: #64748b;
-        font-size: 16px;
-        font-weight: 800;
-        letter-spacing: 1.5px;
-        margin-bottom: 12px;
-    }
-
-    .product-price {
-        color: #0757c3;
-        font-size: clamp(40px, 8vw, 66px);
-        font-weight: 900;
-        line-height: 1.15;
-        overflow-wrap: anywhere;
-    }
-
-    .footer {
-        text-align: center;
-        color: #8a98ac;
-        font-size: 13px;
-        padding-top: 30px;
-    }
-
-    @media (max-width: 600px) {
-
-        .block-container {
-            padding-left: 13px;
-            padding-right: 13px;
-        }
-
-        .main-header {
-            padding: 25px 14px;
-            border-radius: 20px;
-        }
-
-        .product-card {
-            padding: 32px 14px;
-            border-radius: 20px;
-        }
-
-        .product-code {
-            margin-bottom: 28px;
-        }
-    }
-
-    </style>
+</style>
     """,
     unsafe_allow_html=True,
 )
 
 
 # ==========================================
-# ENCABEZADO
+# ENCABEZADO PRINCIPAL
 # ==========================================
 
 st.markdown(
-    """
-    <div class="main-header">
-        <h1>🏷️ CONSULTA DE PRECIOS</h1>
-        <p>Consulta rápida de productos y precios</p>
-    </div>
-    """,
+    '<div class="main-header">'
+    '<h1>🏷️ CONSULTA DE PRECIOS</h1>'
+    '<p>Consulta rápida de productos y precios</p>'
+    '</div>',
     unsafe_allow_html=True,
 )
 
@@ -223,43 +251,48 @@ st.markdown(
 barcode_image = Path("assets/barcode.png")
 
 if barcode_image.is_file():
+
     left, center, right = st.columns(
         [1.6, 1, 1.6]
     )
 
     with center:
+
         st.image(
             str(barcode_image),
             use_container_width=True,
         )
+
 else:
+
     st.markdown(
-        """
-        <div style="
-            text-align:center;
-            font-size:48px;
-            padding:8px 0 14px;
-        ">
-            ▌▍▌▌▍▌▍▌▌▍▌
-        </div>
-        """,
+        '<div style="'
+        'text-align:center;'
+        'font-size:48px;'
+        'padding:8px 0 14px;">'
+        '▌▍▌▌▍▌▍▌▌▍▌'
+        '</div>',
         unsafe_allow_html=True,
     )
 
 
 # ==========================================
-# CONSULTAR PRODUCTOS CON PAGINACION
+# CONSULTAR TODOS LOS PRODUCTOS
+# SUPABASE CON PAGINACION
 # ==========================================
 
 @st.cache_data(ttl=90, show_spinner=False)
 def catalog():
 
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+
         raise ValueError(
-            "Falta configurar Supabase en Streamlit."
+            "Falta configurar Supabase "
+            "en los Secrets de Streamlit."
         )
 
     products = []
+
     page_size = 500
     offset = 0
 
@@ -289,6 +322,7 @@ def catalog():
         batch = response.json()
 
         if not isinstance(batch, list):
+
             raise ValueError(
                 "Respuesta inesperada de Supabase."
             )
@@ -311,26 +345,21 @@ def catalog():
 
 
 # ==========================================
-# MOSTRAR PRODUCTOS DISPONIBLES
+# CARGAR CATALOGO
 # ==========================================
 
 try:
 
     with st.spinner("Cargando catálogo..."):
+
         df = catalog()
 
-    st.markdown(
-        f"""
-        <div class="catalog-count">
-            ✅ {len(df):,} productos
-            disponibles en línea
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # NO MOSTRAR CONTADOR DE PRODUCTOS
+    # La consulta sigue cargando el
+    # catalogo completo desde Supabase.
 
     # ======================================
-    # BUSCADOR
+    # BUSCADOR DE PRODUCTOS
     # ======================================
 
     query = st.text_input(
@@ -365,12 +394,12 @@ try:
         if hits.empty:
 
             st.info(
-                "No se encontró ningún producto "
-                "con ese nombre o código."
+                "Producto no encontrado"
             )
 
         # ==================================
-        # TARJETAS CENTRADAS Y GRANDES
+        # TARJETAS DE PRODUCTOS
+        # CENTRADAS Y LETRAS GRANDES
         # ==================================
 
         for _, product in hits.iterrows():
@@ -387,39 +416,35 @@ try:
                 product["price"]
             )
 
+            # HTML SIN SANGRIAS
+            # PARA EVITAR QUE STREAMLIT
+            # LO MUESTRE COMO TEXTO
+
             st.markdown(
-                f"""
-                <div class="product-card">
-
-                    <div class="product-label">
-                        PRODUCTO
-                    </div>
-
-                    <div class="product-name">
-                        {nombre}
-                    </div>
-
-                    <div class="product-code">
-                        Código: {codigo}
-                    </div>
-
-                    <div class="price-label">
-                        PRECIO DE VENTA
-                    </div>
-
-                    <div class="product-price">
-                        RD$ {precio:,.2f}
-                    </div>
-
-                </div>
-                """,
+                f'<div class="product-card">'
+                f'<div class="product-label">'
+                f'PRODUCTO</div>'
+                f'<div class="product-name">'
+                f'{nombre}</div>'
+                f'<div class="product-code">'
+                f'Código: {codigo}</div>'
+                f'<div class="price-label">'
+                f'PRECIO DE VENTA</div>'
+                f'<div class="product-price">'
+                f'RD$ {precio:,.2f}</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
+
+
+# ==========================================
+# MANEJO DE ERRORES
+# ==========================================
 
 except (
     requests.RequestException,
     ValueError,
-) as error:
+):
 
     st.error(
         "No se pudo cargar el catálogo "
@@ -437,10 +462,8 @@ except (
 # ==========================================
 
 st.markdown(
-    """
-    <div class="footer">
-        CONSULTA DE PRECIOS · RD$
-    </div>
-    """,
+    '<div class="footer">'
+    'CONSULTA DE PRECIOS · RD$'
+    '</div>',
     unsafe_allow_html=True,
 )
