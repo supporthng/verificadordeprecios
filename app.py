@@ -21,7 +21,7 @@ st.set_page_config(
 
 
 # ==========================================
-# CONEXION A SUPABASE
+# CONFIGURACION SUPABASE
 # ==========================================
 
 SUPABASE_URL = str(
@@ -34,7 +34,7 @@ SUPABASE_ANON_KEY = str(
 
 
 # ==========================================
-# ESTILOS MODERNOS
+# ESTILOS
 # ==========================================
 
 st.markdown(
@@ -51,7 +51,20 @@ st.markdown(
     padding-bottom: 3rem;
 }
 
-/* ENCABEZADO */
+/* Ocultar elementos visuales de Streamlit */
+#MainMenu {
+    visibility: hidden;
+}
+
+footer {
+    visibility: hidden;
+}
+
+header[data-testid="stHeader"] {
+    background: transparent;
+}
+
+/* ENCABEZADO DE ESPERA */
 
 .main-header {
     background: linear-gradient(
@@ -64,14 +77,14 @@ st.markdown(
     text-align: center;
     color: white;
     margin-bottom: 25px;
-    box-shadow: 0 8px 25px rgba(10,50,110,0.15);
+    box-shadow:
+        0 8px 25px rgba(10,50,110,0.15);
 }
 
 .main-header h1 {
     color: white !important;
     font-size: clamp(28px, 5vw, 43px);
     font-weight: 850;
-    line-height: 1.2;
     margin: 0;
 }
 
@@ -82,22 +95,21 @@ st.markdown(
     margin-bottom: 0;
 }
 
-/* TEXTO DEL ESCANER */
+/* MENSAJE DE ESCANEO */
 
 .scan-title {
     text-align: center;
     color: #102b50;
-    font-size: clamp(24px, 4vw, 34px);
+    font-size: clamp(25px, 4vw, 35px);
     font-weight: 850;
     margin: 25px 0 20px;
-    letter-spacing: 0.5px;
 }
 
-/* CAMPO DE CODIGO DE BARRAS */
+/* CAMPO DE ESCANEO */
 
 div[data-testid="stTextInput"] input {
     text-align: center !important;
-    font-size: clamp(22px, 4vw, 30px) !important;
+    font-size: 30px !important;
     font-weight: 750 !important;
     letter-spacing: 2px;
     min-height: 70px;
@@ -107,12 +119,7 @@ div[data-testid="stTextInput"] input {
     color: #102b50;
 }
 
-div[data-testid="stTextInput"] input:focus {
-    border-color: #0862ce;
-    box-shadow: 0 0 0 2px rgba(8,98,206,0.12);
-}
-
-/* TARJETA DE PRODUCTO */
+/* TARJETA DEL RESULTADO */
 
 .product-card {
     background: white;
@@ -121,7 +128,8 @@ div[data-testid="stTextInput"] input:focus {
     padding: 42px 24px;
     margin: 22px 0;
     text-align: center;
-    box-shadow: 0 7px 25px rgba(20,50,90,0.06);
+    box-shadow:
+        0 7px 25px rgba(20,50,90,0.06);
 }
 
 .product-label {
@@ -164,12 +172,7 @@ div[data-testid="stTextInput"] input:focus {
     overflow-wrap: anywhere;
 }
 
-.footer {
-    text-align: center;
-    color: #8a98ac;
-    font-size: 13px;
-    padding-top: 30px;
-}
+/* ADAPTACION MOVIL */
 
 @media (max-width: 600px) {
 
@@ -178,14 +181,13 @@ div[data-testid="stTextInput"] input:focus {
         padding-right: 13px;
     }
 
-    .main-header {
-        padding: 25px 14px;
-        border-radius: 20px;
-    }
-
     .product-card {
         padding: 34px 14px;
         border-radius: 20px;
+    }
+
+    .main-header {
+        padding: 25px 14px;
     }
 }
 
@@ -196,46 +198,7 @@ div[data-testid="stTextInput"] input:focus {
 
 
 # ==========================================
-# ENCABEZADO PRINCIPAL
-# ==========================================
-
-st.markdown(
-    '<div class="main-header">'
-    '<h1>🏷️ CONSULTA DE PRECIOS</h1>'
-    '<p>Consulta rápida de productos y precios</p>'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-
-# ==========================================
-# IMAGEN DE CODIGO DE BARRAS
-# ==========================================
-
-barcode_image = Path("assets/barcode.png")
-
-if barcode_image.is_file():
-
-    left, center, right = st.columns([1.6, 1, 1.6])
-
-    with center:
-        st.image(
-            str(barcode_image),
-            use_container_width=True,
-        )
-
-else:
-
-    st.markdown(
-        '<div style="text-align:center;'
-        'font-size:48px;padding:8px 0 14px;">'
-        '▌▍▌▌▍▌▍▌▌▍▌</div>',
-        unsafe_allow_html=True,
-    )
-
-
-# ==========================================
-# CONSULTAR TODOS LOS PRODUCTOS
+# CONSULTAR CATALOGO DE SUPABASE
 # ==========================================
 
 @st.cache_data(ttl=90, show_spinner=False)
@@ -252,7 +215,9 @@ def catalog():
 
     headers = {
         "apikey": SUPABASE_ANON_KEY,
-        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+        "Authorization": (
+            f"Bearer {SUPABASE_ANON_KEY}"
+        ),
     }
 
     while True:
@@ -287,22 +252,29 @@ def catalog():
 
     return pd.DataFrame(
         products,
-        columns=["barcode", "name", "price"],
+        columns=[
+            "barcode",
+            "name",
+            "price",
+        ],
     )
 
 
 # ==========================================
-# ESTADO DE LA CONSULTA
+# ESTADO DE LA APLICACION
 # ==========================================
 
 if "search_input" not in st.session_state:
     st.session_state.search_input = ""
 
+if "current_product" not in st.session_state:
+    st.session_state.current_product = None
+
 if "result_time" not in st.session_state:
     st.session_state.result_time = None
 
-if "current_results" not in st.session_state:
-    st.session_state.current_results = []
+if "not_found" not in st.session_state:
+    st.session_state.not_found = False
 
 
 # ==========================================
@@ -314,8 +286,6 @@ def buscar_producto():
     query = st.session_state.search_input.strip()
 
     if not query:
-        st.session_state.current_results = []
-        st.session_state.result_time = None
         return
 
     df = catalog()
@@ -324,21 +294,26 @@ def buscar_producto():
         df["barcode"].astype(str).str.strip() == query
     ].head(1)
 
-    st.session_state.current_results = (
-        hits.to_dict("records")
-    )
+    if hits.empty:
+        st.session_state.current_product = None
+        st.session_state.not_found = True
+    else:
+        st.session_state.current_product = (
+            hits.iloc[0].to_dict()
+        )
+        st.session_state.not_found = False
 
     st.session_state.result_time = time.monotonic()
 
 
 # ==========================================
-# CONSULTA CON TEMPORIZADOR DE 10 SEGUNDOS
+# PANTALLAS CON TEMPORIZADOR
 # ==========================================
 
 @st.fragment(run_every=0.5)
-def consulta_temporizada():
+def verificador():
 
-    # Borrar resultado y codigo despues de 10 segundos
+    # Reiniciar después de 10 segundos
     if st.session_state.result_time is not None:
 
         elapsed = (
@@ -348,40 +323,18 @@ def consulta_temporizada():
 
         if elapsed >= 10:
 
-            st.session_state.search_input = ""
-            st.session_state.current_results = []
+            st.session_state.current_product = None
+            st.session_state.not_found = False
             st.session_state.result_time = None
+            st.session_state.search_input = ""
 
-    # TITULO CENTRADO
+    product = st.session_state.current_product
 
-    st.markdown(
-        '<div class="scan-title">'
-        'ESCANEA TU CÓDIGO AQUÍ'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+    # ======================================
+    # PANTALLA DE RESULTADO
+    # ======================================
 
-    # CAMPO SIN ETIQUETA VISIBLE
-
-    st.text_input(
-        "Código de barras",
-        placeholder="",
-        key="search_input",
-        on_change=buscar_producto,
-        label_visibility="collapsed",
-    )
-
-    results = st.session_state.current_results
-
-    if (
-        st.session_state.result_time is not None
-        and not results
-    ):
-        st.info("Producto no encontrado")
-
-    # MOSTRAR PRODUCTO EN TARJETA
-
-    for product in results:
+    if product is not None:
 
         nombre = html.escape(str(product["name"]))
         codigo = html.escape(str(product["barcode"]))
@@ -393,33 +346,76 @@ def consulta_temporizada():
             f'<div class="product-name">{nombre}</div>'
             f'<div class="product-code">Código: {codigo}</div>'
             f'<div class="price-label">PRECIO DE VENTA</div>'
-            f'<div class="product-price">RD$ {precio:,.2f}</div>'
+            f'<div class="product-price">'
+            f'RD$ {precio:,.2f}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
+    # ======================================
+    # PRODUCTO NO ENCONTRADO
+    # ======================================
+
+    elif st.session_state.not_found:
+
+        st.warning(
+            "Producto no encontrado"
+        )
+
+    # ======================================
+    # PANTALLA DE ESPERA
+    # ======================================
+
+    else:
+
+        st.markdown(
+            '<div class="main-header">'
+            '<h1>🏷️ CONSULTA DE PRECIOS</h1>'
+            '<p>Consulta rápida de productos y precios</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        barcode_image = Path("assets/barcode.png")
+
+        if barcode_image.is_file():
+
+            left, center, right = st.columns(
+                [1.6, 1, 1.6]
+            )
+
+            with center:
+                st.image(
+                    str(barcode_image),
+                    use_container_width=True,
+                )
+
+        st.markdown(
+            '<div class="scan-title">'
+            'ESCANEA TU CÓDIGO AQUÍ'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.text_input(
+            "Código de barras",
+            placeholder="",
+            key="search_input",
+            on_change=buscar_producto,
+            label_visibility="collapsed",
+        )
+
 
 # ==========================================
-# MOSTRAR CONSULTA
+# INICIAR VERIFICADOR
 # ==========================================
 
 try:
-    consulta_temporizada()
+    verificador()
 
 except (requests.RequestException, ValueError):
+
     st.error(
         "No se pudo consultar Supabase. "
         "Verifica la conexión."
     )
-
-
-# ==========================================
-# PIE DE PAGINA
-# ==========================================
-
-st.markdown(
-    '<div class="footer">'
-    'CONSULTA DE PRECIOS · RD$'
-    '</div>',
-    unsafe_allow_html=True,
-)
