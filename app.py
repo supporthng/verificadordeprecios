@@ -357,7 +357,7 @@ def consulta_temporizada():
             - st.session_state.result_time
         )
 
-        if elapsed >= 2:
+        if elapsed >= 10:
 
             st.session_state.search_input = ""
             st.session_state.last_query = ""
