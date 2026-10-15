@@ -21,7 +21,7 @@ st.set_page_config(
 
 
 # ==========================================
-# SUPABASE
+# CONEXION A SUPABASE
 # ==========================================
 
 SUPABASE_URL = str(
@@ -51,6 +51,8 @@ st.markdown(
     padding-bottom: 3rem;
 }
 
+/* ENCABEZADO */
+
 .main-header {
     background: linear-gradient(
         135deg,
@@ -62,8 +64,7 @@ st.markdown(
     text-align: center;
     color: white;
     margin-bottom: 25px;
-    box-shadow:
-        0 8px 25px rgba(10, 50, 110, 0.15);
+    box-shadow: 0 8px 25px rgba(10,50,110,0.15);
 }
 
 .main-header h1 {
@@ -81,21 +82,37 @@ st.markdown(
     margin-bottom: 0;
 }
 
-div[data-testid="stTextInput"] label {
-    font-size: 20px !important;
-    font-weight: 750 !important;
-    color: #17365c !important;
+/* TEXTO DEL ESCANER */
+
+.scan-title {
+    text-align: center;
+    color: #102b50;
+    font-size: clamp(24px, 4vw, 34px);
+    font-weight: 850;
+    margin: 25px 0 20px;
+    letter-spacing: 0.5px;
 }
 
+/* CAMPO DE CODIGO DE BARRAS */
+
 div[data-testid="stTextInput"] input {
-    font-size: 23px !important;
-    padding: 16px !important;
-    min-height: 62px;
-    border-radius: 15px;
+    text-align: center !important;
+    font-size: clamp(22px, 4vw, 30px) !important;
+    font-weight: 750 !important;
+    letter-spacing: 2px;
+    min-height: 70px;
+    border-radius: 16px;
     border: 2px solid #d5e1f1;
     background: white;
     color: #102b50;
 }
+
+div[data-testid="stTextInput"] input:focus {
+    border-color: #0862ce;
+    box-shadow: 0 0 0 2px rgba(8,98,206,0.12);
+}
+
+/* TARJETA DE PRODUCTO */
 
 .product-card {
     background: white;
@@ -104,8 +121,7 @@ div[data-testid="stTextInput"] input {
     padding: 42px 24px;
     margin: 22px 0;
     text-align: center;
-    box-shadow:
-        0 7px 25px rgba(20, 50, 90, 0.06);
+    box-shadow: 0 7px 25px rgba(20,50,90,0.06);
 }
 
 .product-label {
@@ -180,7 +196,7 @@ div[data-testid="stTextInput"] input {
 
 
 # ==========================================
-# ENCABEZADO
+# ENCABEZADO PRINCIPAL
 # ==========================================
 
 st.markdown(
@@ -193,16 +209,14 @@ st.markdown(
 
 
 # ==========================================
-# IMAGEN CODIGO DE BARRAS
+# IMAGEN DE CODIGO DE BARRAS
 # ==========================================
 
 barcode_image = Path("assets/barcode.png")
 
 if barcode_image.is_file():
 
-    left, center, right = st.columns(
-        [1.6, 1, 1.6]
-    )
+    left, center, right = st.columns([1.6, 1, 1.6])
 
     with center:
         st.image(
@@ -221,7 +235,7 @@ else:
 
 
 # ==========================================
-# CONSULTA DE SUPABASE CON PAGINACION
+# CONSULTAR TODOS LOS PRODUCTOS
 # ==========================================
 
 @st.cache_data(ttl=90, show_spinner=False)
@@ -238,9 +252,7 @@ def catalog():
 
     headers = {
         "apikey": SUPABASE_ANON_KEY,
-        "Authorization": (
-            f"Bearer {SUPABASE_ANON_KEY}"
-        ),
+        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
     }
 
     while True:
@@ -286,9 +298,6 @@ def catalog():
 if "search_input" not in st.session_state:
     st.session_state.search_input = ""
 
-if "last_query" not in st.session_state:
-    st.session_state.last_query = ""
-
 if "result_time" not in st.session_state:
     st.session_state.result_time = None
 
@@ -297,7 +306,7 @@ if "current_results" not in st.session_state:
 
 
 # ==========================================
-# BUSCAR PRODUCTO
+# BUSQUEDA POR CODIGO EXACTO
 # ==========================================
 
 def buscar_producto():
@@ -312,44 +321,24 @@ def buscar_producto():
     df = catalog()
 
     hits = df[
-        df["name"]
-        .astype(str)
-        .str.contains(
-            query,
-            case=False,
-            regex=False,
-            na=False,
-        )
-        |
-        df["barcode"]
-        .astype(str)
-        .str.contains(
-            query,
-            case=False,
-            regex=False,
-            na=False,
-        )
-    ].head(60)
+        df["barcode"].astype(str).str.strip() == query
+    ].head(1)
 
     st.session_state.current_results = (
         hits.to_dict("records")
     )
 
-    st.session_state.result_time = (
-        time.monotonic()
-    )
-
-    st.session_state.last_query = query
+    st.session_state.result_time = time.monotonic()
 
 
 # ==========================================
-# CONSULTA CON TEMPORIZADOR
+# CONSULTA CON TEMPORIZADOR DE 10 SEGUNDOS
 # ==========================================
 
 @st.fragment(run_every=0.5)
 def consulta_temporizada():
 
-    # Borrar resultado después de 2 segundos
+    # Borrar resultado y codigo despues de 10 segundos
     if st.session_state.result_time is not None:
 
         elapsed = (
@@ -360,15 +349,26 @@ def consulta_temporizada():
         if elapsed >= 10:
 
             st.session_state.search_input = ""
-            st.session_state.last_query = ""
             st.session_state.current_results = []
             st.session_state.result_time = None
 
+    # TITULO CENTRADO
+
+    st.markdown(
+        '<div class="scan-title">'
+        'ESCANEA TU CÓDIGO AQUÍ'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # CAMPO SIN ETIQUETA VISIBLE
+
     st.text_input(
-        "🔎 Buscar por nombre o código de barras",
-        placeholder="Escribe o escanea un código",
+        "Código de barras",
+        placeholder="",
         key="search_input",
         on_change=buscar_producto,
+        label_visibility="collapsed",
     )
 
     results = st.session_state.current_results
@@ -379,32 +379,21 @@ def consulta_temporizada():
     ):
         st.info("Producto no encontrado")
 
+    # MOSTRAR PRODUCTO EN TARJETA
+
     for product in results:
 
-        nombre = html.escape(
-            str(product["name"])
-        )
-
-        codigo = html.escape(
-            str(product["barcode"])
-        )
-
-        precio = float(
-            product["price"]
-        )
+        nombre = html.escape(str(product["name"]))
+        codigo = html.escape(str(product["barcode"]))
+        precio = float(product["price"])
 
         st.markdown(
             f'<div class="product-card">'
-            f'<div class="product-label">'
-            f'PRODUCTO</div>'
-            f'<div class="product-name">'
-            f'{nombre}</div>'
-            f'<div class="product-code">'
-            f'Código: {codigo}</div>'
-            f'<div class="price-label">'
-            f'PRECIO DE VENTA</div>'
-            f'<div class="product-price">'
-            f'RD$ {precio:,.2f}</div>'
+            f'<div class="product-label">PRODUCTO</div>'
+            f'<div class="product-name">{nombre}</div>'
+            f'<div class="product-code">Código: {codigo}</div>'
+            f'<div class="price-label">PRECIO DE VENTA</div>'
+            f'<div class="product-price">RD$ {precio:,.2f}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
