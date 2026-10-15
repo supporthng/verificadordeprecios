@@ -1,108 +1,446 @@
-import base64
+
 import html
 from pathlib import Path
 
+import pandas as pd
+import requests
 import streamlit as st
-from shared import catalog
+
+
+# ==========================================
+# CONFIGURACION DE LA PAGINA
+# ==========================================
 
 st.set_page_config(
-    page_title='Consulta de precios',
-    page_icon='🏷️',
-    layout='centered',
-    initial_sidebar_state='collapsed',
+    page_title="Consulta de precios",
+    page_icon="🏷️",
+    layout="centered",
+    initial_sidebar_state="collapsed",
 )
 
-st.markdown('''
-<style>
-:root { color-scheme: light; }
-.stApp { background: linear-gradient(160deg, #f0f6ff 0%, #f7f9fd 42%, #ffffff 100%); }
-.block-container { max-width: 820px; padding-top: 2.1rem; padding-bottom: 4rem; }
-#MainMenu, footer { visibility: hidden; }
-.hero { background: linear-gradient(120deg, #102a57, #1852a3); border-radius: 24px;
-  padding: 27px 30px; color: white; box-shadow: 0 16px 35px rgba(20,62,126,.15); }
-.hero-top { display:flex; align-items:center; justify-content:space-between; gap:20px; }
-.hero h1 { color:white !important; font-size: clamp(1.6rem,4vw,2.3rem); margin: 4px 0 9px;
-  font-weight: 800; letter-spacing: -.04em; line-height:1.1; }
-.hero p { color:#dbeafe; margin:0; font-size:.95rem; }
-.hero-kicker { color:#bfdbfe; font-size:.75rem; font-weight:700; letter-spacing:.12em; }
-.hero img { width:140px; max-width:34vw; border-radius:13px; background:white; padding:8px; }
-.status { display:inline-flex; align-items:center; gap:8px; margin:22px 0 16px; padding:9px 14px;
-  background:#eaf8f1; border:1px solid #b9ead3; color:#166b49; border-radius:999px;
-  font-weight:650; font-size:.86rem; }
-.status-dot { width:8px; height:8px; background:#20b978; border-radius:50%; }
-.section-heading { font-size:1.06rem; font-weight:750; color:#182d4e; margin:10px 0 5px; }
-.section-hint { font-size:.88rem; color:#64748b; margin:0 0 14px; }
-div[data-testid="stTextInput"] input { border-radius:13px; min-height:53px; background:white;
-  border:1px solid #cddbf0; font-size:1.03rem; }
-div[data-testid="stTextInput"] input:focus { border-color:#2563eb; box-shadow:0 0 0 2px #dbeafe; }
-.product-card { background:#fff; border:1px solid #e0e8f4; border-radius:18px;
-  padding:22px 24px; margin:12px 0; box-shadow:0 7px 20px rgba(30,56,96,.045); }
-.product-label { color:#6b7f9d; font-size:.69rem; letter-spacing:.12em; font-weight:800; }
-.product-name { color:#162b4c; font-size:1.11rem; font-weight:800; margin:8px 0; overflow-wrap:anywhere; }
-.product-code { color:#718096; font-size:.83rem; margin:0 0 17px; }
-.product-price { color:#0b58bd; font-size:clamp(1.55rem,4vw,2rem); font-weight:850; letter-spacing:-.04em; }
-.product-price span { font-size:.8rem; font-weight:700; letter-spacing:0; color:#5b7292; margin-right:6px; }
-.empty { text-align:center; padding:26px 15px; border:1px dashed #c9d9ee; border-radius:17px;
-  background:#fff; color:#60718d; margin-top:15px; }
-.app-note { color:#8b98aa; text-align:center; font-size:.78rem; margin-top:28px; }
-@media(max-width: 600px) { .block-container { padding:1rem 1rem 3rem; }
-  .hero { padding:22px 18px; border-radius:18px; } .hero img { width:110px; }
-  .product-card { padding:19px; } }
-</style>
-''', unsafe_allow_html=True)
 
-image_path = Path(__file__).parent / 'assets' / 'barcode.png'
-barcode_src = ''
-if image_path.exists():
-    barcode_src = 'data:image/png;base64,' + base64.b64encode(image_path.read_bytes()).decode('ascii')
+# ==========================================
+# CONEXION A SUPABASE
+# ==========================================
 
-st.markdown(f'''
-<div class="hero">
-  <div class="hero-top">
-    <div>
-      <div class="hero-kicker">CONSULTA RÁPIDA</div>
-      <h1>Consulta de precios</h1>
-      <p>Encuentra tus productos y descubre su precio al instante.</p>
+SUPABASE_URL = str(
+    st.secrets.get("SUPABASE_URL", "")
+).strip().rstrip("/")
+
+SUPABASE_ANON_KEY = str(
+    st.secrets.get("SUPABASE_ANON_KEY", "")
+).strip()
+
+
+# ==========================================
+# ESTILOS MODERNOS
+# ==========================================
+
+st.markdown(
+    """
+    <style>
+
+    .stApp {
+        background: #f4f7fc;
+    }
+
+    .block-container {
+        max-width: 950px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+
+    h1, h2, h3 {
+        font-family: Arial, sans-serif;
+    }
+
+    .main-header {
+        background: linear-gradient(
+            135deg,
+            #0c2e59,
+            #0759c9
+        );
+        border-radius: 25px;
+        padding: 30px 20px;
+        text-align: center;
+        color: white;
+        margin-bottom: 22px;
+        box-shadow: 0 8px 25px
+            rgba(10, 50, 110, 0.15);
+    }
+
+    .main-header h1 {
+        color: white !important;
+        font-size: clamp(28px, 5vw, 43px);
+        font-weight: 850;
+        margin: 0;
+        line-height: 1.2;
+    }
+
+    .main-header p {
+        color: #dceaff;
+        font-size: 17px;
+        margin-top: 12px;
+        margin-bottom: 0;
+    }
+
+    .catalog-count {
+        text-align: center;
+        font-size: 17px;
+        font-weight: 700;
+        color: #1354a1;
+        padding: 12px;
+        margin-bottom: 16px;
+    }
+
+    div[data-testid="stTextInput"] label {
+        font-size: 19px !important;
+        font-weight: 750 !important;
+        color: #17365c !important;
+    }
+
+    div[data-testid="stTextInput"] input {
+        font-size: 22px !important;
+        padding: 16px !important;
+        min-height: 60px;
+        border-radius: 14px;
+        border: 2px solid #d5e1f1;
+        background: white;
+        color: #102b50;
+    }
+
+    div[data-testid="stTextInput"] input:focus {
+        border-color: #0862ce;
+        box-shadow: 0 0 0 2px
+            rgba(8, 98, 206, 0.12);
+    }
+
+    .product-card {
+        background: white;
+        border: 1px solid #dce5f2;
+        border-radius: 24px;
+        padding: 40px 24px;
+        margin: 22px 0;
+        text-align: center;
+        box-shadow: 0 7px 25px
+            rgba(20, 50, 90, 0.06);
+    }
+
+    .product-label {
+        color: #64748b;
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        margin-bottom: 18px;
+    }
+
+    .product-name {
+        color: #102b50;
+        font-size: clamp(25px, 4.5vw, 38px);
+        font-weight: 850;
+        line-height: 1.3;
+        overflow-wrap: anywhere;
+        margin-bottom: 18px;
+    }
+
+    .product-code {
+        color: #64748b;
+        font-size: clamp(17px, 3vw, 21px);
+        margin-bottom: 34px;
+        overflow-wrap: anywhere;
+    }
+
+    .price-label {
+        color: #64748b;
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+        margin-bottom: 12px;
+    }
+
+    .product-price {
+        color: #0757c3;
+        font-size: clamp(40px, 8vw, 66px);
+        font-weight: 900;
+        line-height: 1.15;
+        overflow-wrap: anywhere;
+    }
+
+    .footer {
+        text-align: center;
+        color: #8a98ac;
+        font-size: 13px;
+        padding-top: 30px;
+    }
+
+    @media (max-width: 600px) {
+
+        .block-container {
+            padding-left: 13px;
+            padding-right: 13px;
+        }
+
+        .main-header {
+            padding: 25px 14px;
+            border-radius: 20px;
+        }
+
+        .product-card {
+            padding: 32px 14px;
+            border-radius: 20px;
+        }
+
+        .product-code {
+            margin-bottom: 28px;
+        }
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ==========================================
+# ENCABEZADO
+# ==========================================
+
+st.markdown(
+    """
+    <div class="main-header">
+        <h1>🏷️ CONSULTA DE PRECIOS</h1>
+        <p>Consulta rápida de productos y precios</p>
     </div>
-    <img src="{barcode_src}" alt="Ilustración decorativa de un código de barras" />
-  </div>
-</div>
-''', unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ==========================================
+# IMAGEN DE CODIGO DE BARRAS
+# ==========================================
+
+barcode_image = Path("assets/barcode.png")
+
+if barcode_image.is_file():
+    left, center, right = st.columns(
+        [1.6, 1, 1.6]
+    )
+
+    with center:
+        st.image(
+            str(barcode_image),
+            use_container_width=True,
+        )
+else:
+    st.markdown(
+        """
+        <div style="
+            text-align:center;
+            font-size:48px;
+            padding:8px 0 14px;
+        ">
+            ▌▍▌▌▍▌▍▌▌▍▌
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ==========================================
+# CONSULTAR PRODUCTOS CON PAGINACION
+# ==========================================
+
+@st.cache_data(ttl=90, show_spinner=False)
+def catalog():
+
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise ValueError(
+            "Falta configurar Supabase en Streamlit."
+        )
+
+    products = []
+    page_size = 500
+    offset = 0
+
+    headers = {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": (
+            f"Bearer {SUPABASE_ANON_KEY}"
+        ),
+    }
+
+    while True:
+
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/products",
+            params={
+                "select": "barcode,name,price",
+                "order": "barcode.asc",
+                "limit": page_size,
+                "offset": offset,
+            },
+            headers=headers,
+            timeout=25,
+        )
+
+        response.raise_for_status()
+
+        batch = response.json()
+
+        if not isinstance(batch, list):
+            raise ValueError(
+                "Respuesta inesperada de Supabase."
+            )
+
+        products.extend(batch)
+
+        if len(batch) < page_size:
+            break
+
+        offset += page_size
+
+    return pd.DataFrame(
+        products,
+        columns=[
+            "barcode",
+            "name",
+            "price",
+        ],
+    )
+
+
+# ==========================================
+# MOSTRAR PRODUCTOS DISPONIBLES
+# ==========================================
 
 try:
-    df = catalog()
-except Exception:
-    st.error('No se pudo consultar el catálogo. Comprueba la conexión a Supabase.')
-    st.stop()
 
-st.markdown(f'<div class="status"><span class="status-dot"></span>{len(df):,} productos disponibles en línea</div>', unsafe_allow_html=True)
-st.markdown('<div class="section-heading">Busca un producto</div><div class="section-hint">Introduce su nombre o escanea el código de barras.</div>', unsafe_allow_html=True)
-query = st.text_input('Nombre o código de barras', placeholder='🔎  Escribe o escanea aquí...', label_visibility='collapsed')
+    with st.spinner("Cargando catálogo..."):
+        df = catalog()
 
-if query.strip():
-    term = query.strip()
-    matches = df[
-        df['name'].astype(str).str.contains(term, case=False, regex=False, na=False)
-        | df['barcode'].astype(str).str.contains(term, case=False, regex=False, na=False)
-    ].head(60)
-    if matches.empty:
-        st.markdown('<div class="empty">No encontramos productos con esa búsqueda.<br>Verifica el nombre o el código e inténtalo de nuevo.</div>', unsafe_allow_html=True)
-    else:
-        st.caption(f'{len(matches)} resultado(s)' + (' · se muestran los primeros 60' if len(matches) == 60 else ''))
-        for _, product in matches.iterrows():
-            name = html.escape(str(product['name']))
-            barcode = html.escape(str(product['barcode']))
-            try:
-                price = f"{float(product['price']):,.2f}"
-            except (ValueError, TypeError):
-                price = 'No disponible'
-            st.markdown(f'''<div class="product-card">
-                <div class="product-label">PRODUCTO</div>
-                <div class="product-name">{name}</div>
-                <div class="product-code">Código: {barcode}</div>
-                <div class="product-price"><span>RD$</span>{price}</div>
-            </div>''', unsafe_allow_html=True)
-else:
-    st.markdown('<div class="empty">▥ &nbsp; Listo para consultar precios.<br>Escribe o escanea un código para comenzar.</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="catalog-count">
+            ✅ {len(df):,} productos
+            disponibles en línea
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-st.markdown('<div class="app-note">Precios consultados en el catálogo en línea.</div>', unsafe_allow_html=True)
+    # ======================================
+    # BUSCADOR
+    # ======================================
+
+    query = st.text_input(
+        "🔎 Buscar por nombre o código de barras",
+        placeholder="Escribe o escanea un código",
+    )
+
+    if query.strip():
+
+        search_text = query.strip()
+
+        hits = df[
+            df["name"]
+            .astype(str)
+            .str.contains(
+                search_text,
+                case=False,
+                regex=False,
+                na=False,
+            )
+            |
+            df["barcode"]
+            .astype(str)
+            .str.contains(
+                search_text,
+                case=False,
+                regex=False,
+                na=False,
+            )
+        ].head(60)
+
+        if hits.empty:
+
+            st.info(
+                "No se encontró ningún producto "
+                "con ese nombre o código."
+            )
+
+        # ==================================
+        # TARJETAS CENTRADAS Y GRANDES
+        # ==================================
+
+        for _, product in hits.iterrows():
+
+            nombre = html.escape(
+                str(product["name"])
+            )
+
+            codigo = html.escape(
+                str(product["barcode"])
+            )
+
+            precio = float(
+                product["price"]
+            )
+
+            st.markdown(
+                f"""
+                <div class="product-card">
+
+                    <div class="product-label">
+                        PRODUCTO
+                    </div>
+
+                    <div class="product-name">
+                        {nombre}
+                    </div>
+
+                    <div class="product-code">
+                        Código: {codigo}
+                    </div>
+
+                    <div class="price-label">
+                        PRECIO DE VENTA
+                    </div>
+
+                    <div class="product-price">
+                        RD$ {precio:,.2f}
+                    </div>
+
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+except (
+    requests.RequestException,
+    ValueError,
+) as error:
+
+    st.error(
+        "No se pudo cargar el catálogo "
+        "de productos."
+    )
+
+    st.caption(
+        "Comprueba la conexión con Supabase "
+        "y los Secrets de Streamlit."
+    )
+
+
+# ==========================================
+# PIE DE PAGINA
+# ==========================================
+
+st.markdown(
+    """
+    <div class="footer">
+        CONSULTA DE PRECIOS · RD$
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
