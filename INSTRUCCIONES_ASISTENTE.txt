@@ -1,0 +1,20 @@
+ASISTENTE SQL SERVER EN UNA SOLA PESTAÑA
+
+1. En Supabase > SQL Editor, ejecutar actualizar_supabase_asistente.sql una sola vez.
+2. En GitHub, sustituir windows_bridge/bridge.py por bridge_asistente_una_pestana.py (conservar el nombre bridge.py).
+3. En GitHub, sustituir pages/2_Fuentes_de_datos.py por 2_Fuentes_de_datos_una_pestana.py (conservar el nombre original).
+4. En Windows, añadir esta línea a C:\ProgramData\ConsultaPrecios\bridge.env:
+   STREAMLIT_RETURN_URL=https://verificadordeprecios.streamlit.app/
+   (Cambiar URL si tu app usa otra.)
+5. Compilar y actualizar el EXE del conector Windows desde GitHub Actions.
+6. Abrir Fuentes de datos en Streamlit y pulsar Iniciar búsqueda en Windows.
+   La pestaña se dirige al conector. Tras elegir servidor, credenciales y base,
+   el conector vuelve a Streamlit con el identificador de solicitud.
+
+NOTAS:
+- La contraseña del conector y las credenciales SQL permanecen en Windows.
+- La detección de instancias depende de SQL Browser (UDP 1434); existe entrada manual.
+- Se actualiza la selección de servidor/base en la página Fuentes de datos;
+  esto NO configura todavía las consultas de precios contra esa base.
+- Requiere que Streamlit pueda consultar Supabase y que el navegador alcance la IP LAN.
+- El código se ha verificado sintácticamente, no probado contra tu infraestructura.
