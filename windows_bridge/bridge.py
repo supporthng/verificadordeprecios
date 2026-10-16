@@ -48,7 +48,7 @@ KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
 PASSWORD = os.getenv('BRIDGE_PASSWORD', '')
 ALLOWED = [ipaddress.ip_network(s.strip(), strict=False)
            for s in os.getenv('ALLOWED_NETWORKS', '192.168.1.0/24').split(',') if s.strip()]
-PORTS = [(1433, 'SQL Server'), (3306, 'MySQL / MariaDB'),
+PORTS = [(1433, 'SQL Server'), (50517, 'SQL Server'), (3306, 'MySQL / MariaDB'),
          (5432, 'PostgreSQL'), (3050, 'Firebird'), (1521, 'Oracle'),
          (50000, 'IBM Db2'), (2638, 'SQL Anywhere')]
 app = FastAPI(title='Puente LAN - Consulta de Precios', docs_url=None, redoc_url=None)
@@ -141,7 +141,18 @@ def index(request: Request, request_id: str = ''):
                 f'<input type="hidden" name="request_id" value="{rid}">'
                 f'<label>Subred autorizada <input name="network" value="{default_network}" required></label>'
                 '<button>Buscar servidores</button></form>'
-                '<p>Solo se detectan puertos abiertos; el motor mostrado es una suposición.</p>')
+                '<p>Solo se detectan puertos abiertos; el motor mostrado es una suposición.</p>'
+                '<h2>Agregar servidor manualmente</h2>'
+                '<form method="post" action="/select">'
+                f'<input type="hidden" name="request_id" value="{rid}">'
+                '<label>IP <input name="host" value="10.0.0.150" required></label>'
+                '<label>Puerto <input name="port" type="number" min="1" max="65535" value="50517" required></label>'
+                '<label>Motor <select name="engine"><option value="SQL Server">SQL Server</option>'
+                '<option value="Firebird">Firebird</option><option value="PostgreSQL">PostgreSQL</option>'
+                '<option value="MySQL / MariaDB">MySQL / MariaDB</option>'
+                '<option value="Oracle">Oracle</option><option value="IBM Db2">IBM Db2</option>'
+                '<option value="SQL Anywhere">SQL Anywhere</option></select></label>'
+                '<button>Verificar y seleccionar</button></form>')
 
 
 def probe(item):
@@ -191,7 +202,7 @@ async def scan(request: Request, request_id: str = Form(...), network: str = For
         raise HTTPException(500, 'Error al explorar la red. Consulta el registro del conector Windows.') from None
     body = '<h1>Servidores encontrados</h1><p>Selecciona uno para enviarlo a Streamlit.</p>'
     if not found:
-        body += '<p>No se detectaron puertos conocidos. Puedes introducir IP y puerto manualmente en Streamlit.</p>'
+        body += '<p>No se detectaron puertos conocidos. Regresa a la pantalla anterior para introducir IP y puerto manualmente.</p>'
     body += '<table><tr><th>IP</th><th>Puerto</th><th>Motor probable</th><th></th></tr>'
     for host, port, engine in found:
         body += ('<tr><td>' + html.escape(host) + '</td><td>' + str(port) + '</td><td>'
@@ -212,8 +223,15 @@ async def select(request: Request, request_id: str = Form(...), host: str = Form
         ip = ipaddress.ip_address(host)
     except ValueError:
         raise HTTPException(400, 'IP inválida')
-    if not any(ip in network for network in ALLOWED) or (port, engine) not in PORTS:
+    allowed_engines = {name for _, name in PORTS}
+    if ip.version != 4 or not any(ip in network for network in ALLOWED):
         raise HTTPException(400, 'Servidor fuera de las redes autorizadas')
+    if not 1 <= port <= 65535 or engine not in allowed_engines:
+        raise HTTPException(400, 'Puerto o motor inválido')
+    # Validar alcance TCP también para entradas manuales; no inicia sesión SQL.
+    reachable = await asyncio.to_thread(probe, (str(ip), port, engine))
+    if reachable is None:
+        raise HTTPException(400, 'No se puede conectar al puerto TCP indicado desde Windows')
     try:
         rows = await asyncio.to_thread(supabase, 'PATCH', 'lan_discovery_requests',
             params={'id': 'eq.' + request_id, 'status': 'eq.pending',
