@@ -172,7 +172,7 @@ def mostrar_resultado(product):
 # exista contenido visible, incluso si falla la sección dinámica.
 st.markdown(
     '<div style="text-align:center;color:#64748b;font-size:12px;'
-    'margin-bottom:5px">WILPOS · VERIFICADOR DE PRECIOS</div>',
+    'margin-bottom:5px">VERIFICADOR DE PRECIOS</div>',
     unsafe_allow_html=True,
 )
 
