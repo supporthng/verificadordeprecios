@@ -308,12 +308,20 @@ def sql_databases(host, port, mode, user='', password=''):
         raise ValueError('IP fuera de la red autorizada')
     if not 1 <= int(port) <= 65535:
         raise ValueError('Puerto inválido')
-    driver = os.getenv('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server').strip()
+    driver = os.getenv('SQL_ODBC_DRIVER', 'SQL Server').strip()
     if any(ch in driver for ch in '{};\x00'):
         raise ValueError('Nombre de controlador ODBC inválido')
-    conn_str = (f'DRIVER={{{driver}}};SERVER=tcp:{host},{int(port)};'
-                'DATABASE=master;Encrypt=yes;TrustServerCertificate=no;'
-                'Connection Timeout=6;ApplicationIntent=ReadOnly;')
+    # Usar por defecto el controlador heredado que se comprobó funcionando
+    # con CONEXION.TXT. El nombre de instancia puede configurarse en bridge.env.
+    target = os.getenv('SQL_SERVER_INSTANCE', '').strip() or f'tcp:{host},{int(port)}'
+    if any(ch in target for ch in ';{}\x00\r\n'):
+        raise ValueError('Servidor SQL inválido')
+    conn_str = (f'DRIVER={{{driver}}};SERVER={target};'
+                'DATABASE=master;Connection Timeout=8;')
+    if driver.lower().startswith('odbc driver 18') or driver.lower().startswith('odbc driver 17'):
+        # Mantiene cifrado, aceptando el certificado no confiable del servidor LAN.
+        conn_str += 'Encrypt=yes;TrustServerCertificate=yes;'
+
     if mode == 'windows':
         conn_str += 'Trusted_Connection=yes;'
     elif mode == 'sql':
@@ -409,12 +417,18 @@ async def databases_run(request: Request, db_request_id: str = Form(...),
     except HTTPException:
         raise
     except Exception as exc:
-        logger.warning('Fallo en búsqueda de bases SQL: tipo=%s', type(exc).__name__)
+        # Mostrar SQLSTATE y descripción sin exponer contraseñas en el navegador/log.
+        detail = str(exc)
+        if password:
+            detail = detail.replace(password, '[OCULTO]')
+        detail = detail[:1400]
+        logger.warning('Fallo en búsqueda de bases SQL: tipo=%s; detalle=%s',
+                       type(exc).__name__, detail)
         return page('<h1>No se pudieron consultar las bases</h1><p>Tipo de error: '
-                    + html.escape(type(exc).__name__) + '.</p>'
-                    '<p>Comprueba las credenciales, permisos SQL y certificado TLS. '
-                    'No se guardaron credenciales si la conexión falló.</p>'
-                    '<p>La solicitud sigue pendiente; puedes reintentar.</p>')
+                    + html.escape(type(exc).__name__) + '.</p><pre style="white-space:pre-wrap">'
+                    + html.escape(detail) + '</pre>'
+                    '<p>La solicitud sigue pendiente; puedes reintentar. '
+                    'No se guardaron credenciales si la conexión falló.</p>')
 
 def main():
     if not URL or not KEY or not PASSWORD or len(PASSWORD) < 12:
