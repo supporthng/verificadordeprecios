@@ -1,39 +1,58 @@
-# Consulta de Precios — Puente Windows ↔ Streamlit Cloud
+# Conector Windows para Consulta de Precios
 
-Este paquete añade **descubrimiento de servidores en Windows** y permite recibir en Streamlit Cloud la IP, puerto y motor probable seleccionados. **No reemplaza** `app.py` ni `pages/1_Administracion.py`, y **no configura automáticamente las credenciales SQL ni activa un nuevo origen de precios**.
+Este paquete contiene **código fuente y automatización de compilación** para generar dos distribuciones Windows sin necesidad de instalar Python en la computadora del negocio:
 
-## 1. Supabase
+- **Portátil**: `Conector_Portatil_Windows.zip`, con `ConectorConsultaPrecios.exe`.
+- **Instalador**: `Instalador_Conector_Consulta_Precios.exe`, que registra una tarea de Windows al arrancar.
 
-En Supabase > SQL Editor, ejecuta `supabase_bridge.sql` **una sola vez**. La tabla tiene RLS habilitado y no concede acceso a `anon` ni `authenticated`. Solo los componentes de confianza usan `service_role`.
+**Los archivos .exe NO están incluidos en este ZIP**. Deben compilarse en Windows (o usando GitHub Actions). No se ha probado la ejecución en una computadora Windows real.
 
-## 2. Streamlit Cloud
+## Compilar las dos versiones sin instalar Python en el equipo de facturación
 
-Sube **solo** `pages/2_Fuentes_de_datos.py` a tu repositorio (reemplaza la página informativa anterior). Usa los secretos ya configurados `ADMIN_PASSWORD`, `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY`. Nunca publiques esos secretos en GitHub.
+1. Crea un repositorio **privado** en GitHub y sube el contenido de esta carpeta, conservando `.github/workflows/windows-build.yml`.
+2. En GitHub entra a **Actions → Construir conector Windows → Run workflow**.
+3. Espera a que termine y descarga el artefacto `Conector-Windows-Portatil-e-Instalador`.
+4. Encontrarás el ZIP portátil y el instalador `.exe`.
+5. **No subas credenciales reales al repositorio.**
 
-Abre Fuentes de datos e inicia sesión con la contraseña de administración. Introduce la IP privada del equipo Windows que ejecutará el puente (no necesariamente la IP del servidor SQL).
+GitHub Actions usa Python para **compilar**, pero el equipo donde se ejecuta el EXE no necesita instalarlo.
 
-## 3. Windows
+## Instalar en el Windows del negocio
 
-Copia `windows_bridge` al equipo Windows de tu negocio. Instala Python 3. Copia `.env.example` como `.env` y configura `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BRIDGE_PASSWORD` (mínimo 12 caracteres) y `ALLOWED_NETWORKS` con las redes autorizadas, por ejemplo `192.168.1.0/24`.
+1. Ejecuta `Instalador_Conector_Consulta_Precios.exe` como administrador.
+2. Abre desde el menú Inicio **Consulta de Precios → Configurar conexión**.
+3. Edita `%PROGRAMDATA%\ConsultaPrecios\bridge.env` y configura:
+   - `SUPABASE_URL` (URL de tu proyecto)
+   - `SUPABASE_SERVICE_ROLE_KEY` (solo en el servidor Windows, nunca en el navegador)
+   - `BRIDGE_PASSWORD` (contraseña fuerte de 12 o más caracteres)
+   - `ALLOWED_NETWORKS` (subred real, p. ej. `10.0.0.0/24`)
+4. Guarda el archivo y reinicia la tarea **ConsultaPreciosConectorLAN** desde el Programador de tareas o reinicia Windows.
+5. En Windows abre `http://127.0.0.1:8765/health` y comprueba que devuelve `{"ok":true}`.
+6. Para acceder desde Android/otro PC de la LAN, permite el puerto TCP 8765 **solo en el perfil privado y subred autorizada** del firewall. No abras ese puerto a internet.
+7. En Streamlit, usa la IP del Windows y el puerto 8765 para abrir el buscador. Los resultados se transmiten a Supabase mediante la tabla `lan_discovery_requests`.
 
-Ejecuta `INICIAR_WINDOWS.bat`. Permite TCP 8765 en el firewall **solo desde tu red local de confianza**. La API no debe exponerse directamente a internet. El puente requiere acceso saliente HTTPS a Supabase.
+## Ejecutable portátil
 
-## 4. Búsqueda y devolución
+Extrae `Conector_Portatil_Windows.zip`, copia `bridge.env.example` como `bridge.env` junto al EXE, configura los mismos valores y ejecuta el EXE con doble clic. No se registra inicio automático.
 
-1. En Streamlit, pulsa **1. Iniciar búsqueda en Windows**.
-2. Pulsa **Abrir búsqueda en Windows** desde un navegador en la misma red. Inicia sesión con `BRIDGE_PASSWORD`.
-3. Especifica una subred permitida (máximo 256 direcciones) y pulsa **Buscar servidores**.
-4. Selecciona un resultado. Windows lo envía a la tabla privada de Supabase usando su propia clave de servicio.
-5. Vuelve a Streamlit y pulsa **3. Recibir selección desde Windows**. Se rellenan IP, puerto y motor probable.
+## Seguridad y limitaciones
 
-Las solicitudes vencen a los 10 minutos. El motor detectado es **probable**, inferido del puerto. La detección no accede a los datos de facturación ni intenta contraseñas.
+- El conector es un **buscador de servicios de bases de datos**: detecta puertos habituales, pero no autentica ni consulta precios directamente.
+- El enlace HTTP en LAN y la cookie de sesión no ofrecen cifrado de transporte. Utilízalo solo en una red local de confianza; para redes compartidas o acceso remoto, agrega HTTPS mediante proxy seguro.
+- No expongas el puerto 8765 a internet.
+- No copies `bridge.env` ni claves de Supabase a GitHub.
+- El instalador crea una **tarea programada al inicio de Windows**, no un servicio Windows nativo.
+- La configuración debe completarse antes de que el proceso pueda arrancar correctamente.
+- Los motores SQL/ODBC pueden requerir drivers adicionales para la posterior consulta real de precios.
+- El nombre de tabla `public.lan_discovery_requests` y su política RLS deben existir en Supabase.
+- Para actualizar o desinstalar, utiliza el instalador de Windows. La configuración en ProgramData puede permanecer para evitar perder credenciales.
 
-## Limitaciones y seguridad
+## Estructura
 
-- **No se abre un programa de Windows automáticamente** desde Streamlit Cloud: el usuario abre el enlace al puente local desde un dispositivo que tenga acceso a la LAN.
-- La aplicación Streamlit Cloud no puede conectarse directamente a `192.168.x.x`.
-- Este paquete **solo descubre y devuelve servidores**; no implementa consultas SQL ni sincronización de precios. Para ello se utiliza el conector multibase local de la etapa anterior y se configura con permisos de solo lectura.
-- El puente Windows necesita internet para enviar la selección a Supabase. La consulta de precios totalmente offline debe ejecutarse en un servicio local independiente.
-- El puente sirve HTTP en LAN; úsalo solo en una red de confianza. Para redes compartidas, configura un proxy HTTPS y autenticación reforzada.
-- Nunca compartas `.env`, claves de servicio ni contraseñas. No las pongas en URLs ni en campos de Streamlit.
-- Se debe probar en tu Windows real; las pruebas realizadas aquí son de sintaxis, no de red.
+`windows_bridge/bridge.py`: servicio FastAPI LAN existente con búsqueda de puertos.
+`windows_bridge/build_windows.ps1`: genera EXE usando PyInstaller.
+`installer/ConectorConsultaPrecios.iss`: proyecto Inno Setup.
+`installer/RegistrarInicioAutomatico.ps1`: registra tarea de inicio automático.
+`.github/workflows/windows-build.yml`: compila ambas variantes en Windows.
+
+**Nota:** si usas una versión previa de `bridge.py`, verifica la compatibilidad con tu página Streamlit. Esta distribución mantiene los endpoints `/login`, `/scan`, `/select` y `/health` del puente anterior.

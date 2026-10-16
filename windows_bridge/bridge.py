@@ -4,6 +4,7 @@ import html
 import ipaddress
 import os
 import secrets
+import sys
 import socket
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -17,12 +18,21 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 
 def load_env():
-    path = Path(__file__).with_name('.env')
-    if path.exists():
-        for line in path.read_text(encoding='utf-8-sig').splitlines():
-            if '=' in line and not line.lstrip().startswith('#'):
-                key, value = line.split('=', 1)
-                os.environ.setdefault(key.strip(), value.strip())
+    """Prefer explicit config; then ProgramData (installer); then exe directory (portable)."""
+    program_data = Path(os.environ.get('PROGRAMDATA', str(Path.home()))) / 'ConsultaPrecios' / 'bridge.env'
+    exe_dir = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+    candidates = [
+        Path(os.environ['CONSULTA_BRIDGE_ENV']) if os.getenv('CONSULTA_BRIDGE_ENV') else None,
+        program_data,
+        exe_dir / 'bridge.env',
+    ]
+    for path in candidates:
+        if path is not None and path.is_file():
+            for line in path.read_text(encoding='utf-8-sig').splitlines():
+                if '=' in line and not line.lstrip().startswith('#'):
+                    key, value = line.split('=', 1)
+                    os.environ.setdefault(key.strip(), value.strip())
+            return
 
 
 load_env()
@@ -175,8 +185,12 @@ async def select(request: Request, request_id: str = Form(...), host: str = Form
                 '<strong>Recibir selección</strong>. No se enviaron contraseñas.</p>')
 
 
-if __name__ == '__main__':
+def main():
     if not URL or not KEY or not PASSWORD or len(PASSWORD) < 12:
-        raise SystemExit('Configura .env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY y BRIDGE_PASSWORD (12+ caracteres).')
+        raise SystemExit('Configura bridge.env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY y BRIDGE_PASSWORD (12+ caracteres).')
     uvicorn.run(app, host=os.getenv('BRIDGE_HOST', '0.0.0.0'),
                 port=int(os.getenv('BRIDGE_PORT', '8765')))
+
+
+if __name__ == '__main__':
+    main()
