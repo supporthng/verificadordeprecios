@@ -3,3 +3,4 @@ uvicorn>=0.29,<1
 requests>=2.31,<3
 python-multipart>=0.0.9
 pyinstaller>=6.0,<7
+pyodbc>=5.1,<6

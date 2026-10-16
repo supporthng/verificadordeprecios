@@ -109,21 +109,24 @@ def health():
 
 
 @app.get('/login')
-def login_page(request_id: str = ''):
+def login_page(request_id: str = '', db_request_id: str = ''):
     rid = html.escape(request_id, quote=True)
+    db_rid = html.escape(db_request_id, quote=True)
     return page('<h1>Conector local Windows</h1><form method="post" action="/login">'
                 f'<input type="hidden" name="request_id" value="{rid}">'
+                f'<input type="hidden" name="db_request_id" value="{db_rid}">'
                 '<input type="password" name="password" placeholder="Contraseña del conector" required>'
                 '<button>Entrar</button></form>')
 
 
 @app.post('/login')
-def login(password: str = Form(...), request_id: str = Form('')):
+def login(password: str = Form(...), request_id: str = Form(''), db_request_id: str = Form('')):
     if not PASSWORD or len(PASSWORD) < 12 or not secrets.compare_digest(password, PASSWORD):
         raise HTTPException(403, 'Contraseña incorrecta o insegura')
     token = secrets.token_urlsafe(32)
     SESSIONS.add(token)
-    response = RedirectResponse('/?request_id=' + quote(request_id), status_code=303)
+    destination = ('/databases?db_request_id=' + quote(db_request_id)) if db_request_id else ('/?request_id=' + quote(request_id))
+    response = RedirectResponse(destination, status_code=303)
     response.set_cookie('lan_session', token, httponly=True, samesite='strict', secure=False,
                         max_age=3600)
     return response
@@ -245,6 +248,90 @@ async def select(request: Request, request_id: str = Form(...), host: str = Form
     return page('<h1>Selección enviada</h1><p>Regresa a Streamlit y pulsa '
                 '<strong>Recibir selección</strong>. No se enviaron contraseñas.</p>')
 
+
+
+# Listado de bases: se ejecuta solo en Windows, nunca desde Streamlit Cloud.
+# Requiere un usuario SQL de solo lectura configurado localmente en bridge.env.
+def sql_databases(host, port):
+    import pyodbc
+    user = os.getenv('SQL_READ_USER', '').strip()
+    password = os.getenv('SQL_READ_PASSWORD', '')
+    driver = os.getenv('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server').strip()
+    if not user or not password:
+        raise RuntimeError('Faltan SQL_READ_USER o SQL_READ_PASSWORD en bridge.env')
+    # No aceptar un servidor arbitrario fuera de la LAN autorizada.
+    ip = ipaddress.ip_address(host)
+    if ip.version != 4 or not any(ip in network for network in ALLOWED):
+        raise ValueError('IP fuera de la red autorizada')
+    if not 1 <= int(port) <= 65535:
+        raise ValueError('Puerto inválido')
+    # Driver configurable; no permitir inyección de parámetros ODBC.
+    if any(ch in driver for ch in '{};\x00'):
+        raise ValueError('Nombre de controlador ODBC inválido')
+    conn_str = (
+        f'DRIVER={{{driver}}};SERVER=tcp:{host},{int(port)};'
+        'DATABASE=master;'
+        'Encrypt=yes;TrustServerCertificate=no;Connection Timeout=6;'
+        'ApplicationIntent=ReadOnly;'
+    )
+    # ODBC escape para credenciales con punto y coma o llaves.
+    def enc(value):
+        return '{' + value.replace('}', '}}') + '}'
+    conn_str += 'UID=' + enc(user) + ';PWD=' + enc(password) + ';'
+    with pyodbc.connect(conn_str, timeout=6, autocommit=True) as connection:
+        cursor = connection.cursor()
+        cursor.execute("SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' AND HAS_DBACCESS(name) = 1 ORDER BY name")
+        return [str(row[0]) for row in cursor.fetchall()][:200]
+
+
+@app.get('/databases')
+def databases_page(request: Request, db_request_id: str = ''):
+    if request.cookies.get('lan_session', '') not in SESSIONS:
+        return RedirectResponse('/login?db_request_id=' + quote(db_request_id))
+    rid = html.escape(db_request_id, quote=True)
+    return page('<h1>Buscar bases de datos de SQL Server</h1>'
+                '<p>La consulta se ejecuta en este equipo Windows con credenciales locales de solo lectura.</p>'
+                '<form method="post" action="/databases">'
+                f'<input type="hidden" name="db_request_id" value="{rid}">'
+                '<button>Consultar bases de datos</button></form>')
+
+
+@app.post('/databases')
+async def databases_run(request: Request, db_request_id: str = Form(...)):
+    auth(request)
+    try:
+        # Solo procesar una solicitud nueva, vigente y creada desde Streamlit.
+        import uuid
+        uuid.UUID(db_request_id)
+        rows = await asyncio.to_thread(supabase, 'GET', 'lan_db_requests',
+            params={'id': 'eq.' + db_request_id, 'status': 'eq.pending',
+                    'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(),
+                    'select': 'id,host,port,engine'})
+        if not rows:
+            raise HTTPException(400, 'Solicitud inexistente, vencida o ya utilizada. Regresa a Streamlit.')
+        item = rows[0]
+        if item['engine'] != 'SQL Server':
+            raise HTTPException(400, 'Este botón solo admite SQL Server')
+        names = await asyncio.to_thread(sql_databases, item['host'], int(item['port']))
+        updated = await asyncio.to_thread(supabase, 'PATCH', 'lan_db_requests',
+            params={'id': 'eq.' + db_request_id, 'status': 'eq.pending',
+                    'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat()},
+            json={'status': 'done', 'database_names': names})
+        if not updated:
+            raise HTTPException(409, 'La solicitud venció durante la consulta')
+        return page('<h1>Consulta completada</h1><p>Se encontraron '
+                    + str(len(names)) + ' bases accesibles. Regresa a Streamlit y pulsa '
+                    '<strong>Recibir bases de datos</strong>.</p>')
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # No registrar cadenas de conexión ni mensajes ODBC que puedan incluir secretos.
+        logger.warning('Fallo en búsqueda de bases SQL: tipo=%s', type(exc).__name__)
+        return page('<h1>No se pudieron consultar las bases</h1>'
+                    '<p>Revisa el usuario SQL de solo lectura, el controlador ODBC 18 y '
+                    'el certificado TLS de SQL Server. Tipo de error: '
+                    + html.escape(type(exc).__name__) + '.</p>'
+                    '<p>La solicitud no fue completada; puedes reintentar.</p>')
 
 def main():
     if not URL or not KEY or not PASSWORD or len(PASSWORD) < 12:

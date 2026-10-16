@@ -1,17 +1,21 @@
-# Actualización de Fuentes de datos
+# Buscar bases de datos SQL Server — instalación
 
-La pantalla antigua de Streamlit era informativa. Esta versión permite **preparar y descargar** un perfil `config.json` sin contraseñas. **No prueba conexiones desde Streamlit Cloud**, ya que el servidor de facturación está en una red privada.
+1. Ejecuta `supabase_lan_db_requests.sql` en el SQL Editor de Supabase.
+2. Reemplaza `windows_bridge/bridge.py` y `windows_bridge/requirements.txt` en GitHub.
+3. Reemplaza `pages/2_Fuentes_de_datos.py` en GitHub (no modifiques app.py).
+4. En el Windows conector (`10.0.0.190`) instala **Microsoft ODBC Driver 18 for SQL Server** (x64).
+5. En `%PROGRAMDATA%\ConsultaPrecios\bridge.env` añade:
 
-## Instalación
+   SQL_READ_USER=USUARIO_SOLO_LECTURA
+   SQL_READ_PASSWORD=CONTRASENA_LOCAL
+   SQL_ODBC_DRIVER=ODBC Driver 18 for SQL Server
 
-1. En GitHub, sustituya SOLO `pages/2_Fuentes_de_datos.py` por el incluido en este paquete.
-2. No cambie `app.py`, `shared.py` ni `pages/1_Administracion.py`.
-3. En Streamlit, entre a Fuentes de datos, rellene campos y descargue `config.json`.
-4. En el servidor Windows, instale el servidor local del paquete anterior `Consulta_Precios_Multibase_Windows_Android.zip` (carpeta `servidor_local`).
-5. Copie `config.json` en esa carpeta. Configure `LOCAL_ADMIN_PASSWORD`, `SOURCE_DB_PASSWORD` y otras claves como variables de entorno **solo en Windows**.
-6. Ejecute `INICIAR_WINDOWS.bat`. En Windows abra `http://127.0.0.1:8765/admin` y pulse Probar conexión y consulta.
-7. En Android, en la misma LAN, abra `http://IP_DEL_WINDOWS:8765/`.
+   Usa una cuenta SQL que solo pueda ver las bases autorizadas y leer lo necesario. No compartas este archivo.
+   Para SQL Server con certificado no confiable, configura un certificado TLS válido para el servidor;
+   el código exige `Encrypt=yes;TrustServerCertificate=no`.
+6. Ejecuta GitHub Actions Windows Build y reinstala el instalador; comprueba que el proceso viejo se cierre.
+7. En Streamlit: Buscar bases de datos → Abrir consulta en Windows → Consultar bases de datos → Recibir bases de datos.
 
-**Seguridad:** no exponga el puerto 8765 a internet. La página de administración local usa HTTP Basic: adminístrela solo desde el propio Windows mediante 127.0.0.1, o con HTTPS apropiado. Use un usuario SQL de solo lectura. El soporte para drivers varía por motor; Oracle, Firebird, Db2, SQL Anywhere y ODBC genérico pueden necesitar instalación/adaptación.
-
-**Limitación:** el formulario de Streamlit genera un perfil; la prueba y la conexión real se hacen desde el servidor local Windows. No existe aún conexión de Streamlit Cloud directamente a IP privadas ni un selector LAN integrado en la aplicación cloud.
+La nueva funcionalidad solo lista nombres de bases accesibles, **no consulta productos ni cambia precios**.
+El usuario SQL debe tener acceso a `master` y permisos de visualización a las bases relevantes.
+Si el driver ODBC no está instalado o el certificado SQL no es confiable, la consulta mostrará un error.
