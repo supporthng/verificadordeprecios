@@ -1,18 +1,19 @@
+
 """Puente de descubrimiento LAN, sin credenciales SQL ni escritura en facturación."""
 import asyncio
 import html
 import ipaddress
 import os
 import secrets
-import logging
 import re
+import logging
 from logging.handlers import RotatingFileHandler
 import sys
 import socket
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import requests
 import uvicorn
@@ -67,6 +68,8 @@ except OSError:
     pass
 logger.info('Conector iniciado; origen de configuración: %s', CONFIG_SOURCE)
 SESSIONS = set()
+DB_RESULTS = {}  # session-token -> (request id, accessible database names)
+WIZARD_REQUESTS = {}  # db request id -> discovery request id
 
 
 def supabase(method, path, **kwargs):
@@ -106,7 +109,7 @@ def page(body):
 
 @app.get('/health')
 def health():
-    return {'ok': True}
+    return {'ok': True, 'version': 'asistente-universal-v2'}
 
 
 @app.get('/login')
@@ -137,6 +140,9 @@ def login(password: str = Form(...), request_id: str = Form(''), db_request_id: 
 def index(request: Request, request_id: str = ''):
     if request.cookies.get('lan_session', '') not in SESSIONS:
         return RedirectResponse('/login?request_id=' + quote(request_id))
+    if not request_id:
+        return page('<h1>Conector Windows</h1><p>Abre Fuentes de datos en Streamlit '
+                    'y pulsa Iniciar búsqueda en Windows para vincular la configuración.</p>')
     rid = html.escape(request_id, quote=True)
     default_network = html.escape(str(ALLOWED[0]) if ALLOWED else '10.0.0.0/24', quote=True)
     return page('<h1>Buscar bases de datos en la red</h1>'
@@ -149,8 +155,8 @@ def index(request: Request, request_id: str = ''):
                 '<h2>Agregar servidor manualmente</h2>'
                 '<form method="post" action="/select">'
                 f'<input type="hidden" name="request_id" value="{rid}">'
-                '<label>IP <input name="host" value="10.0.0.150" required></label>'
-                '<label>Puerto <input name="port" type="number" min="1" max="65535" value="50517" required></label>'
+                '<label>IP <input name="host" placeholder="192.168.1.100" required></label>'
+                '<label>Puerto <input name="port" type="number" min="1" max="65535" value="1433" required></label>'
                 '<label>Motor <select name="engine"><option value="SQL Server">SQL Server</option>'
                 '<option value="Firebird">Firebird</option><option value="PostgreSQL">PostgreSQL</option>'
                 '<option value="MySQL / MariaDB">MySQL / MariaDB</option>'
@@ -232,6 +238,8 @@ async def select(request: Request, request_id: str = Form(...), host: str = Form
         raise HTTPException(400, 'Servidor fuera de las redes autorizadas')
     if not 1 <= port <= 65535 or engine not in allowed_engines:
         raise HTTPException(400, 'Puerto o motor inválido')
+    if not request_id:
+        raise HTTPException(400, 'Inicia la búsqueda desde Streamlit')
     # Validar alcance TCP también para entradas manuales; no inicia sesión SQL.
     reachable = await asyncio.to_thread(probe, (str(ip), port, engine))
     if reachable is None:
@@ -241,13 +249,30 @@ async def select(request: Request, request_id: str = Form(...), host: str = Form
             params={'id': 'eq.' + request_id, 'status': 'eq.pending',
                     'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat()},
             json={'selected_host': host, 'selected_port': port,
-                  'selected_engine': engine, 'status': 'selected'})
+                  'selected_engine': engine})
     except requests.RequestException:
         raise HTTPException(502, 'No se pudo comunicar la selección a Supabase')
     if not rows:
         raise HTTPException(409, 'Solicitud vencida o ya utilizada')
-    return page('<h1>Selección enviada</h1><p>Regresa a Streamlit y pulsa '
-                '<strong>Recibir selección</strong>. No se enviaron contraseñas.</p>')
+    # Continuar dentro de esta misma pestaña: crear la solicitud SQL automáticamente.
+    if engine == 'SQL Server':
+        import uuid
+        rid = str(uuid.uuid4())
+        try:
+            await asyncio.to_thread(supabase, 'POST', 'lan_db_requests', json={
+                'id': rid, 'host': str(ip), 'port': port, 'engine': engine,
+                'status': 'pending',
+                'expires_at': (datetime.now(timezone.utc) + __import__('datetime').timedelta(minutes=15)).isoformat()
+            })
+        except Exception as exc:
+            logger.warning('No se pudo iniciar la consulta SQL: %s', type(exc).__name__)
+            return page('<h1>Servidor seleccionado</h1><p>No se pudo abrir el paso SQL. '
+                        'Revisa el registro del conector y vuelve a intentarlo.</p>')
+        # Guardar vínculo entre la solicitud LAN y la consulta de bases.
+        WIZARD_REQUESTS[rid] = request_id
+        return RedirectResponse('/databases?' + urlencode({'db_request_id': rid}), status_code=303)
+    return page('<h1>Servidor seleccionado</h1><p>La configuración automática de bases '
+                'está disponible actualmente para SQL Server.</p>')
 
 
 
@@ -293,7 +318,7 @@ def _saved_credentials():
 def _save_credentials(data):
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     saved = _saved_credentials()
-    saved[data['server']] = {'mode': data['mode'], 'user': data['user'], 'password': data['password']}
+    saved[data['server']] = {k: data[k] for k in ('mode', 'user', 'password', 'driver', 'trust_certificate', 'instance')}
     encrypted = base64.b64encode(_dpapi(json.dumps(saved).encode('utf-8')))
     tmp = CREDENTIALS_PATH.with_suffix('.tmp')
     tmp.write_bytes(encrypted)
@@ -302,19 +327,34 @@ def _save_credentials(data):
 def _server_key(host, port):
     return f'{host}:{int(port)}'
 
-def sql_databases(host, port, mode, user='', password=''):
-    import pyodbc
+def _sql_target(host, port, instance=''):
+    """Use the selected LAN IP; optionally address a named instance on that host."""
     ip = ipaddress.ip_address(host)
     if ip.version != 4 or not any(ip in network for network in ALLOWED):
         raise ValueError('IP fuera de la red autorizada')
     if not 1 <= int(port) <= 65535:
         raise ValueError('Puerto inválido')
-    driver = os.getenv('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server').strip()
-    if any(ch in driver for ch in '{};\x00'):
-        raise ValueError('Nombre de controlador ODBC inválido')
-    conn_str = (f'DRIVER={{{driver}}};SERVER=tcp:{host},{int(port)};'
-                'DATABASE=master;Encrypt=yes;TrustServerCertificate=no;'
-                'Connection Timeout=6;ApplicationIntent=ReadOnly;')
+    instance = instance.strip()
+    if instance:
+        import re
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', instance):
+            raise ValueError('Nombre de instancia inválido')
+        # A named instance is resolved by SQL Browser, without assuming the scanned port.
+        return f'{host}\\{instance}'
+    return f'tcp:{host},{int(port)}'
+
+
+def sql_databases(host, port, mode, user='', password='', driver='SQL Server',
+                  trust_certificate=False, instance=''):
+    import pyodbc
+    server = _sql_target(host, port, instance)
+    available = pyodbc.drivers()
+    if driver not in ('SQL Server', 'ODBC Driver 17 for SQL Server',
+                      'ODBC Driver 18 for SQL Server') or driver not in available:
+        raise ValueError('Controlador ODBC no instalado o no admitido')
+    conn_str = f'DRIVER={{{driver}}};SERVER={server};DATABASE=master;Connection Timeout=8;'
+    if driver != 'SQL Server':
+        conn_str += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if trust_certificate else 'no') + ';'
     if mode == 'windows':
         conn_str += 'Trusted_Connection=yes;'
     elif mode == 'sql':
@@ -325,40 +365,34 @@ def sql_databases(host, port, mode, user='', password=''):
         conn_str += 'UID=' + enc(user) + ';PWD=' + enc(password) + ';'
     else:
         raise ValueError('Autenticación inválida')
-    with pyodbc.connect(conn_str, timeout=6, autocommit=True) as connection:
+    with pyodbc.connect(conn_str, timeout=8, autocommit=True) as connection:
         cursor = connection.cursor()
         cursor.execute("SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' AND HAS_DBACCESS(name) = 1 ORDER BY name")
         return [str(row[0]) for row in cursor.fetchall()][:200]
 
-def _safe_sql_error(exc):
-    """Devuelve solo códigos ODBC y una explicación, nunca mensajes con credenciales."""
+def discover_sql_instances(host):
+    """Best-effort SQL Browser UDP/1434 discovery. May return [] when blocked."""
+    ip = ipaddress.ip_address(host)
+    if ip.version != 4 or not any(ip in network for network in ALLOWED):
+        raise ValueError('IP fuera de la red autorizada')
+    result = []
     try:
-        import pyodbc
-        if not isinstance(exc, pyodbc.Error):
-            return None
-    except ImportError:
-        return None
-    parts = [str(x) for x in exc.args]
-    state = parts[0] if parts and re.fullmatch(r'[A-Z0-9]{5}', parts[0]) else 'desconocido'
-    # Los códigos numéricos aparecen entre paréntesis en los mensajes ODBC.
-    native = set(re.findall(r'\((-?\d{1,6})\)', ' '.join(parts)))
-    message = ' '.join(parts).lower()
-    if '18456' in native or state == '28000':
-        cause = 'SQL Server rechazó el inicio de sesión. Comprueba usuario, contraseña y modo de autenticación.'
-    elif 'certificate' in message or 'certificado' in message or 'ssl provider' in message or 'certificate chain' in message:
-        cause = 'Falló la validación del certificado TLS. El servidor debe presentar un certificado confiable para Windows y que corresponda a su nombre.'
-    elif '4060' in native:
-        cause = 'SQL Server no permite abrir la base de datos solicitada con esta cuenta.'
-    elif state in ('HYT00', 'HYT01'):
-        cause = 'La conexión agotó el tiempo de espera. Revisa conectividad y respuesta del servidor SQL.'
-    elif state in ('08001', '08S01'):
-        cause = 'No se pudo establecer o mantener la conexión SQL. Revisa TLS, configuración del servidor y acceso de red.'
-    elif state == 'IM002':
-        cause = 'El controlador ODBC indicado no está disponible para este proceso.'
-    else:
-        cause = 'ODBC rechazó la operación. Es necesario revisar la configuración del servidor o los permisos SQL.'
-    codes = ', '.join(sorted(native)) if native else 'no disponible'
-    return state, codes, cause
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(1.0)
+            sock.sendto(bytes([3]), (str(ip), 1434))
+            packet, source = sock.recvfrom(8192)
+            if source[0] != str(ip):
+                return []
+        fields = packet.decode('latin-1', errors='replace').split(';')
+        for i in range(len(fields) - 1):
+            if fields[i].lower() == 'instancename':
+                name = fields[i + 1].strip()
+                if re.fullmatch(r'[A-Za-z0-9_-]{1,64}', name) and name not in result:
+                    result.append(name)
+    except (OSError, TimeoutError):
+        pass
+    return result[:30]
+
 
 async def _db_request(db_request_id):
     import uuid
@@ -396,11 +430,28 @@ async def databases_page(request: Request, db_request_id: str = ''):
     if has_saved:
         content += ('<p>Hay credenciales protegidas guardadas para este servidor.</p>'
                     '<button name="use_saved" value="yes">Conectar con credenciales guardadas</button><hr>')
+    instances = await asyncio.to_thread(discover_sql_instances, host)
+    if instances:
+        content += '<p><label>Instancias detectadas <select name="detected_instance"><option value="">Usar IP y puerto</option>'
+        for name in instances:
+            content += ('<option value="' + html.escape(name, quote=True) + '">'
+                        + html.escape(host + '\\\\' + name) + '</option>')
+        content += '</select></label></p>'
+    else:
+        content += '<p>No se detectaron nombres de instancia mediante SQL Browser. Puedes escribir uno manualmente.</p>'
     content += ('<label>Autenticación <select name="mode">'
                 '<option value="sql">SQL Server (usuario y contraseña)</option>'
                 '<option value="windows">Windows (cuenta que ejecuta el conector)</option>'
                 '</select></label><p><label>Usuario SQL <input name="user" autocomplete="username"></label></p>'
                 '<p><label>Contraseña SQL <input type="password" name="password" autocomplete="current-password"></label></p>'
+                '<p><label>Instancia SQL (opcional) <input name="instance" placeholder="Ej.: technotel"></label></p>'
+                '<p><label>Controlador <select name="driver">'
+                '<option value="SQL Server">SQL Server (clásico)</option>'
+                '<option value="ODBC Driver 18 for SQL Server">ODBC Driver 18</option>'
+                '<option value="ODBC Driver 17 for SQL Server">ODBC Driver 17</option>'
+                '</select></label></p>'
+                '<p><label><input type="checkbox" name="trust_certificate" value="yes"> '
+                'Confiar en certificado del servidor (solo redes de confianza)</label></p>'
                 '<p><label><input type="checkbox" name="save" value="yes"> Guardar protegidas en este Windows</label></p>'
                 '<button>Probar conexión y consultar bases</button></form>'
                 '<p>La autenticación Windows usa la identidad de la tarea programada, no necesariamente tu sesión.</p>')
@@ -410,7 +461,9 @@ async def databases_page(request: Request, db_request_id: str = ''):
 async def databases_run(request: Request, db_request_id: str = Form(...),
                         mode: str = Form('sql'), user: str = Form(''),
                         password: str = Form(''), save: str = Form(''),
-                        use_saved: str = Form('')):
+                        use_saved: str = Form(''), driver: str = Form('SQL Server'),
+                        instance: str = Form(''), trust_certificate: str = Form(''),
+                        detected_instance: str = Form('')):
     auth(request)
     # Evita formularios enviados desde otros sitios al conector local.
     origin = request.headers.get('origin')
@@ -424,41 +477,78 @@ async def databases_run(request: Request, db_request_id: str = Form(...),
             if not cred:
                 raise ValueError('No hay credenciales guardadas para este servidor')
             mode, user, password = cred['mode'], cred['user'], cred['password']
-        names = await asyncio.to_thread(sql_databases, item['host'], int(item['port']), mode, user, password)
+            driver = cred.get('driver', 'SQL Server')
+            instance = cred.get('instance', '')
+            trust_certificate = 'yes' if cred.get('trust_certificate') else ''
+        if not instance.strip() and detected_instance.strip():
+            instance = detected_instance.strip()
+        names = await asyncio.to_thread(sql_databases, item['host'], int(item['port']),
+                                        mode, user, password, driver,
+                                        trust_certificate == 'yes', instance)
+        if save == 'yes' and use_saved != 'yes':
+            await asyncio.to_thread(_save_credentials, {'server': server, 'mode': mode,
+                                                       'user': user if mode == 'sql' else '',
+                                                       'password': password if mode == 'sql' else '',
+                                                        'driver': driver, 'instance': instance,
+                                                        'trust_certificate': trust_certificate == 'yes'})
         updated = await asyncio.to_thread(supabase, 'PATCH', 'lan_db_requests',
             params={'id': 'eq.' + db_request_id, 'status': 'eq.pending',
                     'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat()},
             json={'status': 'done', 'database_names': names})
         if not updated:
             raise HTTPException(409, 'La solicitud venció durante la consulta')
-        if save == 'yes' and use_saved != 'yes':
-            try:
-                await asyncio.to_thread(_save_credentials, {'server': server, 'mode': mode,
-                                                           'user': user if mode == 'sql' else '',
-                                                           'password': password if mode == 'sql' else ''})
-            except Exception:
-                logger.warning('Consulta completada, pero no se pudieron guardar las credenciales protegidas')
-        return page('<h1>Consulta completada</h1><p>Se encontraron ' + str(len(names))
-                    + ' bases accesibles. Regresa a Streamlit y pulsa <strong>Recibir bases de datos</strong>.</p>')
+        session = request.cookies.get('lan_session', '')
+        DB_RESULTS[session] = (db_request_id, names)
+        options = ''.join('<option value="' + html.escape(name, quote=True) + '">'
+                          + html.escape(name) + '</option>' for name in names)
+        return page('<h1>Bases de datos encontradas</h1><p>Conexión correcta. '
+                    'Selecciona la base que deseas utilizar:</p>'
+                    '<form method="post" action="/choose-database">'
+                    '<select name="database" required>' + options + '</select>'
+                    '<button>Confirmar base de datos</button></form>'
+                    '<p>La lista de bases ya fue enviada a Supabase. '
+                    'La selección individual aún requiere integración con Streamlit.</p>')
     except HTTPException:
         raise
     except Exception as exc:
-        detail = _safe_sql_error(exc)
-        if detail:
-            state, native_codes, cause = detail
-            logger.warning('Fallo SQL ODBC: SQLSTATE=%s; códigos=%s', state, native_codes)
-            explanation = ('<p><strong>SQLSTATE:</strong> ' + html.escape(state)
-                           + ' | <strong>Código SQL:</strong> ' + html.escape(native_codes)
-                           + '</p><p>' + html.escape(cause) + '</p>')
-        else:
-            logger.warning('Fallo en búsqueda de bases SQL: tipo=%s', type(exc).__name__)
-            explanation = ('<p>Tipo de error: ' + html.escape(type(exc).__name__)
-                           + '. Revisa la configuración del conector.</p>')
-        return page('<h1>No se pudieron consultar las bases</h1>' + explanation
-                    + '<p>La solicitud sigue pendiente si no ha vencido. '
-                    'No se guardaron credenciales por este intento fallido.</p>'
-                    + '<p><a href="/databases?db_request_id=' + quote(db_request_id)
-                    + '">Volver al formulario</a></p>')
+        logger.warning('Fallo en búsqueda de bases SQL: tipo=%s', type(exc).__name__)
+        return page('<h1>No se pudieron consultar las bases</h1><p>Tipo de error: '
+                    + html.escape(type(exc).__name__) + '.</p>'
+                    '<p>Comprueba las credenciales, permisos SQL y certificado TLS. '
+                    'No se guardaron credenciales si la conexión falló.</p>'
+                    '<p>La solicitud sigue pendiente; puedes reintentar.</p>')
+
+@app.post('/choose-database')
+async def choose_database(request: Request, database: str = Form(...)):
+    auth(request)
+    origin = request.headers.get('origin')
+    if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+        raise HTTPException(403, 'Origen de formulario no autorizado')
+    session = request.cookies.get('lan_session', '')
+    entry = DB_RESULTS.get(session)
+    if not entry or database not in entry[1]:
+        raise HTTPException(400, 'Selección no válida o sesión vencida')
+    db_request_id = entry[0]
+    discovery_id = WIZARD_REQUESTS.get(db_request_id)
+    if not discovery_id:
+        raise HTTPException(409, 'La sesión del asistente venció. Inicia otra búsqueda.')
+    try:
+        updated = await asyncio.to_thread(supabase, 'PATCH', 'lan_discovery_requests',
+            params={'id': 'eq.' + discovery_id, 'status': 'eq.pending'},
+            json={'selected_database': database, 'status': 'selected'})
+    except requests.RequestException:
+        raise HTTPException(502, 'No se pudo enviar la selección final a Supabase') from None
+    if not updated:
+        raise HTTPException(409, 'La solicitud ya fue utilizada o venció')
+    DB_RESULTS.pop(session, None)
+    WIZARD_REQUESTS.pop(db_request_id, None)
+    return_url = os.getenv('STREAMLIT_RETURN_URL', 'https://verificadordeprecios.streamlit.app/2_Fuentes_de_datos').strip()
+    if return_url.startswith('https://'):
+        return RedirectResponse(return_url.rstrip('/') + ('&' if '?' in return_url else '?') + urlencode({'lan_result': discovery_id}), status_code=303)
+    return page('<h1>Configuración completada</h1><p>Base de datos: <strong>'
+                + html.escape(database) + '</strong>.</p><p>Para volver automáticamente '
+                'a Streamlit, configura STREAMLIT_RETURN_URL en bridge.env.</p>')
+
 
 def main():
     if not URL or not KEY or not PASSWORD or len(PASSWORD) < 12:
@@ -467,5 +557,90 @@ def main():
                 port=int(os.getenv('BRIDGE_PORT', '8765')))
 
 
+
+# --- Consultas externas de solo lectura; servicio independiente de app.py ---
+import threading
+import time
+
+def _safe_identifier(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', value):
+        raise ValueError('Nombre de tabla o columna no permitido')
+    return '[' + value.replace(']', ']]') + ']'
+
+def _external_query(job):
+    import pyodbc
+    cfg = job['configuration']
+    if cfg.get('engine') != 'SQL Server':
+        raise ValueError('Motor aún no implementado en el conector: ' + str(cfg.get('engine')))
+    host = cfg['host']; port = int(cfg['port'])
+    server_key = _server_key(host, port)
+    creds = _saved_credentials().get(server_key)
+    if not creds:
+        raise ValueError('Guarda primero las credenciales SQL en el asistente Windows para este servidor')
+    driver = creds.get('driver', 'SQL Server')
+    if driver not in ('SQL Server', 'ODBC Driver 17 for SQL Server', 'ODBC Driver 18 for SQL Server') or driver not in pyodbc.drivers():
+        raise ValueError('Controlador ODBC no disponible')
+    target = _sql_target(host, port, creds.get('instance', ''))
+    database = _safe_identifier(cfg['database'])[1:-1]
+    conn = 'DRIVER={' + driver + '};SERVER=' + target + ';DATABASE={' + database + '};Connection Timeout=8;'
+    if driver != 'SQL Server':
+        conn += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if creds.get('trust_certificate') else 'no') + ';'
+    if creds.get('mode') == 'windows':
+        conn += 'Trusted_Connection=yes;'
+    elif creds.get('mode') == 'sql':
+        def escape_odbc(s): return '{' + str(s).replace('}', '}}') + '}'
+        conn += 'UID=' + escape_odbc(creds.get('user', '')) + ';PWD=' + escape_odbc(creds.get('password', '')) + ';'
+    else:
+        raise ValueError('Modo de autenticación no admitido')
+    schema = _safe_identifier(cfg['schema_name'])
+    table = _safe_identifier(cfg['table_name'])
+    code = _safe_identifier(cfg['code_column'])
+    description = _safe_identifier(cfg['description_column'])
+    price = _safe_identifier(cfg['price_column'])
+    query = (f'SELECT TOP (1) RTRIM(CONVERT(nvarchar(4000), {code})), '
+             f'RTRIM(CONVERT(nvarchar(4000), {description})), {price} '
+             f'FROM {schema}.{table} WHERE RTRIM(CONVERT(nvarchar(4000), {code})) = ?')
+    with pyodbc.connect(conn, timeout=8, autocommit=True) as db:
+        cur = db.cursor()
+        cur.execute('SET LOCK_TIMEOUT 5000')
+        cur.execute(query, str(job['barcode']))
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {'barcode': str(row[0] or '').strip(), 'name': str(row[1] or '').strip(),
+            'price': float(row[2]) if row[2] is not None else 0.0}
+
+def _external_worker():
+    logger.info('Servicio de consulta externa iniciado')
+    while True:
+        try:
+            jobs = supabase('GET', 'external_price_jobs', params={
+                'status': 'eq.pending',
+                'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(),
+                'select': 'id,configuration_id,barcode', 'order': 'created_at.asc', 'limit': '10'})
+            for job in jobs:
+                claimed = supabase('PATCH', 'external_price_jobs',
+                    params={'id': 'eq.' + job['id'], 'status': 'eq.pending'},
+                    json={'status': 'processing'})
+                if not claimed:
+                    continue
+                try:
+                    configs = supabase('GET', 'external_price_sources',
+                        params={'id': 'eq.' + job['configuration_id'], 'enabled': 'eq.true',
+                                'select': 'engine,host,port,database,schema_name,table_name,code_column,description_column,price_column'})
+                    if not configs:
+                        raise ValueError('Origen no encontrado o deshabilitado')
+                    product = _external_query({'configuration': configs[0], 'barcode': job['barcode']})
+                    supabase('PATCH', 'external_price_jobs', params={'id': 'eq.' + job['id']},
+                             json={'status': 'done', 'result': product})
+                except Exception as exc:
+                    logger.warning('Consulta externa fallida: %s', type(exc).__name__)
+                    supabase('PATCH', 'external_price_jobs', params={'id': 'eq.' + job['id']},
+                             json={'status': 'error', 'error_message': str(exc)[:250]})
+        except Exception as exc:
+            logger.warning('Worker externo: %s', type(exc).__name__)
+        time.sleep(1)
+
 if __name__ == '__main__':
+    threading.Thread(target=_external_worker, daemon=True, name='external-price-worker').start()
     main()

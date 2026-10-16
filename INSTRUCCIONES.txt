@@ -1,0 +1,16 @@
+VERIFICADOR EXTERNO - INSTALACION
+
+1. Supabase > SQL Editor: ejecutar supabase_consultas_externas.sql.
+2. GitHub: subir pages/3_Consulta_Bases_de_Datos.py (archivo nuevo). NO MODIFICAR app.py.
+3. GitHub: reemplazar bridge.py por el incluido aquí; GitHub Actions debe generar nuevo instalador.
+4. Instalar la nueva compilación del conector Windows y reiniciar su tarea programada.
+5. En el asistente Windows, conectar al servidor SQL y marcar "Guardar protegidas en este Windows".
+   Las credenciales se guardan por IP:puerto bajo la cuenta que ejecuta el conector.
+6. En Streamlit > Consulta Bases de Datos, registrar una conexión con IP, puerto, base,
+   tabla y columnas reales. No hay valores fijos para monica_9_17.
+7. Elegir la conexión, escanear un código y pulsar Consultar precio.
+
+ALCANCE: SQL Server operativo en esta versión; arquitectura configurable para añadir otros motores.
+El verificador original de Supabase permanece sin cambios. No abrir el puerto 8765 a Internet.
+El worker consulta Supabase cada segundo y usa la credencial DPAPI de Windows.
+Si el instalador Windows no incluye pyodbc, agregarlo al workflow de compilación.
