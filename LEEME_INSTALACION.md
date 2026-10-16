@@ -1,73 +1,39 @@
-# Consulta de Precios Multibase — Servidor Windows + Android
+# Consulta de Precios — Puente Windows ↔ Streamlit Cloud
 
-## Qué contiene
+Este paquete añade **descubrimiento de servidores en Windows** y permite recibir en Streamlit Cloud la IP, puerto y motor probable seleccionados. **No reemplaza** `app.py` ni `pages/1_Administracion.py`, y **no configura automáticamente las credenciales SQL ni activa un nuevo origen de precios**.
 
-Este paquete **no reemplaza** `app.py`, `shared.py` ni `pages/1_Administracion.py` de Streamlit. Es un **servidor web LAN independiente** que permite consultar la base local desde Android y, opcionalmente, Supabase.
+## 1. Supabase
 
-- `servidor_local/app.py`: interfaz Android, API de precios, administración de conexión, modos local/nube/automático.
-- `servidor_local/sincronizar.py`: sincronización manual SQL → Supabase (simulación por defecto).
-- `servidor_local/requirements.txt`: dependencias comunes.
-- `servidor_local/requirements_motores_opcionales.txt`: guía de drivers.
-- `servidor_local/config.example.json`: configuración de ejemplo.
-- `servidor_local/INICIAR_WINDOWS.bat`: inicia el servicio web.
+En Supabase > SQL Editor, ejecuta `supabase_bridge.sql` **una sola vez**. La tabla tiene RLS habilitado y no concede acceso a `anon` ni `authenticated`. Solo los componentes de confianza usan `service_role`.
 
-## 1. Instalar en Windows
+## 2. Streamlit Cloud
 
-1. Copie la carpeta `servidor_local` a la computadora Windows que pueda alcanzar la base de datos.
-2. Instale Python 3.11 o 3.12, habilitando `py` en Windows.
-3. Instale el controlador de su motor, por ejemplo: `py -3 -m pip install pyodbc` (SQL Server / Access), `pymysql` (MySQL), `psycopg2-binary` (PostgreSQL), `oracledb` (Oracle). Firebird, Db2 y SQL Anywhere requieren drivers/dialectos adicionales específicos del fabricante; su compatibilidad debe validarse.
-4. **Antes de iniciar**, configure en Windows la variable `LOCAL_ADMIN_PASSWORD` con una contraseña fuerte. Para bases SQL configure `SOURCE_DB_PASSWORD` si aplica. Para nube configure `SUPABASE_URL` y `SUPABASE_ANON_KEY`. Para sincronización, también `SUPABASE_SERVICE_ROLE_KEY`, **solo en el servidor local**.
-5. Ejecute `INICIAR_WINDOWS.bat`. Instalará las dependencias y levantará el servicio en el puerto 8765.
-6. En Windows abra `http://127.0.0.1:8765/admin`, usuario `admin` y la contraseña definida.
-7. Elija motor, dirección, puerto, base, usuario, consulta SQL y modo. Pulse **Guardar configuración** y luego **Probar conexión**.
-8. Desde Android conectado al mismo Wi-Fi, abra `http://IP_DEL_SERVIDOR_WINDOWS:8765/` (reemplace la IP por la IP real de Windows). Permita TCP 8765 **solo en el perfil de red privada** del firewall de Windows.
+Sube **solo** `pages/2_Fuentes_de_datos.py` a tu repositorio (reemplaza la página informativa anterior). Usa los secretos ya configurados `ADMIN_PASSWORD`, `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY`. Nunca publiques esos secretos en GitHub.
 
-## 2. Configurar consulta SQL
+Abre Fuentes de datos e inicia sesión con la contraseña de administración. Introduce la IP privada del equipo Windows que ejecutará el puente (no necesariamente la IP del servidor SQL).
 
-El SQL de búsqueda debe ser un `SELECT` que devuelva `barcode`, `name` y `price`, con parámetro **`:barcode`**. Ejemplo:
+## 3. Windows
 
-```sql
-SELECT CodigoBarra AS barcode, Descripcion AS name, PrecioVenta AS price
-FROM Productos
-WHERE CodigoBarra = :barcode
-```
+Copia `windows_bridge` al equipo Windows de tu negocio. Instala Python 3. Copia `.env.example` como `.env` y configura `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BRIDGE_PASSWORD` (mínimo 12 caracteres) y `ALLOWED_NETWORKS` con las redes autorizadas, por ejemplo `192.168.1.0/24`.
 
-La consulta de sincronización usa las mismas tres columnas, pero sin el filtro por código. **Adapte nombres a la base real**. Use un usuario de **solo lectura**. El servidor valida la forma básica de SELECT, pero no sustituye los permisos de la base.
+Ejecuta `INICIAR_WINDOWS.bat`. Permite TCP 8765 en el firewall **solo desde tu red local de confianza**. La API no debe exponerse directamente a internet. El puente requiere acceso saliente HTTPS a Supabase.
 
-## 3. Modos
+## 4. Búsqueda y devolución
 
-- **local:** busca únicamente en la base de facturación de la LAN. No necesita internet para consultas SQL locales.
-- **cloud:** consulta Supabase por HTTPS (requiere internet).
-- **auto:** consulta la fuente local primero; **solo si hay un error de conexión** utiliza Supabase. Un producto inexistente en la fuente local NO activa el respaldo.
+1. En Streamlit, pulsa **1. Iniciar búsqueda en Windows**.
+2. Pulsa **Abrir búsqueda en Windows** desde un navegador en la misma red. Inicia sesión con `BRIDGE_PASSWORD`.
+3. Especifica una subred permitida (máximo 256 direcciones) y pulsa **Buscar servidores**.
+4. Selecciona un resultado. Windows lo envía a la tabla privada de Supabase usando su propia clave de servicio.
+5. Vuelve a Streamlit y pulsa **3. Recibir selección desde Windows**. Se rellenan IP, puerto y motor probable.
 
-El lector Android **no se conecta directamente a SQL**; abre la web local del servidor Windows. El servicio local debe permanecer encendido. El verificador Streamlit Cloud existente sigue funcionando por separado con Supabase.
+Las solicitudes vencen a los 10 minutos. El motor detectado es **probable**, inferido del puerto. La detección no accede a los datos de facturación ni intenta contraseñas.
 
-## 4. Sincronización a Supabase
+## Limitaciones y seguridad
 
-Desde una terminal en la carpeta `servidor_local`, con el entorno virtual activado:
-
-```powershell
-python sincronizar.py
-```
-
-Muestra el número de productos sin modificar Supabase. Para actualizar, tras verificar los datos:
-
-```powershell
-python sincronizar.py --apply
-```
-
-Pide escribir `ACTUALIZAR`. **Puede sobrescribir precios existentes**. No elimina productos que ya estén en Supabase. Antes de usar, haga copia de seguridad. No programe la tarea hasta validar una sincronización manual.
-
-## 5. Seguridad y limitaciones
-
-- **Nunca suba** `config.json`, contraseñas ni claves de servicio a GitHub.
-- La interfaz `/admin` usa HTTP Basic y está pensada para LAN confiable; como HTTP no cifra las credenciales, **adminístrela desde el propio Windows por `127.0.0.1`**, o coloque HTTPS delante si necesita acceso remoto.
-- La interfaz de consulta y `/api/product` no requieren contraseña: limite el puerto 8765 a dispositivos de confianza de su LAN/VLAN. No haga port-forward al internet público.
-- El modo LAN es una web **separada** de la aplicación Streamlit Cloud, no un selector integrado en esa aplicación. Integración en una sola interfaz y autenticación más avanzada serían desarrollos posteriores.
-- Los motores Oracle, Db2, Firebird, SQL Anywhere y ODBC genérico figuran como **adaptadores configurables**, pero requieren controladores/dialectos y pruebas en el entorno real. El adaptador ODBC genérico actual usa el dialecto `mssql+pyodbc`; no se garantiza compatibilidad con cualquier driver no SQL Server.
-- `api_rest` supone una API GET que devuelve un objeto `{barcode,name,price}`, una lista de objetos o `{product:{...}}`; otros formatos requieren adaptador específico.
-- El servidor muestra resultados durante 10 segundos. No se garantiza foco de escaneo en todos los navegadores Android hasta probarlo en el dispositivo.
-
-## 6. Diagnóstico
-
-Si falla **Probar conexión**, revise la consola Windows, la IP, firewall, driver instalado, credenciales y nombres reales de tabla/columnas. No comparta contraseñas ni tokens en capturas.
+- **No se abre un programa de Windows automáticamente** desde Streamlit Cloud: el usuario abre el enlace al puente local desde un dispositivo que tenga acceso a la LAN.
+- La aplicación Streamlit Cloud no puede conectarse directamente a `192.168.x.x`.
+- Este paquete **solo descubre y devuelve servidores**; no implementa consultas SQL ni sincronización de precios. Para ello se utiliza el conector multibase local de la etapa anterior y se configura con permisos de solo lectura.
+- El puente Windows necesita internet para enviar la selección a Supabase. La consulta de precios totalmente offline debe ejecutarse en un servicio local independiente.
+- El puente sirve HTTP en LAN; úsalo solo en una red de confianza. Para redes compartidas, configura un proxy HTTPS y autenticación reforzada.
+- Nunca compartas `.env`, claves de servicio ni contraseñas. No las pongas en URLs ni en campos de Streamlit.
+- Se debe probar en tu Windows real; las pruebas realizadas aquí son de sintaxis, no de red.
