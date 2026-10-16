@@ -671,6 +671,14 @@ def _metadata_query(job):
     with pyodbc.connect(conn, timeout=8, autocommit=True) as db:
         cur = db.cursor()
         cur.execute('SET LOCK_TIMEOUT 5000')
+        if kind == 'connection':
+            # La conexión ya está abierta en la base solicitada.
+            # Verificar ejecución real de una consulta de solo lectura.
+            cur.execute('SELECT DB_NAME(), 1')
+            row = cur.fetchone()
+            if not row or str(row[0]).casefold() != str(database).casefold() or row[1] != 1:
+                raise ValueError('La base de datos respondió con un resultado inesperado')
+            return {'connected': True, 'database': str(row[0])}
         if kind == 'databases':
             cur.execute("SELECT name FROM sys.databases WHERE state_desc='ONLINE' AND HAS_DBACCESS(name)=1 ORDER BY name")
             return [str(r[0]) for r in cur.fetchall()][:250]

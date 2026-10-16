@@ -1,42 +1,11 @@
-ACTUALIZACIONES DEL CONECTOR - PRIMERA VERSION
+PRUEBA DE CONEXION REAL - Fuentes de datos
 
-ARCHIVOS
-1) .github/workflows/windows-build.yml
-   Sustituye el workflow actual. Conserva las compilaciones existentes y agrega
-   un paquete de actualizacion + publicacion opcional en GitHub Releases.
+1. Ejecuta supabase_prueba_conexion.sql en Supabase SQL Editor.
+2. Sustituye pages/2_Fuentes_de_datos.py por 2_Fuentes_de_datos.py.
+3. Sustituye bridge.py por bridge.py del paquete.
+4. GitHub Actions: compila el conector Windows, instala la versión nueva y reinicia la tarea ConsultaPreciosConectorLAN.
+5. Verifica http://127.0.0.1:8765/health y pulsa Probar conexion en Fuentes de datos.
 
-2) windows_bridge/Actualizar-Conector.ps1
-   Nuevo archivo. Copialo al repositorio y tambien a la computadora Windows.
-   No requiere instalar otro EXE para ejecutar este actualizador manual.
-
-COMO PUBLICAR UNA VERSION
-- Sube los cambios de bridge.py y los archivos de este paquete a GitHub.
-- En Actions > Construir conector Windows > Run workflow,
-  escribe version: 1.1.0 (o la siguiente que corresponda).
-- GitHub compila el EXE y publica el ZIP en Releases.
-- Requiere que GitHub Actions tenga permiso para crear Releases:
-  Settings > Actions > General > Workflow permissions > Read and write permissions
-  (si la politica del repositorio lo permite).
-
-COMO ACTUALIZAR WINDOWS SIN INSTALADOR
-- Guarda Actualizar-Conector.ps1 en la computadora del conector.
-- Abre PowerShell COMO ADMINISTRADOR y ejecuta:
-  powershell -NoProfile -ExecutionPolicy Bypass -File "C:\RUTA\Actualizar-Conector.ps1"
-- Escribe SI para autorizar la actualizacion.
-- El script descarga el ZIP de la ultima Release, comprueba SHA256,
-  respalda el EXE, detiene la tarea, sustituye el EXE y reinicia.
-- No toca C:\ProgramData\ConsultaPrecios\bridge.env ni sql_credentials.dpapi.
-
-IMPORTANTE
-- Esta es una solucion de ACTUALIZACION MANUAL CON UN COMANDO, no autoactualizacion
-  desatendida. No cambia el instalador existente.
-- SHA256 descargado del mismo Release verifica integridad, pero NO sustituye
-  firma digital/autenticacion independiente del editor. Para despliegues de
-  alta seguridad, firma el EXE y verifica la firma antes de ejecutarlo.
-- Requiere que el proceso se ejecute bajo la misma cuenta Windows para recuperar
-  credenciales DPAPI previamente guardadas.
-- Requiere probar el flujo en una maquina de ensayo antes de usar en produccion.
-- Se asume el nombre actual de tarea ConsultaPreciosConectorLAN y ruta de EXE
-  C:\Program Files\ConsultaPreciosConector\ConectorConsultaPrecios.exe.
-- No incluye build_windows.ps1 ni el .iss porque no fueron compartidos;
-  reutiliza esos dos archivos EXISTENTES sin cambiarlos.
+No modifica app.py ni el verificador de Supabase. La prueba abre la base de datos guardada y ejecuta SELECT DB_NAME(), 1.
+Por ahora esta prueba soporta SQL Server; otras bases requieren adaptadores.
+No publiques el puerto 8765 a Internet.
