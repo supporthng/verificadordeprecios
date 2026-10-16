@@ -5,6 +5,7 @@ import ipaddress
 import os
 import secrets
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 import socket
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +19,10 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 
+CONFIG_SOURCE = "variables de entorno"
+
 def load_env():
+    global CONFIG_SOURCE
     """Prefer explicit config; then ProgramData (installer); then exe directory (portable)."""
     program_data = Path(os.environ.get('PROGRAMDATA', str(Path.home()))) / 'ConsultaPrecios' / 'bridge.env'
     exe_dir = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -29,10 +33,12 @@ def load_env():
     ]
     for path in candidates:
         if path is not None and path.is_file():
+            CONFIG_SOURCE = str(path)
             for line in path.read_text(encoding='utf-8-sig').splitlines():
                 if '=' in line and not line.lstrip().startswith('#'):
                     key, value = line.split('=', 1)
-                    os.environ.setdefault(key.strip(), value.strip())
+                    # El archivo seleccionado es la fuente autoritativa, no variables antiguas.
+                    os.environ[key.strip()] = value.strip()
             return
 
 
@@ -47,6 +53,18 @@ PORTS = [(1433, 'SQL Server'), (3306, 'MySQL / MariaDB'),
          (50000, 'IBM Db2'), (2638, 'SQL Anywhere')]
 app = FastAPI(title='Puente LAN - Consulta de Precios', docs_url=None, redoc_url=None)
 logger = logging.getLogger('conector_lan')
+logger.setLevel(logging.INFO)
+try:
+    log_dir = Path(os.environ.get('PROGRAMDATA', str(Path.home()))) / 'ConsultaPrecios'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(log_dir / 'conector.log', maxBytes=500_000,
+                                  backupCount=2, encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+    logger.addHandler(handler)
+except OSError:
+    # El conector sigue funcionando si no tiene permiso para crear el registro.
+    pass
+logger.info('Conector iniciado; origen de configuración: %s', CONFIG_SOURCE)
 SESSIONS = set()
 
 
@@ -57,8 +75,16 @@ def supabase(method, path, **kwargs):
                                 headers={'apikey': KEY, 'Authorization': f'Bearer {KEY}',
                                          'Content-Type': 'application/json', 'Prefer': 'return=representation'},
                                 timeout=12, **kwargs)
+    logger.info('Supabase %s %s: HTTP %s; tipo=%s; bytes=%s',
+                method, path, response.status_code,
+                response.headers.get('Content-Type', 'desconocido'), len(response.content))
     response.raise_for_status()
-    return response.json()
+    try:
+        return response.json()
+    except ValueError:
+        logger.error('Supabase devolvió una respuesta que no es JSON válido')
+        raise
+
 
 
 def auth(request):
@@ -145,11 +171,13 @@ async def scan(request: Request, request_id: str = Form(...), network: str = For
                     'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(), 'select': 'id'})
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else 'desconocido'
-        logger.exception('Error HTTP consultando solicitud de descubrimiento: %s', status)
+        logger.error('Error HTTP consultando solicitud de descubrimiento: HTTP %s', status)
         raise HTTPException(502, f'Supabase rechazó la consulta (HTTP {status}). Revisa URL, clave service_role y permisos de la tabla.') from None
     except (requests.RequestException, RuntimeError, ValueError) as exc:
-        logger.exception('Error al consultar solicitud de descubrimiento')
-        raise HTTPException(502, 'No se pudo consultar Supabase. Revisa la configuración del conector y la conectividad.') from None
+        # No registrar la excepción completa: algunas bibliotecas incluyen datos sensibles.
+        tipo = type(exc).__name__
+        logger.error('Error consultando Supabase: %s', tipo)
+        raise HTTPException(502, f'Error de consulta a Supabase: {tipo}. Revisa conector.log en ProgramData\\ConsultaPrecios.') from None
     if not rows:
         raise HTTPException(400, 'Solicitud inexistente o vencida. Vuelve a Streamlit.')
     jobs = [(host, port, engine) for host in subnet.hosts() for port, engine in PORTS]
