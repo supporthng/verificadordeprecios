@@ -5,6 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $task = 'ConsultaPreciosConectorLAN'
 if ($Remove) {
+    Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
     exit 0
 }
