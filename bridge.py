@@ -641,6 +641,77 @@ def _external_worker():
             logger.warning('Worker externo: %s', type(exc).__name__)
         time.sleep(1)
 
+
+
+# Descubrimiento de esquemas desde Windows (sin exponer credenciales a Streamlit).
+def _metadata_query(job):
+    import pyodbc
+    host, port = job['host'], int(job['port'])
+    creds = _saved_credentials().get(_server_key(host, port))
+    if not creds:
+        raise ValueError('No hay credenciales protegidas para este servidor. Usa el asistente Windows.')
+    driver = creds.get('driver', 'SQL Server')
+    if driver not in pyodbc.drivers():
+        raise ValueError('Controlador ODBC no instalado')
+    target = _sql_target(host, port, creds.get('instance', ''))
+    database = job.get('database')
+    if database:
+        _safe_identifier(database)
+    else:
+        database = 'master'
+    conn = f'DRIVER={{{driver}}};SERVER={target};DATABASE={{{database}}};Connection Timeout=8;'
+    if driver != 'SQL Server':
+        conn += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if creds.get('trust_certificate') else 'no') + ';'
+    if creds.get('mode') == 'windows':
+        conn += 'Trusted_Connection=yes;'
+    else:
+        def esc(v): return '{' + str(v).replace('}', '}}') + '}'
+        conn += 'UID=' + esc(creds.get('user', '')) + ';PWD=' + esc(creds.get('password', '')) + ';'
+    kind = job['kind']
+    with pyodbc.connect(conn, timeout=8, autocommit=True) as db:
+        cur = db.cursor()
+        cur.execute('SET LOCK_TIMEOUT 5000')
+        if kind == 'databases':
+            cur.execute("SELECT name FROM sys.databases WHERE state_desc='ONLINE' AND HAS_DBACCESS(name)=1 ORDER BY name")
+            return [str(r[0]) for r in cur.fetchall()][:250]
+        if kind == 'tables':
+            cur.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY TABLE_SCHEMA,TABLE_NAME")
+            return [{'schema':str(r[0]),'table':str(r[1])} for r in cur.fetchall()][:500]
+        if kind == 'columns':
+            schema, table = job.get('schema_name'), job.get('table_name')
+            _safe_identifier(schema); _safe_identifier(table)
+            cur.execute('SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION', schema, table)
+            return [{'name':str(r[0]),'type':str(r[1])} for r in cur.fetchall()][:300]
+    raise ValueError('Tipo de descubrimiento no admitido')
+
+
+def _metadata_worker():
+    logger.info('Servicio de metadatos externos iniciado')
+    while True:
+        try:
+            jobs = supabase('GET', 'external_metadata_jobs', params={
+                'status':'eq.pending',
+                'expires_at':'gt.'+datetime.now(timezone.utc).isoformat(),
+                'select':'id,host,port,database,kind,schema_name,table_name',
+                'order':'created_at.asc', 'limit':'10'})
+            for job in jobs:
+                claimed = supabase('PATCH','external_metadata_jobs',
+                    params={'id':'eq.'+job['id'],'status':'eq.pending'},
+                    json={'status':'processing'})
+                if not claimed: continue
+                try:
+                    result = _metadata_query(job)
+                    supabase('PATCH','external_metadata_jobs',params={'id':'eq.'+job['id']},
+                        json={'status':'done','result':result})
+                except Exception as exc:
+                    logger.warning('Metadatos: %s',type(exc).__name__)
+                    supabase('PATCH','external_metadata_jobs',params={'id':'eq.'+job['id']},
+                        json={'status':'error','error_message':str(exc)[:200]})
+        except Exception as exc:
+            logger.warning('Worker metadatos: %s',type(exc).__name__)
+        time.sleep(1)
+
 if __name__ == '__main__':
     threading.Thread(target=_external_worker, daemon=True, name='external-price-worker').start()
+    threading.Thread(target=_metadata_worker, daemon=True, name='external-metadata-worker').start()
     main()

@@ -1,16 +1,18 @@
-VERIFICADOR EXTERNO - INSTALACION
+ACTUALIZACIÓN — AUTOCOMPLETADO DE CONEXIONES EXTERNAS
 
-1. Supabase > SQL Editor: ejecutar supabase_consultas_externas.sql.
-2. GitHub: subir pages/3_Consulta_Bases_de_Datos.py (archivo nuevo). NO MODIFICAR app.py.
-3. GitHub: reemplazar bridge.py por el incluido aquí; GitHub Actions debe generar nuevo instalador.
-4. Instalar la nueva compilación del conector Windows y reiniciar su tarea programada.
-5. En el asistente Windows, conectar al servidor SQL y marcar "Guardar protegidas en este Windows".
-   Las credenciales se guardan por IP:puerto bajo la cuenta que ejecuta el conector.
-6. En Streamlit > Consulta Bases de Datos, registrar una conexión con IP, puerto, base,
-   tabla y columnas reales. No hay valores fijos para monica_9_17.
-7. Elegir la conexión, escanear un código y pulsar Consultar precio.
+1. app.py permanece intacto.
+2. Supabase SQL Editor: ejecutar supabase_consultas_externas.sql (es idempotente).
+3. En GitHub, reemplazar pages/3_Consulta_Bases_de_Datos.py por este archivo.
+4. En GitHub, reemplazar bridge.py por este archivo; compilar el instalador Windows mediante GitHub Actions.
+5. Instalar la nueva versión Windows y REINICIAR el conector. Verificar /health.
+6. En Streamlit, abrir Consulta de precios — Bases externas > Administrar conexiones.
+7. Seleccionar conexión guardada, Detectar bases de datos, elegir base, Detectar tablas y vistas,
+   elegir tabla, Detectar columnas, elegir código/descripción/precio y Guardar configuración.
+8. Escanear código para consultar. La fuente Supabase de app.py no cambia.
 
-ALCANCE: SQL Server operativo en esta versión; arquitectura configurable para añadir otros motores.
-El verificador original de Supabase permanece sin cambios. No abrir el puerto 8765 a Internet.
-El worker consulta Supabase cada segundo y usa la credencial DPAPI de Windows.
-Si el instalador Windows no incluye pyodbc, agregarlo al workflow de compilación.
+NOTAS
+- SQL Server es el motor implementado actualmente; no afirmar soporte operativo de otros motores.
+- La selección del asistente LAN puede ser monica_global; desde aquí se elige cualquier base accesible.
+- El descubrimiento de tablas/columnas se hace desde Windows con las credenciales DPAPI ya guardadas.
+- No abrir el puerto 8765 a Internet. Consultas de solo lectura.
+- La configuración del origen no equivale a validar el contenido de la tabla elegida.
