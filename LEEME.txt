@@ -1,0 +1,12 @@
+ACTUALIZACION DE CREDENCIALES SQL WINDOWS
+
+1. Sustituye windows_bridge/bridge.py en GitHub por este archivo.
+2. Reconstruye el instalador en GitHub Actions e instálalo en 10.0.0.190.
+3. Reinicia el conector y crea una solicitud nueva desde Streamlit.
+4. Abre la consulta Windows, introduce usuario SQL y contraseña y marca Guardar.
+5. El archivo sql_credentials.dpapi se protege mediante DPAPI de Windows (CurrentUser).
+6. La tarea programada debe seguir ejecutándose con la MISMA cuenta Windows para poder descifrar las credenciales.
+7. No subas bridge.env ni sql_credentials.dpapi a GitHub.
+8. SQL Server debe presentar un certificado TLS confiable para el equipo conector.
+9. La cuenta SQL debe tener solo permisos de lectura.
+10. La página del conector usa HTTP local; para ingresar contraseñas accede desde el propio equipo Windows mediante http://127.0.0.1:8765, no desde otra computadora de la LAN.

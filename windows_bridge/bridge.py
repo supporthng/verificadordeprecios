@@ -250,88 +250,171 @@ async def select(request: Request, request_id: str = Form(...), host: str = Form
 
 
 
-# Listado de bases: se ejecuta solo en Windows, nunca desde Streamlit Cloud.
-# Requiere un usuario SQL de solo lectura configurado localmente en bridge.env.
-def sql_databases(host, port):
+# Credenciales SQL protegidas con DPAPI para la cuenta Windows del conector.
+# Nunca se transmiten a Supabase ni se escriben en bridge.env.
+import base64
+import ctypes
+import json
+from ctypes import wintypes
+
+CREDENTIALS_PATH = Path(os.environ.get('PROGRAMDATA', str(Path.home()))) / 'ConsultaPrecios' / 'sql_credentials.dpapi'
+
+class _BLOB(ctypes.Structure):
+    _fields_ = [('cbData', wintypes.DWORD), ('pbData', ctypes.POINTER(ctypes.c_byte))]
+
+def _blob(data):
+    buf = ctypes.create_string_buffer(data)
+    return _BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_byte))), buf
+
+def _dpapi(data, decrypt=False):
+    if os.name != 'nt':
+        raise RuntimeError('El almacenamiento seguro requiere Windows')
+    source, keepalive = _blob(data)
+    result = _BLOB()
+    crypt = ctypes.windll.crypt32
+    fn = crypt.CryptUnprotectData if decrypt else crypt.CryptProtectData
+    if decrypt:
+        ok = fn(ctypes.byref(source), None, None, None, None, 0x01, ctypes.byref(result))
+    else:
+        ok = fn(ctypes.byref(source), 'ConsultaPrecios SQL', None, None, None, 0x01, ctypes.byref(result))
+    if not ok:
+        raise ctypes.WinError()
+    try:
+        return ctypes.string_at(result.pbData, result.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(result.pbData)
+
+def _saved_credentials():
+    if not CREDENTIALS_PATH.is_file():
+        return {}
+    return json.loads(_dpapi(base64.b64decode(CREDENTIALS_PATH.read_bytes()), True).decode('utf-8'))
+
+def _save_credentials(data):
+    CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    saved = _saved_credentials()
+    saved[data['server']] = {'mode': data['mode'], 'user': data['user'], 'password': data['password']}
+    encrypted = base64.b64encode(_dpapi(json.dumps(saved).encode('utf-8')))
+    tmp = CREDENTIALS_PATH.with_suffix('.tmp')
+    tmp.write_bytes(encrypted)
+    tmp.replace(CREDENTIALS_PATH)
+
+def _server_key(host, port):
+    return f'{host}:{int(port)}'
+
+def sql_databases(host, port, mode, user='', password=''):
     import pyodbc
-    user = os.getenv('SQL_READ_USER', '').strip()
-    password = os.getenv('SQL_READ_PASSWORD', '')
-    driver = os.getenv('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server').strip()
-    if not user or not password:
-        raise RuntimeError('Faltan SQL_READ_USER o SQL_READ_PASSWORD en bridge.env')
-    # No aceptar un servidor arbitrario fuera de la LAN autorizada.
     ip = ipaddress.ip_address(host)
     if ip.version != 4 or not any(ip in network for network in ALLOWED):
         raise ValueError('IP fuera de la red autorizada')
     if not 1 <= int(port) <= 65535:
         raise ValueError('Puerto inválido')
-    # Driver configurable; no permitir inyección de parámetros ODBC.
+    driver = os.getenv('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server').strip()
     if any(ch in driver for ch in '{};\x00'):
         raise ValueError('Nombre de controlador ODBC inválido')
-    conn_str = (
-        f'DRIVER={{{driver}}};SERVER=tcp:{host},{int(port)};'
-        'DATABASE=master;'
-        'Encrypt=yes;TrustServerCertificate=no;Connection Timeout=6;'
-        'ApplicationIntent=ReadOnly;'
-    )
-    # ODBC escape para credenciales con punto y coma o llaves.
-    def enc(value):
-        return '{' + value.replace('}', '}}') + '}'
-    conn_str += 'UID=' + enc(user) + ';PWD=' + enc(password) + ';'
+    conn_str = (f'DRIVER={{{driver}}};SERVER=tcp:{host},{int(port)};'
+                'DATABASE=master;Encrypt=yes;TrustServerCertificate=no;'
+                'Connection Timeout=6;ApplicationIntent=ReadOnly;')
+    if mode == 'windows':
+        conn_str += 'Trusted_Connection=yes;'
+    elif mode == 'sql':
+        if not user or not password:
+            raise ValueError('Indica usuario y contraseña SQL')
+        def enc(value):
+            return '{' + value.replace('}', '}}') + '}'
+        conn_str += 'UID=' + enc(user) + ';PWD=' + enc(password) + ';'
+    else:
+        raise ValueError('Autenticación inválida')
     with pyodbc.connect(conn_str, timeout=6, autocommit=True) as connection:
         cursor = connection.cursor()
         cursor.execute("SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' AND HAS_DBACCESS(name) = 1 ORDER BY name")
         return [str(row[0]) for row in cursor.fetchall()][:200]
 
+async def _db_request(db_request_id):
+    import uuid
+    uuid.UUID(db_request_id)
+    rows = await asyncio.to_thread(supabase, 'GET', 'lan_db_requests',
+        params={'id': 'eq.' + db_request_id, 'status': 'eq.pending',
+                'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(),
+                'select': 'id,host,port,engine'})
+    if not rows:
+        raise HTTPException(400, 'Solicitud inexistente, vencida o utilizada. Regresa a Streamlit.')
+    if rows[0]['engine'] != 'SQL Server':
+        raise HTTPException(400, 'Solo se admite SQL Server')
+    return rows[0]
 
 @app.get('/databases')
-def databases_page(request: Request, db_request_id: str = ''):
+async def databases_page(request: Request, db_request_id: str = ''):
     if request.cookies.get('lan_session', '') not in SESSIONS:
         return RedirectResponse('/login?db_request_id=' + quote(db_request_id))
+    try:
+        item = await _db_request(db_request_id)
+    except Exception:
+        return page('<h1>Solicitud vencida o inválida</h1><p>Inicia otra búsqueda desde Streamlit.</p>')
+    host, port = item['host'], item['port']
+    server = _server_key(host, port)
+    try:
+        saved = await asyncio.to_thread(_saved_credentials)
+        has_saved = server in saved
+    except Exception:
+        has_saved = False
     rid = html.escape(db_request_id, quote=True)
-    return page('<h1>Buscar bases de datos de SQL Server</h1>'
-                '<p>La consulta se ejecuta en este equipo Windows con credenciales locales de solo lectura.</p>'
-                '<form method="post" action="/databases">'
-                f'<input type="hidden" name="db_request_id" value="{rid}">'
-                '<button>Consultar bases de datos</button></form>')
-
+    content = ('<h1>Conectar a SQL Server</h1><p>Servidor: <strong>' + html.escape(server) + '</strong></p>'
+               '<p>La contraseña se utiliza solo en Windows; no se envía a Supabase.</p>'
+               '<form method="post" action="/databases">'
+               f'<input type="hidden" name="db_request_id" value="{rid}">')
+    if has_saved:
+        content += ('<p>Hay credenciales protegidas guardadas para este servidor.</p>'
+                    '<button name="use_saved" value="yes">Conectar con credenciales guardadas</button><hr>')
+    content += ('<label>Autenticación <select name="mode">'
+                '<option value="sql">SQL Server (usuario y contraseña)</option>'
+                '<option value="windows">Windows (cuenta que ejecuta el conector)</option>'
+                '</select></label><p><label>Usuario SQL <input name="user" autocomplete="username"></label></p>'
+                '<p><label>Contraseña SQL <input type="password" name="password" autocomplete="current-password"></label></p>'
+                '<p><label><input type="checkbox" name="save" value="yes"> Guardar protegidas en este Windows</label></p>'
+                '<button>Probar conexión y consultar bases</button></form>'
+                '<p>La autenticación Windows usa la identidad de la tarea programada, no necesariamente tu sesión.</p>')
+    return page(content)
 
 @app.post('/databases')
-async def databases_run(request: Request, db_request_id: str = Form(...)):
+async def databases_run(request: Request, db_request_id: str = Form(...),
+                        mode: str = Form('sql'), user: str = Form(''),
+                        password: str = Form(''), save: str = Form(''),
+                        use_saved: str = Form('')):
     auth(request)
+    # Evita formularios enviados desde otros sitios al conector local.
+    origin = request.headers.get('origin')
+    if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+        raise HTTPException(403, 'Origen de formulario no autorizado')
     try:
-        # Solo procesar una solicitud nueva, vigente y creada desde Streamlit.
-        import uuid
-        uuid.UUID(db_request_id)
-        rows = await asyncio.to_thread(supabase, 'GET', 'lan_db_requests',
-            params={'id': 'eq.' + db_request_id, 'status': 'eq.pending',
-                    'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(),
-                    'select': 'id,host,port,engine'})
-        if not rows:
-            raise HTTPException(400, 'Solicitud inexistente, vencida o ya utilizada. Regresa a Streamlit.')
-        item = rows[0]
-        if item['engine'] != 'SQL Server':
-            raise HTTPException(400, 'Este botón solo admite SQL Server')
-        names = await asyncio.to_thread(sql_databases, item['host'], int(item['port']))
+        item = await _db_request(db_request_id)
+        server = _server_key(item['host'], item['port'])
+        if use_saved == 'yes':
+            cred = (await asyncio.to_thread(_saved_credentials)).get(server)
+            if not cred:
+                raise ValueError('No hay credenciales guardadas para este servidor')
+            mode, user, password = cred['mode'], cred['user'], cred['password']
+        names = await asyncio.to_thread(sql_databases, item['host'], int(item['port']), mode, user, password)
+        if save == 'yes' and use_saved != 'yes':
+            await asyncio.to_thread(_save_credentials, {'server': server, 'mode': mode,
+                                                       'user': user if mode == 'sql' else '',
+                                                       'password': password if mode == 'sql' else ''})
         updated = await asyncio.to_thread(supabase, 'PATCH', 'lan_db_requests',
             params={'id': 'eq.' + db_request_id, 'status': 'eq.pending',
                     'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat()},
             json={'status': 'done', 'database_names': names})
         if not updated:
             raise HTTPException(409, 'La solicitud venció durante la consulta')
-        return page('<h1>Consulta completada</h1><p>Se encontraron '
-                    + str(len(names)) + ' bases accesibles. Regresa a Streamlit y pulsa '
-                    '<strong>Recibir bases de datos</strong>.</p>')
+        return page('<h1>Consulta completada</h1><p>Se encontraron ' + str(len(names))
+                    + ' bases accesibles. Regresa a Streamlit y pulsa <strong>Recibir bases de datos</strong>.</p>')
     except HTTPException:
         raise
     except Exception as exc:
-        # No registrar cadenas de conexión ni mensajes ODBC que puedan incluir secretos.
         logger.warning('Fallo en búsqueda de bases SQL: tipo=%s', type(exc).__name__)
-        return page('<h1>No se pudieron consultar las bases</h1>'
-                    '<p>Revisa el usuario SQL de solo lectura, el controlador ODBC 18 y '
-                    'el certificado TLS de SQL Server. Tipo de error: '
+        return page('<h1>No se pudieron consultar las bases</h1><p>Tipo de error: '
                     + html.escape(type(exc).__name__) + '.</p>'
-                    '<p>La solicitud no fue completada; puedes reintentar.</p>')
+                    '<p>Comprueba las credenciales, permisos SQL y certificado TLS. '
+                    'No se guardaron credenciales si la conexión falló.</p>'
+                    '<p>La solicitud sigue pendiente; puedes reintentar.</p>')
 
 def main():
     if not URL or not KEY or not PASSWORD or len(PASSWORD) < 12:
