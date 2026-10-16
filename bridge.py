@@ -1,4 +1,3 @@
-
 """Puente de descubrimiento LAN, sin credenciales SQL ni escritura en facturación."""
 import asyncio
 import html
@@ -550,6 +549,116 @@ async def choose_database(request: Request, database: str = Form(...)):
                 'a Streamlit, configura STREAMLIT_RETURN_URL en bridge.env.</p>')
 
 
+
+# Procesador de solicitudes de metadatos del verificador externo.
+# No altera las rutas existentes ni guarda credenciales SQL en Supabase.
+import threading
+import time
+
+
+def _metadata_identifier(value):
+    if not isinstance(value, str) or not value or len(value) > 128 or '\x00' in value:
+        raise ValueError('Identificador SQL inválido')
+    return '[' + value.replace(']', ']]') + ']'
+
+
+def _metadata_connection(host, port, database):
+    import pyodbc
+    server_key = _server_key(host, port)
+    cred = _saved_credentials().get(server_key)
+    if not cred:
+        raise ValueError('No hay credenciales SQL guardadas para este servidor Windows')
+    driver = cred.get('driver', 'SQL Server')
+    if driver not in ('SQL Server', 'ODBC Driver 17 for SQL Server', 'ODBC Driver 18 for SQL Server'):
+        raise ValueError('Controlador SQL no admitido')
+    if driver not in pyodbc.drivers():
+        raise ValueError('Controlador ODBC no instalado')
+    target = _sql_target(host, port, cred.get('instance', ''))
+    db = database or 'master'
+    if not isinstance(db, str) or not db or len(db) > 128 or any(c in db for c in ';{}\x00'):
+        raise ValueError('Nombre de base de datos inválido')
+    cs = f'DRIVER={{{driver}}};SERVER={target};DATABASE={db};Connection Timeout=8;'
+    if driver != 'SQL Server':
+        cs += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if cred.get('trust_certificate') else 'no') + ';'
+    if cred.get('mode') == 'windows':
+        cs += 'Trusted_Connection=yes;'
+    elif cred.get('mode') == 'sql':
+        def esc(v):
+            return '{' + str(v).replace('}', '}}') + '}'
+        cs += 'UID=' + esc(cred.get('user', '')) + ';PWD=' + esc(cred.get('password', '')) + ';'
+    else:
+        raise ValueError('Modo de autenticación no admitido')
+    return pyodbc.connect(cs, timeout=8, autocommit=True)
+
+
+def _metadata_execute(job):
+    host, port = str(job['host']), int(job['port'])
+    kind = job['kind']
+    if kind not in ('databases', 'tables', 'columns'):
+        raise ValueError('Tipo de solicitud desconocido')
+    with _metadata_connection(host, port, job.get('database')) as cn:
+        cursor = cn.cursor()
+        if kind == 'databases':
+            cursor.execute("SELECT name FROM sys.databases WHERE state_desc='ONLINE' AND HAS_DBACCESS(name)=1 ORDER BY name")
+            return [str(r[0]) for r in cursor.fetchmany(500)]
+        if not job.get('database'):
+            raise ValueError('Debes seleccionar una base de datos')
+        if kind == 'tables':
+            cursor.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY TABLE_SCHEMA,TABLE_NAME")
+            return [{'schema': str(r[0]), 'table': str(r[1])} for r in cursor.fetchmany(1000)]
+        schema = job.get('schema_name') or 'dbo'
+        table = job.get('table_name')
+        _metadata_identifier(schema)
+        _metadata_identifier(table)
+        cursor.execute('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION', schema, table)
+        return [str(r[0]) for r in cursor.fetchmany(500)]
+
+
+def _metadata_poll_once():
+    now = datetime.now(timezone.utc).isoformat()
+    jobs = supabase('GET', 'external_metadata_jobs', params={
+        'status': 'eq.pending', 'expires_at': 'gt.' + now,
+        'order': 'created_at.asc', 'limit': '5',
+        'select': 'id,kind,host,port,database,schema_name,table_name'})
+    for job in jobs:
+        jid = job['id']
+        claimed = supabase('PATCH', 'external_metadata_jobs', params={
+            'id': 'eq.' + jid, 'status': 'eq.pending',
+            'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat()},
+            json={'status': 'processing'})
+        if not claimed:
+            continue
+        try:
+            result = _metadata_execute(job)
+            supabase('PATCH', 'external_metadata_jobs', params={
+                'id': 'eq.' + jid, 'status': 'eq.processing'},
+                json={'status': 'done', 'result': result, 'error_message': None})
+            logger.info('Metadatos procesados: tipo=%s; registros=%s', job['kind'], len(result))
+        except Exception as exc:
+            logger.warning('Error de metadatos: tipo=%s', type(exc).__name__)
+            try:
+                supabase('PATCH', 'external_metadata_jobs', params={
+                    'id': 'eq.' + jid, 'status': 'eq.processing'},
+                    json={'status': 'error', 'error_message': str(exc)[:350]})
+            except Exception:
+                logger.exception('No se pudo publicar error de metadatos')
+
+
+def _metadata_worker():
+    while True:
+        try:
+            _metadata_poll_once()
+        except Exception as exc:
+            logger.warning('Sondeo de metadatos falló: %s', type(exc).__name__)
+        time.sleep(3)
+
+
+@app.on_event('startup')
+def _start_metadata_worker():
+    thread = threading.Thread(target=_metadata_worker, name='metadata-worker', daemon=True)
+    thread.start()
+    logger.info('Procesador de external_metadata_jobs iniciado')
+
 def main():
     if not URL or not KEY or not PASSWORD or len(PASSWORD) < 12:
         raise SystemExit('Configura bridge.env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY y BRIDGE_PASSWORD (12+ caracteres).')
@@ -557,169 +666,5 @@ def main():
                 port=int(os.getenv('BRIDGE_PORT', '8765')))
 
 
-
-# --- Consultas externas de solo lectura; servicio independiente de app.py ---
-import threading
-import time
-
-def _safe_identifier(value):
-    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', value):
-        raise ValueError('Nombre de tabla o columna no permitido')
-    return '[' + value.replace(']', ']]') + ']'
-
-def _external_query(job):
-    import pyodbc
-    cfg = job['configuration']
-    if cfg.get('engine') != 'SQL Server':
-        raise ValueError('Motor aún no implementado en el conector: ' + str(cfg.get('engine')))
-    host = cfg['host']; port = int(cfg['port'])
-    server_key = _server_key(host, port)
-    creds = _saved_credentials().get(server_key)
-    if not creds:
-        raise ValueError('Guarda primero las credenciales SQL en el asistente Windows para este servidor')
-    driver = creds.get('driver', 'SQL Server')
-    if driver not in ('SQL Server', 'ODBC Driver 17 for SQL Server', 'ODBC Driver 18 for SQL Server') or driver not in pyodbc.drivers():
-        raise ValueError('Controlador ODBC no disponible')
-    target = _sql_target(host, port, creds.get('instance', ''))
-    database = _safe_identifier(cfg['database'])[1:-1]
-    conn = 'DRIVER={' + driver + '};SERVER=' + target + ';DATABASE={' + database + '};Connection Timeout=8;'
-    if driver != 'SQL Server':
-        conn += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if creds.get('trust_certificate') else 'no') + ';'
-    if creds.get('mode') == 'windows':
-        conn += 'Trusted_Connection=yes;'
-    elif creds.get('mode') == 'sql':
-        def escape_odbc(s): return '{' + str(s).replace('}', '}}') + '}'
-        conn += 'UID=' + escape_odbc(creds.get('user', '')) + ';PWD=' + escape_odbc(creds.get('password', '')) + ';'
-    else:
-        raise ValueError('Modo de autenticación no admitido')
-    schema = _safe_identifier(cfg['schema_name'])
-    table = _safe_identifier(cfg['table_name'])
-    code = _safe_identifier(cfg['code_column'])
-    description = _safe_identifier(cfg['description_column'])
-    price = _safe_identifier(cfg['price_column'])
-    query = (f'SELECT TOP (1) RTRIM(CONVERT(nvarchar(4000), {code})), '
-             f'RTRIM(CONVERT(nvarchar(4000), {description})), {price} '
-             f'FROM {schema}.{table} WHERE RTRIM(CONVERT(nvarchar(4000), {code})) = ?')
-    with pyodbc.connect(conn, timeout=8, autocommit=True) as db:
-        cur = db.cursor()
-        cur.execute('SET LOCK_TIMEOUT 5000')
-        cur.execute(query, str(job['barcode']))
-        row = cur.fetchone()
-    if row is None:
-        return None
-    return {'barcode': str(row[0] or '').strip(), 'name': str(row[1] or '').strip(),
-            'price': float(row[2]) if row[2] is not None else 0.0}
-
-def _external_worker():
-    logger.info('Servicio de consulta externa iniciado')
-    while True:
-        try:
-            jobs = supabase('GET', 'external_price_jobs', params={
-                'status': 'eq.pending',
-                'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(),
-                'select': 'id,configuration_id,barcode', 'order': 'created_at.asc', 'limit': '10'})
-            for job in jobs:
-                claimed = supabase('PATCH', 'external_price_jobs',
-                    params={'id': 'eq.' + job['id'], 'status': 'eq.pending'},
-                    json={'status': 'processing'})
-                if not claimed:
-                    continue
-                try:
-                    configs = supabase('GET', 'external_price_sources',
-                        params={'id': 'eq.' + job['configuration_id'], 'enabled': 'eq.true',
-                                'select': 'engine,host,port,database,schema_name,table_name,code_column,description_column,price_column'})
-                    if not configs:
-                        raise ValueError('Origen no encontrado o deshabilitado')
-                    product = _external_query({'configuration': configs[0], 'barcode': job['barcode']})
-                    supabase('PATCH', 'external_price_jobs', params={'id': 'eq.' + job['id']},
-                             json={'status': 'done', 'result': product})
-                except Exception as exc:
-                    logger.warning('Consulta externa fallida: %s', type(exc).__name__)
-                    supabase('PATCH', 'external_price_jobs', params={'id': 'eq.' + job['id']},
-                             json={'status': 'error', 'error_message': str(exc)[:250]})
-        except Exception as exc:
-            logger.warning('Worker externo: %s', type(exc).__name__)
-        time.sleep(1)
-
-
-
-# Descubrimiento de esquemas desde Windows (sin exponer credenciales a Streamlit).
-def _metadata_query(job):
-    import pyodbc
-    host, port = job['host'], int(job['port'])
-    creds = _saved_credentials().get(_server_key(host, port))
-    if not creds:
-        raise ValueError('No hay credenciales protegidas para este servidor. Usa el asistente Windows.')
-    driver = creds.get('driver', 'SQL Server')
-    if driver not in pyodbc.drivers():
-        raise ValueError('Controlador ODBC no instalado')
-    target = _sql_target(host, port, creds.get('instance', ''))
-    database = job.get('database')
-    if database:
-        _safe_identifier(database)
-    else:
-        database = 'master'
-    conn = f'DRIVER={{{driver}}};SERVER={target};DATABASE={{{database}}};Connection Timeout=8;'
-    if driver != 'SQL Server':
-        conn += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if creds.get('trust_certificate') else 'no') + ';'
-    if creds.get('mode') == 'windows':
-        conn += 'Trusted_Connection=yes;'
-    else:
-        def esc(v): return '{' + str(v).replace('}', '}}') + '}'
-        conn += 'UID=' + esc(creds.get('user', '')) + ';PWD=' + esc(creds.get('password', '')) + ';'
-    kind = job['kind']
-    with pyodbc.connect(conn, timeout=8, autocommit=True) as db:
-        cur = db.cursor()
-        cur.execute('SET LOCK_TIMEOUT 5000')
-        if kind == 'connection':
-            # La conexión ya está abierta en la base solicitada.
-            # Verificar ejecución real de una consulta de solo lectura.
-            cur.execute('SELECT DB_NAME(), 1')
-            row = cur.fetchone()
-            if not row or str(row[0]).casefold() != str(database).casefold() or row[1] != 1:
-                raise ValueError('La base de datos respondió con un resultado inesperado')
-            return {'connected': True, 'database': str(row[0])}
-        if kind == 'databases':
-            cur.execute("SELECT name FROM sys.databases WHERE state_desc='ONLINE' AND HAS_DBACCESS(name)=1 ORDER BY name")
-            return [str(r[0]) for r in cur.fetchall()][:250]
-        if kind == 'tables':
-            cur.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY TABLE_SCHEMA,TABLE_NAME")
-            return [{'schema':str(r[0]),'table':str(r[1])} for r in cur.fetchall()][:500]
-        if kind == 'columns':
-            schema, table = job.get('schema_name'), job.get('table_name')
-            _safe_identifier(schema); _safe_identifier(table)
-            cur.execute('SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION', schema, table)
-            return [{'name':str(r[0]),'type':str(r[1])} for r in cur.fetchall()][:300]
-    raise ValueError('Tipo de descubrimiento no admitido')
-
-
-def _metadata_worker():
-    logger.info('Servicio de metadatos externos iniciado')
-    while True:
-        try:
-            jobs = supabase('GET', 'external_metadata_jobs', params={
-                'status':'eq.pending',
-                'expires_at':'gt.'+datetime.now(timezone.utc).isoformat(),
-                'select':'id,host,port,database,kind,schema_name,table_name',
-                'order':'created_at.asc', 'limit':'10'})
-            for job in jobs:
-                claimed = supabase('PATCH','external_metadata_jobs',
-                    params={'id':'eq.'+job['id'],'status':'eq.pending'},
-                    json={'status':'processing'})
-                if not claimed: continue
-                try:
-                    result = _metadata_query(job)
-                    supabase('PATCH','external_metadata_jobs',params={'id':'eq.'+job['id']},
-                        json={'status':'done','result':result})
-                except Exception as exc:
-                    logger.warning('Metadatos: %s',type(exc).__name__)
-                    supabase('PATCH','external_metadata_jobs',params={'id':'eq.'+job['id']},
-                        json={'status':'error','error_message':str(exc)[:200]})
-        except Exception as exc:
-            logger.warning('Worker metadatos: %s',type(exc).__name__)
-        time.sleep(1)
-
 if __name__ == '__main__':
-    threading.Thread(target=_external_worker, daemon=True, name='external-price-worker').start()
-    threading.Thread(target=_metadata_worker, daemon=True, name='external-metadata-worker').start()
     main()
