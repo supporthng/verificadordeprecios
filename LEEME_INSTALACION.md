@@ -1,22 +1,11 @@
-# Actualización 1.1 — instalación sin bloqueo del conector
+# Corrección /scan v1.2
 
-Esta versión modifica el instalador Inno Setup para que **detenga y deshabilite temporalmente** la tarea `ConsultaPreciosConectorLAN` antes de reemplazar el ejecutable. Comprueba el proceso asociado al archivo instalado y lo detiene si es necesario; espera hasta 25 segundos. Tras copiar los archivos, vuelve a registrar y arrancar la tarea programada. También intenta detenerla al desinstalar. Conserva `%PROGRAMDATA%\ConsultaPrecios\bridge.env` y el asistente gráfico de contraseña.
+Se corrigió el error 500 no explicado en el endpoint `/scan`: ahora se informa si Supabase devuelve HTTP 401, 403, 404, etc. y se registra el error interno sin exponer claves. La subred mostrada se toma de `ALLOWED_NETWORKS` en lugar de usar siempre 192.168.1.0/24.
 
-## Cómo compilar
+**No se ha demostrado todavía la causa exacta del error 500 en tu equipo.** Esta versión mejora el diagnóstico y puede resolver el problema de la subred predeterminada, pero podría requerir revisar permisos/clave de Supabase.
 
-1. Descomprime este ZIP y reemplaza en tu repositorio de GitHub las carpetas `installer`, `windows_bridge` y el archivo `.github/workflows/windows-build.yml`.
-2. Ejecuta **Actions → Construir conector Windows → Run workflow**.
-3. En **Summary → Artifacts**, descarga el artefacto generado y extrae `Instalador_Conector_Consulta_Precios.exe`.
-4. Ejecuta el instalador como administrador en Windows. La versión anterior se detendrá automáticamente y se iniciará de nuevo al terminar.
-5. Si el instalador viejo está mostrando «Acceso denegado», pulsa **Cancel installation** en el instalador viejo antes de iniciar el nuevo.
-6. Usa **Inicio → Consulta de Precios → Configurar con asistente** para gestionar la contraseña.
+Para compilar: reemplaza las carpetas `windows_bridge`, `installer` y `.github/workflows/windows-build.yml` en GitHub, luego ejecuta Actions → Construir conector Windows → Run workflow. Descarga el instalador en Artifacts e instálalo como administrador. No borres `%PROGRAMDATA%\ConsultaPrecios\bridge.env`.
 
-## Precauciones
+Después de instalar: abre el enlace NUEVO generado en Streamlit, inicia sesión y pulsa Buscar servidores. Si falla, copia **solo el mensaje de error**, nunca contraseñas ni claves.
 
-- Durante la actualización, el verificador local quedará temporalmente sin servicio.
-- El instalador **solo detiene el proceso cuya ruta coincide con** `C:\Program Files\ConsultaPreciosConector\ConectorConsultaPrecios.exe`; no termina otros procesos con ese nombre en otras carpetas.
-- El script necesita permisos de administrador y Windows PowerShell; el instalador ya solicita elevación.
-- Si el proceso está protegido por otra herramienta, el instalador mostrará un error en vez de omitir el ejecutable.
-- La configuración existente se conserva mediante `onlyifdoesntexist`.
-- Este paquete incluye **fuentes para compilar**, no un EXE ya compilado. La sintaxis Python y la integridad del ZIP se verificaron, pero la compilación Inno Setup y el comportamiento en Windows requieren prueba real.
-- No publiques credenciales de Supabase ni `bridge.env` en GitHub. No expongas el puerto 8765 a internet.
+La detección de puertos no identifica de forma definitiva el motor SQL ni consulta precios.

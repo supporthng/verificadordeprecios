@@ -4,6 +4,7 @@ import html
 import ipaddress
 import os
 import secrets
+import logging
 import sys
 import socket
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,7 @@ PORTS = [(1433, 'SQL Server'), (3306, 'MySQL / MariaDB'),
          (5432, 'PostgreSQL'), (3050, 'Firebird'), (1521, 'Oracle'),
          (50000, 'IBM Db2'), (2638, 'SQL Anywhere')]
 app = FastAPI(title='Puente LAN - Consulta de Precios', docs_url=None, redoc_url=None)
+logger = logging.getLogger('conector_lan')
 SESSIONS = set()
 
 
@@ -106,11 +108,12 @@ def index(request: Request, request_id: str = ''):
     if request.cookies.get('lan_session', '') not in SESSIONS:
         return RedirectResponse('/login?request_id=' + quote(request_id))
     rid = html.escape(request_id, quote=True)
+    default_network = html.escape(str(ALLOWED[0]) if ALLOWED else '10.0.0.0/24', quote=True)
     return page('<h1>Buscar bases de datos en la red</h1>'
                 '<p>La búsqueda se realiza en Windows, no en Streamlit Cloud.</p>'
                 '<form method="post" action="/scan">'
                 f'<input type="hidden" name="request_id" value="{rid}">'
-                '<label>Subred autorizada <input name="network" value="192.168.1.0/24" required></label>'
+                f'<label>Subred autorizada <input name="network" value="{default_network}" required></label>'
                 '<button>Buscar servidores</button></form>'
                 '<p>Solo se detectan puertos abiertos; el motor mostrado es una suposición.</p>')
 
@@ -136,16 +139,28 @@ async def scan(request: Request, request_id: str = Form(...), network: str = For
     if not request_id:
         raise HTTPException(400, 'Inicia la búsqueda desde Streamlit para vincular el resultado')
     # Solo mostrar resultados si la solicitud realmente existe y está pendiente.
-    rows = await asyncio.to_thread(supabase, 'GET', 'lan_discovery_requests',
-        params={'id': 'eq.' + request_id, 'status': 'eq.pending',
-                'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(), 'select': 'id'})
+    try:
+        rows = await asyncio.to_thread(supabase, 'GET', 'lan_discovery_requests',
+            params={'id': 'eq.' + request_id, 'status': 'eq.pending',
+                    'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(), 'select': 'id'})
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 'desconocido'
+        logger.exception('Error HTTP consultando solicitud de descubrimiento: %s', status)
+        raise HTTPException(502, f'Supabase rechazó la consulta (HTTP {status}). Revisa URL, clave service_role y permisos de la tabla.') from None
+    except (requests.RequestException, RuntimeError, ValueError) as exc:
+        logger.exception('Error al consultar solicitud de descubrimiento')
+        raise HTTPException(502, 'No se pudo consultar Supabase. Revisa la configuración del conector y la conectividad.') from None
     if not rows:
         raise HTTPException(400, 'Solicitud inexistente o vencida. Vuelve a Streamlit.')
     jobs = [(host, port, engine) for host in subnet.hosts() for port, engine in PORTS]
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor(max_workers=48) as pool:
-        result = await asyncio.gather(*(loop.run_in_executor(pool, probe, j) for j in jobs))
-    found = [x for x in result if x]
+    try:
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor(max_workers=48) as pool:
+            result = await asyncio.gather(*(loop.run_in_executor(pool, probe, j) for j in jobs))
+        found = [x for x in result if x]
+    except Exception:
+        logger.exception('Fallo durante exploración de red')
+        raise HTTPException(500, 'Error al explorar la red. Consulta el registro del conector Windows.') from None
     body = '<h1>Servidores encontrados</h1><p>Selecciona uno para enviarlo a Streamlit.</p>'
     if not found:
         body += '<p>No se detectaron puertos conocidos. Puedes introducir IP y puerto manualmente en Streamlit.</p>'

@@ -1,5 +1,5 @@
 #define MyAppName "Conector Consulta de Precios"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppExeName "ConectorConsultaPrecios.exe"
 [Setup]
 AppId={{74A3D2A7-6D6F-43B7-91C7-01C4EFA67B12}
