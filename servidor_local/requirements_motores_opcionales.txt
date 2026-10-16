@@ -1,0 +1,8 @@
+# Instalar SOLO el driver necesario:
+# SQL Server / Access / ODBC: pyodbc>=5
+# MySQL / MariaDB: pymysql>=1.1
+# PostgreSQL: psycopg2-binary>=2.9
+# Firebird: firebird-driver>=1.10 (SQLAlchemy dialect aparte) o sqlalchemy-firebird
+# Oracle: oracledb>=2
+# IBM Db2: ibm-db-sa
+# SAP SQL Anywhere: pyodbc + controlador ODBC del fabricante

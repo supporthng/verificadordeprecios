@@ -1,0 +1,15 @@
+{
+  "mode": "local",
+  "engine": "sqlite",
+  "host": "127.0.0.1",
+  "port": "",
+  "database": "C:/datos/facturacion.db",
+  "username": "",
+  "odbc_driver": "ODBC Driver 18 for SQL Server",
+  "sql_lookup": "SELECT barcode AS barcode, name AS name, price AS price FROM products WHERE barcode = :barcode",
+  "sql_sync": "SELECT barcode AS barcode, name AS name, price AS price FROM products",
+  "api_url": "",
+  "api_key_env": "SOURCE_API_KEY",
+  "api_barcode_param": "barcode",
+  "sync_batch_size": 200
+}
