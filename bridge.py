@@ -108,7 +108,7 @@ def page(body):
 
 @app.get('/health')
 def health():
-    return {'ok': True, 'version': 'asistente-universal-v2'}
+    return {'ok': True, 'version': 'asistente-universal-v2-metadata'}
 
 
 @app.get('/login')
@@ -611,7 +611,7 @@ def _metadata_execute(job):
         _metadata_identifier(schema)
         _metadata_identifier(table)
         cursor.execute('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION', schema, table)
-        return [str(r[0]) for r in cursor.fetchmany(500)]
+        return [{'name': str(r[0])} for r in cursor.fetchmany(500)]
 
 
 def _metadata_poll_once():
