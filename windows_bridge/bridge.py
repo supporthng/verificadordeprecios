@@ -12,7 +12,7 @@ import socket
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import requests
 import uvicorn
@@ -68,6 +68,7 @@ except OSError:
 logger.info('Conector iniciado; origen de configuración: %s', CONFIG_SOURCE)
 SESSIONS = set()
 DB_RESULTS = {}  # session-token -> (request id, accessible database names)
+WIZARD_REQUESTS = {}  # db request id -> discovery request id
 
 
 def supabase(method, path, **kwargs):
@@ -107,7 +108,7 @@ def page(body):
 
 @app.get('/health')
 def health():
-    return {'ok': True}
+    return {'ok': True, 'version': 'asistente-universal-v2'}
 
 
 @app.get('/login')
@@ -138,6 +139,9 @@ def login(password: str = Form(...), request_id: str = Form(''), db_request_id: 
 def index(request: Request, request_id: str = ''):
     if request.cookies.get('lan_session', '') not in SESSIONS:
         return RedirectResponse('/login?request_id=' + quote(request_id))
+    if not request_id:
+        return page('<h1>Conector Windows</h1><p>Abre Fuentes de datos en Streamlit '
+                    'y pulsa Iniciar búsqueda en Windows para vincular la configuración.</p>')
     rid = html.escape(request_id, quote=True)
     default_network = html.escape(str(ALLOWED[0]) if ALLOWED else '10.0.0.0/24', quote=True)
     return page('<h1>Buscar bases de datos en la red</h1>'
@@ -150,8 +154,8 @@ def index(request: Request, request_id: str = ''):
                 '<h2>Agregar servidor manualmente</h2>'
                 '<form method="post" action="/select">'
                 f'<input type="hidden" name="request_id" value="{rid}">'
-                '<label>IP <input name="host" value="10.0.0.150" required></label>'
-                '<label>Puerto <input name="port" type="number" min="1" max="65535" value="50517" required></label>'
+                '<label>IP <input name="host" placeholder="192.168.1.100" required></label>'
+                '<label>Puerto <input name="port" type="number" min="1" max="65535" value="1433" required></label>'
                 '<label>Motor <select name="engine"><option value="SQL Server">SQL Server</option>'
                 '<option value="Firebird">Firebird</option><option value="PostgreSQL">PostgreSQL</option>'
                 '<option value="MySQL / MariaDB">MySQL / MariaDB</option>'
@@ -233,6 +237,8 @@ async def select(request: Request, request_id: str = Form(...), host: str = Form
         raise HTTPException(400, 'Servidor fuera de las redes autorizadas')
     if not 1 <= port <= 65535 or engine not in allowed_engines:
         raise HTTPException(400, 'Puerto o motor inválido')
+    if not request_id:
+        raise HTTPException(400, 'Inicia la búsqueda desde Streamlit')
     # Validar alcance TCP también para entradas manuales; no inicia sesión SQL.
     reachable = await asyncio.to_thread(probe, (str(ip), port, engine))
     if reachable is None:
@@ -242,13 +248,30 @@ async def select(request: Request, request_id: str = Form(...), host: str = Form
             params={'id': 'eq.' + request_id, 'status': 'eq.pending',
                     'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat()},
             json={'selected_host': host, 'selected_port': port,
-                  'selected_engine': engine, 'status': 'selected'})
+                  'selected_engine': engine})
     except requests.RequestException:
         raise HTTPException(502, 'No se pudo comunicar la selección a Supabase')
     if not rows:
         raise HTTPException(409, 'Solicitud vencida o ya utilizada')
-    return page('<h1>Selección enviada</h1><p>Regresa a Streamlit y pulsa '
-                '<strong>Recibir selección</strong>. No se enviaron contraseñas.</p>')
+    # Continuar dentro de esta misma pestaña: crear la solicitud SQL automáticamente.
+    if engine == 'SQL Server':
+        import uuid
+        rid = str(uuid.uuid4())
+        try:
+            await asyncio.to_thread(supabase, 'POST', 'lan_db_requests', json={
+                'id': rid, 'host': str(ip), 'port': port, 'engine': engine,
+                'status': 'pending',
+                'expires_at': (datetime.now(timezone.utc) + __import__('datetime').timedelta(minutes=15)).isoformat()
+            })
+        except Exception as exc:
+            logger.warning('No se pudo iniciar la consulta SQL: %s', type(exc).__name__)
+            return page('<h1>Servidor seleccionado</h1><p>No se pudo abrir el paso SQL. '
+                        'Revisa el registro del conector y vuelve a intentarlo.</p>')
+        # Guardar vínculo entre la solicitud LAN y la consulta de bases.
+        WIZARD_REQUESTS[rid] = request_id
+        return RedirectResponse('/databases?' + urlencode({'db_request_id': rid}), status_code=303)
+    return page('<h1>Servidor seleccionado</h1><p>La configuración automática de bases '
+                'está disponible actualmente para SQL Server.</p>')
 
 
 
@@ -355,7 +378,7 @@ def discover_sql_instances(host):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(1.0)
-            sock.sendto(b'\\x03', (str(ip), 1434))
+            sock.sendto(bytes([3]), (str(ip), 1434))
             packet, source = sock.recvfrom(8192)
             if source[0] != str(ip):
                 return []
@@ -504,11 +527,26 @@ async def choose_database(request: Request, database: str = Form(...)):
     entry = DB_RESULTS.get(session)
     if not entry or database not in entry[1]:
         raise HTTPException(400, 'Selección no válida o sesión vencida')
-    # Do not invent a database-selection field in the Supabase schema.
-    return page('<h1>Base elegida: ' + html.escape(database) + '</h1>'
-                '<p>La consulta de bases se envió a Supabase. '
-                'Por ahora selecciona esta misma base en Streamlit; '
-                'para automatizar este último paso hay que actualizar también Streamlit y su esquema de datos.</p>')
+    db_request_id = entry[0]
+    discovery_id = WIZARD_REQUESTS.get(db_request_id)
+    if not discovery_id:
+        raise HTTPException(409, 'La sesión del asistente venció. Inicia otra búsqueda.')
+    try:
+        updated = await asyncio.to_thread(supabase, 'PATCH', 'lan_discovery_requests',
+            params={'id': 'eq.' + discovery_id, 'status': 'eq.pending'},
+            json={'selected_database': database, 'status': 'selected'})
+    except requests.RequestException:
+        raise HTTPException(502, 'No se pudo enviar la selección final a Supabase') from None
+    if not updated:
+        raise HTTPException(409, 'La solicitud ya fue utilizada o venció')
+    DB_RESULTS.pop(session, None)
+    WIZARD_REQUESTS.pop(db_request_id, None)
+    return_url = os.getenv('STREAMLIT_RETURN_URL', 'https://verificadordeprecios.streamlit.app/2_Fuentes_de_datos').strip()
+    if return_url.startswith('https://'):
+        return RedirectResponse(return_url.rstrip('/') + ('&' if '?' in return_url else '?') + urlencode({'lan_result': discovery_id}), status_code=303)
+    return page('<h1>Configuración completada</h1><p>Base de datos: <strong>'
+                + html.escape(database) + '</strong>.</p><p>Para volver automáticamente '
+                'a Streamlit, configura STREAMLIT_RETURN_URL en bridge.env.</p>')
 
 
 def main():
