@@ -1,0 +1,7 @@
+{
+  "source": "sqlserver",
+  "host": "192.168.1.10",
+  "port": 1433,
+  "database": "Facturacion",
+  "query": "SELECT CodigoBarras AS barcode, Descripcion AS name, PrecioVenta AS price FROM Productos WHERE Activo = 1"
+}

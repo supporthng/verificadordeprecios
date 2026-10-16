@@ -1,0 +1,7 @@
+requests>=2.31,<3
+# Instalar SOLO el driver correspondiente a la fuente seleccionada:
+# pyodbc>=5,<6              # SQL Server o Access (requiere driver ODBC del sistema)
+# pymysql>=1.1,<2           # MySQL / MariaDB
+# psycopg[binary]>=3.1,<4   # PostgreSQL
+# firebird-driver>=1.10,<3  # Firebird (puede requerir cliente Firebird)
+# SQLite viene con Python
