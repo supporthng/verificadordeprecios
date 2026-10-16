@@ -19,12 +19,15 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "{commonappdata}\ConsultaPrecios"; Permissions: admins-full
 [Files]
 Source: "..\windows_bridge\dist\ConectorConsultaPrecios.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\windows_bridge\dist\ConfigurarConector.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "bridge.env.example"; DestDir: "{commonappdata}\ConsultaPrecios"; DestName: "bridge.env"; Flags: onlyifdoesntexist
 Source: "RegistrarInicioAutomatico.ps1"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
+Name: "{group}\Configurar con asistente"; Filename: "{app}\ConfigurarConector.exe"
 Name: "{group}\Configurar conexión"; Filename: "notepad.exe"; Parameters: """{commonappdata}\ConsultaPrecios\bridge.env"""
 Name: "{group}\Abrir buscador local"; Filename: "http://127.0.0.1:8765/login"
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\RegistrarInicioAutomatico.ps1"" -ExePath ""{app}\{#MyAppExeName}"""; Flags: runhidden waituntilterminated
+Filename: "{app}\ConfigurarConector.exe"; Description: "Configurar contraseña y conexión ahora"; Flags: postinstall nowait skipifsilent
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\RegistrarInicioAutomatico.ps1"" -Remove -ExePath ""{app}\{#MyAppExeName}"""; Flags: runhidden waituntilterminated
