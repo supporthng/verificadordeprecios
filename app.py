@@ -1,4 +1,5 @@
 import html
+from datetime import datetime, timedelta, timezone
 import time
 from pathlib import Path
 
@@ -15,6 +16,46 @@ st.set_page_config(
 
 SUPABASE_URL = str(st.secrets.get("SUPABASE_URL", "")).strip().rstrip("/")
 SUPABASE_ANON_KEY = str(st.secrets.get("SUPABASE_ANON_KEY", "")).strip()
+
+SUPABASE_SERVICE_ROLE_KEY = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+
+def admin_api(method, table, params=None, payload=None):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise RuntimeError("Falta SUPABASE_SERVICE_ROLE_KEY en Secrets.")
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    response = requests.request(
+        method, f"{SUPABASE_URL}/rest/v1/{table}",
+        params=params, json=payload, headers=headers, timeout=12,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+@st.cache_data(ttl=4, show_spinner=False)
+def active_source():
+    settings = admin_api("GET", "price_source_settings",
+                         params={"id": "eq.1", "select": "source_type"})
+    if not settings:
+        raise RuntimeError("Falta configurar el origen de datos.")
+    mode = settings[0]["source_type"]
+    if mode == "local":
+        return mode, None
+    if mode != "external":
+        raise RuntimeError("Origen de datos desconocido.")
+    sources = admin_api("GET", "external_price_sources",
+                        params={"enabled": "eq.true", "select": "id,name", "limit": "2"})
+    if len(sources) != 1:
+        raise RuntimeError(
+            "La fuente externa requiere exactamente una configuración habilitada. "
+            "Configúrala en Fuentes de datos."
+        )
+    return mode, sources[0]["id"]
+
 
 CSS = """
 <style>
@@ -161,6 +202,10 @@ for key, default in (
     ("current_product", None),
     ("result_time", None),
     ("not_found", False),
+    ("external_job", None),
+    ("external_started", None),
+    ("consult_error", None),
+    ("source_snapshot", None),
 ):
     if key not in st.session_state:
         st.session_state[key] = default
@@ -170,27 +215,106 @@ def buscar_producto():
     query = st.session_state.search_input.strip()
     if not query:
         return
+    st.session_state.current_product = None
+    st.session_state.not_found = False
+    st.session_state.consult_error = None
+    st.session_state.external_job = None
+    st.session_state.result_time = None
+    try:
+        mode, source_id = active_source()
+        if mode == "local":
+            df = catalog()
+            hits = df[df["barcode"].astype(str).str.strip() == query].head(1)
+            if hits.empty:
+                st.session_state.not_found = True
+            else:
+                st.session_state.current_product = hits.iloc[0].to_dict()
+            st.session_state.result_time = time.monotonic()
+        else:
+            rows = admin_api("POST", "external_price_jobs", payload={
+                "configuration_id": source_id,
+                "barcode": query,
+                "status": "pending",
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+            })
+            if not rows or not rows[0].get("id"):
+                raise RuntimeError("No se pudo registrar la consulta externa")
+            st.session_state.external_job = rows[0]["id"]
+            st.session_state.external_started = time.monotonic()
+    except Exception:
+        st.session_state.consult_error = (
+            "No se pudo consultar la fuente seleccionada. "
+            "Revisa la configuración y el conector Windows."
+        )
+        st.session_state.result_time = time.monotonic()
 
-    df = catalog()
-    hits = df[df["barcode"].astype(str).str.strip() == query].head(1)
 
-    if hits.empty:
-        st.session_state.current_product = None
-        st.session_state.not_found = True
-    else:
-        st.session_state.current_product = hits.iloc[0].to_dict()
-        st.session_state.not_found = False
-
-    st.session_state.result_time = time.monotonic()
+def check_external_result():
+    jid = st.session_state.external_job
+    if not jid:
+        return
+    if time.monotonic() - st.session_state.external_started > 25:
+        st.session_state.external_job = None
+        st.session_state.consult_error = (
+            "La base externa no respondió a tiempo. No se consultó la base local."
+        )
+        st.session_state.result_time = time.monotonic()
+        return
+    try:
+        rows = admin_api("GET", "external_price_jobs",
+                         params={"id": "eq." + jid, "select": "status,result,error_message"})
+        if not rows:
+            raise RuntimeError("La solicitud externa no existe.")
+        job = rows[0]
+        if job["status"] == "done":
+            result = job.get("result")
+            if result:
+                st.session_state.current_product = {
+                    "barcode": result.get("barcode", st.session_state.search_input),
+                    "name": result.get("name", ""),
+                    "price": result.get("price", 0),
+                }
+            else:
+                st.session_state.not_found = True
+            st.session_state.external_job = None
+            st.session_state.result_time = time.monotonic()
+        elif job["status"] == "error":
+            st.session_state.external_job = None
+            st.session_state.consult_error = (
+                "No se pudo consultar SQL Server. Revisa el conector y la conexión externa."
+            )
+            st.session_state.result_time = time.monotonic()
+    except (requests.RequestException, RuntimeError):
+        st.session_state.external_job = None
+        st.session_state.consult_error = "No se pudo obtener la respuesta de la base externa."
+        st.session_state.result_time = time.monotonic()
 
 
 @st.fragment(run_every=0.5)
 def verificador():
+    # Evitar mostrar resultados de una fuente distinta si el administrador la cambia.
+    try:
+        mode, source_id = active_source()
+        snapshot = (mode, source_id)
+        if st.session_state.source_snapshot != snapshot:
+            st.session_state.source_snapshot = snapshot
+            st.session_state.current_product = None
+            st.session_state.not_found = False
+            st.session_state.external_job = None
+            st.session_state.result_time = None
+            st.session_state.consult_error = None
+    except Exception:
+        st.error("No se pudo leer la fuente activa. Revisa Configuración.")
+        return
+
+    if mode == "external":
+        check_external_result()
     started = st.session_state.result_time
 
     if started is not None and time.monotonic() - started >= 10:
         st.session_state.current_product = None
         st.session_state.not_found = False
+        st.session_state.consult_error = None
         st.session_state.result_time = None
         st.session_state.search_input = ""
 
@@ -212,6 +336,10 @@ def verificador():
             unsafe_allow_html=True,
         )
 
+    elif st.session_state.consult_error:
+        st.error(st.session_state.consult_error)
+    elif st.session_state.external_job:
+        st.info("Consultando la base de datos externa desde Windows…")
     elif st.session_state.not_found:
         st.warning("Producto no encontrado")
 
@@ -245,6 +373,5 @@ def verificador():
 
 try:
     verificador()
-except Exception as exc:
-    st.error("No se pudo iniciar la consulta de precios.")
-    st.exception(exc)
+except Exception:
+    st.error("No se pudo iniciar la consulta de precios. Revisa la conexión y la fuente seleccionada.")
