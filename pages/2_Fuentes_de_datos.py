@@ -72,6 +72,55 @@ def store_selection(row):
     st.session_state.pop('lan_request_expires', None)
 
 
+# Preferencia persistente: solo controla esta pantalla, no cambia app.py.
+st.subheader('Seleccionar origen de datos')
+try:
+    preference_response = requests.get(
+        URL + '/rest/v1/price_source_settings',
+        params={'id': 'eq.1', 'select': 'source_type'},
+        headers=HEADERS, timeout=15,
+    )
+    preference_response.raise_for_status()
+    preference_rows = preference_response.json()
+    if not preference_rows:
+        st.error('Falta la fila de configuración en price_source_settings.')
+        st.stop()
+    saved_source = preference_rows[0]['source_type']
+except requests.RequestException:
+    st.error('No se pudo leer la selección de origen en Supabase.')
+    st.stop()
+
+choices = {
+    'local': 'Base local (Excel / Supabase)',
+    'external': 'Base de datos externa (conector Windows)',
+}
+source = st.radio(
+    '¿Qué fuente deseas configurar?',
+    options=list(choices),
+    index=0 if saved_source == 'local' else 1,
+    format_func=lambda value: choices[value],
+    key='fuentes_source_selector',
+)
+if source != saved_source:
+    try:
+        change_response = requests.patch(
+            URL + '/rest/v1/price_source_settings',
+            params={'id': 'eq.1'},
+            json={'source_type': source}, headers=HEADERS, timeout=15,
+        )
+        change_response.raise_for_status()
+        st.rerun()
+    except requests.RequestException:
+        st.error('No se pudo guardar la selección en Supabase.')
+        st.stop()
+
+if source == 'local':
+    st.success('Base local seleccionada. Se mantienen los productos importados desde Excel.')
+    st.info('El verificador original app.py sigue consultando Supabase sin cambios.')
+    st.stop()
+
+st.info('Base externa seleccionada. Continúa con la configuración del conector Windows.')
+
 # El conector devuelve ?lan_result=<UUID>. El enlace puede abrir una sesión nueva,
 # por eso se recupera directamente de Supabase, sin depender de session_state.
 returned_id = st.query_params.get('lan_result')
