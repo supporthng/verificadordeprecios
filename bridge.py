@@ -11,6 +11,8 @@ import sys
 import socket
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import threading
+import time
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -108,27 +110,31 @@ def page(body):
 
 @app.get('/health')
 def health():
-    return {'ok': True, 'version': 'asistente-universal-v2-metadata'}
+    return {'ok': True, 'version': 'asistente-universal-v2'}
 
 
 @app.get('/login')
-def login_page(request_id: str = '', db_request_id: str = ''):
+def login_page(request_id: str = '', db_request_id: str = '', next: str = ''):
     rid = html.escape(request_id, quote=True)
     db_rid = html.escape(db_request_id, quote=True)
+    next_url = html.escape(next if next.startswith('/configure-sql?') else '', quote=True)
     return page('<h1>Conector local Windows</h1><form method="post" action="/login">'
                 f'<input type="hidden" name="request_id" value="{rid}">'
                 f'<input type="hidden" name="db_request_id" value="{db_rid}">'
+                f'<input type="hidden" name="next" value="{next_url}">'
                 '<input type="password" name="password" placeholder="Contraseña del conector" required>'
                 '<button>Entrar</button></form>')
 
 
 @app.post('/login')
-def login(password: str = Form(...), request_id: str = Form(''), db_request_id: str = Form('')):
+def login(password: str = Form(...), request_id: str = Form(''), db_request_id: str = Form(''), next: str = Form('')):
     if not PASSWORD or len(PASSWORD) < 12 or not secrets.compare_digest(password, PASSWORD):
         raise HTTPException(403, 'Contraseña incorrecta o insegura')
     token = secrets.token_urlsafe(32)
     SESSIONS.add(token)
-    destination = ('/databases?db_request_id=' + quote(db_request_id)) if db_request_id else ('/?request_id=' + quote(request_id))
+    destination = (next if next.startswith('/configure-sql?') and '\\' not in next and '//' not in next else
+                   ('/databases?db_request_id=' + quote(db_request_id)) if db_request_id else
+                   ('/?request_id=' + quote(request_id)))
     response = RedirectResponse(destination, status_code=303)
     response.set_cookie('lan_session', token, httponly=True, samesite='strict', secure=False,
                         max_age=3600)
@@ -550,114 +556,241 @@ async def choose_database(request: Request, database: str = Form(...)):
 
 
 
-# Procesador de solicitudes de metadatos del verificador externo.
-# No altera las rutas existentes ni guarda credenciales SQL en Supabase.
-import threading
-import time
 
-
-def _metadata_identifier(value):
+# Procesadores de solicitudes de consulta externas.
+# Las credenciales SQL permanecen cifradas mediante DPAPI en Windows.
+def _sql_identifier(value):
     if not isinstance(value, str) or not value or len(value) > 128 or '\x00' in value:
-        raise ValueError('Identificador SQL inválido')
+        raise ValueError('Nombre de columna, esquema o tabla inválido')
     return '[' + value.replace(']', ']]') + ']'
 
 
-def _metadata_connection(host, port, database):
+def _external_connection(host, port, database):
     import pyodbc
-    server_key = _server_key(host, port)
-    cred = _saved_credentials().get(server_key)
-    if not cred:
-        raise ValueError('No hay credenciales SQL guardadas para este servidor Windows')
-    driver = cred.get('driver', 'SQL Server')
+    host = str(host)
+    port = int(port)
+    # _sql_target verifica que el servidor esté en una subred autorizada.
+    server = _sql_target(host, port)
+    saved = _saved_credentials().get(_server_key(host, port))
+    if not saved:
+        raise ValueError('Faltan credenciales SQL guardadas en este Windows para el servidor seleccionado')
+    driver = saved.get('driver', 'SQL Server')
     if driver not in ('SQL Server', 'ODBC Driver 17 for SQL Server', 'ODBC Driver 18 for SQL Server'):
-        raise ValueError('Controlador SQL no admitido')
+        raise ValueError('Controlador ODBC no admitido')
     if driver not in pyodbc.drivers():
-        raise ValueError('Controlador ODBC no instalado')
-    target = _sql_target(host, port, cred.get('instance', ''))
-    db = database or 'master'
-    if not isinstance(db, str) or not db or len(db) > 128 or any(c in db for c in ';{}\x00'):
+        raise ValueError('El controlador ODBC seleccionado no está instalado')
+    if not isinstance(database, str) or not database or len(database) > 128 or any(c in database for c in ';{}\x00'):
         raise ValueError('Nombre de base de datos inválido')
-    cs = f'DRIVER={{{driver}}};SERVER={target};DATABASE={db};Connection Timeout=8;'
+    server = _sql_target(host, port, saved.get('instance', ''))
+    cs = f'DRIVER={{{driver}}};SERVER={server};DATABASE={database};Connection Timeout=8;'
     if driver != 'SQL Server':
-        cs += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if cred.get('trust_certificate') else 'no') + ';'
-    if cred.get('mode') == 'windows':
+        cs += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if saved.get('trust_certificate') else 'no') + ';'
+    if saved.get('mode') == 'windows':
         cs += 'Trusted_Connection=yes;'
-    elif cred.get('mode') == 'sql':
-        def esc(v):
-            return '{' + str(v).replace('}', '}}') + '}'
-        cs += 'UID=' + esc(cred.get('user', '')) + ';PWD=' + esc(cred.get('password', '')) + ';'
+    elif saved.get('mode') == 'sql':
+        def esc(value):
+            return '{' + str(value).replace('}', '}}') + '}'
+        cs += 'UID=' + esc(saved.get('user', '')) + ';PWD=' + esc(saved.get('password', '')) + ';'
     else:
-        raise ValueError('Modo de autenticación no admitido')
+        raise ValueError('Autenticación SQL no admitida')
     return pyodbc.connect(cs, timeout=8, autocommit=True)
 
 
-def _metadata_execute(job):
-    host, port = str(job['host']), int(job['port'])
+def _execute_metadata(job):
     kind = job['kind']
     if kind not in ('databases', 'tables', 'columns'):
-        raise ValueError('Tipo de solicitud desconocido')
-    with _metadata_connection(host, port, job.get('database')) as cn:
-        cursor = cn.cursor()
+        raise ValueError('Tipo de exploración desconocido')
+    database = job.get('database') if kind != 'databases' else 'master'
+    if not database:
+        raise ValueError('Debes elegir una base de datos')
+    with _external_connection(job['host'], job['port'], database) as cn:
+        cur = cn.cursor()
         if kind == 'databases':
-            cursor.execute("SELECT name FROM sys.databases WHERE state_desc='ONLINE' AND HAS_DBACCESS(name)=1 ORDER BY name")
-            return [str(r[0]) for r in cursor.fetchmany(500)]
-        if not job.get('database'):
-            raise ValueError('Debes seleccionar una base de datos')
+            cur.execute("SELECT name FROM sys.databases WHERE state_desc='ONLINE' AND HAS_DBACCESS(name)=1 ORDER BY name")
+            return [str(r[0]) for r in cur.fetchmany(500)]
         if kind == 'tables':
-            cursor.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY TABLE_SCHEMA,TABLE_NAME")
-            return [{'schema': str(r[0]), 'table': str(r[1])} for r in cursor.fetchmany(1000)]
+            cur.execute("SELECT TABLE_SCHEMA,TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY TABLE_SCHEMA,TABLE_NAME")
+            return [{'schema': str(r[0]), 'table': str(r[1])} for r in cur.fetchmany(2000)]
         schema = job.get('schema_name') or 'dbo'
         table = job.get('table_name')
-        _metadata_identifier(schema)
-        _metadata_identifier(table)
-        cursor.execute('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION', schema, table)
-        return [{'name': str(r[0])} for r in cursor.fetchmany(500)]
+        _sql_identifier(schema)
+        _sql_identifier(table)
+        cur.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION", schema, table)
+        return [{'name': str(r[0])} for r in cur.fetchmany(500)]
 
 
-def _metadata_poll_once():
+def _execute_price(job):
+    rows = supabase('GET', 'external_price_sources', params={
+        'id': 'eq.' + str(job['configuration_id']),
+        'enabled': 'eq.true',
+        'select': 'id,engine,host,port,database,schema_name,table_name,code_column,description_column,price_column',
+        'limit': '1',
+    })
+    if not rows:
+        raise ValueError('Configuración externa inexistente o deshabilitada')
+    config = rows[0]
+    if config['engine'] != 'SQL Server':
+        raise ValueError('Este conector actualmente ejecuta consultas de productos solo en SQL Server')
+    schema = _sql_identifier(config.get('schema_name') or 'dbo')
+    table = _sql_identifier(config['table_name'])
+    code = _sql_identifier(config['code_column'])
+    description = _sql_identifier(config['description_column'])
+    price = _sql_identifier(config['price_column'])
+    barcode = str(job['barcode']).strip()
+    if not barcode or len(barcode) > 256:
+        raise ValueError('Código de barras inválido')
+    # Los identificadores se escapan y el código de barras siempre es un parámetro.
+    sql = (f'SELECT TOP (1) {code}, {description}, {price} '
+           f'FROM {schema}.{table} WHERE {code} = ?')
+    with _external_connection(config['host'], config['port'], config['database']) as cn:
+        cur = cn.cursor()
+        cn.timeout = 12  # Tiempo máximo de ejecución de la consulta SQL
+        cur.execute(sql, barcode)
+        row = cur.fetchone()
+        if row is None:
+            return None
+        if row[2] is None:
+            raise ValueError('El producto encontrado no tiene precio')
+        # json no admite Decimal directamente; el precio se devuelve como texto decimal.
+        return {'barcode': str(row[0]), 'name': str(row[1] or ''),
+                'price': str(row[2])}
+
+
+def _process_external_queue(table, select, execute):
     now = datetime.now(timezone.utc).isoformat()
-    jobs = supabase('GET', 'external_metadata_jobs', params={
+    jobs = supabase('GET', table, params={
         'status': 'eq.pending', 'expires_at': 'gt.' + now,
-        'order': 'created_at.asc', 'limit': '5',
-        'select': 'id,kind,host,port,database,schema_name,table_name'})
+        'order': 'created_at.asc', 'limit': '5', 'select': select,
+    })
     for job in jobs:
-        jid = job['id']
-        claimed = supabase('PATCH', 'external_metadata_jobs', params={
+        jid = str(job['id'])
+        claimed = supabase('PATCH', table, params={
             'id': 'eq.' + jid, 'status': 'eq.pending',
-            'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat()},
-            json={'status': 'processing'})
+            'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(),
+        }, json={'status': 'processing'})
         if not claimed:
             continue
         try:
-            result = _metadata_execute(job)
-            supabase('PATCH', 'external_metadata_jobs', params={
-                'id': 'eq.' + jid, 'status': 'eq.processing'},
-                json={'status': 'done', 'result': result, 'error_message': None})
-            logger.info('Metadatos procesados: tipo=%s; registros=%s', job['kind'], len(result))
+            result = execute(job)
+            supabase('PATCH', table, params={
+                'id': 'eq.' + jid, 'status': 'eq.processing',
+            }, json={'status': 'done', 'result': result, 'error_message': None})
         except Exception as exc:
-            logger.warning('Error de metadatos: tipo=%s', type(exc).__name__)
+            logger.warning('Error al ejecutar solicitud %s: %s', table, type(exc).__name__)
             try:
-                supabase('PATCH', 'external_metadata_jobs', params={
-                    'id': 'eq.' + jid, 'status': 'eq.processing'},
-                    json={'status': 'error', 'error_message': str(exc)[:350]})
+                supabase('PATCH', table, params={
+                    'id': 'eq.' + jid, 'status': 'eq.processing',
+                }, json={'status': 'error', 'error_message': str(exc)[:350]})
             except Exception:
-                logger.exception('No se pudo publicar error de metadatos')
+                logger.exception('No se pudo publicar el error de la solicitud')
 
 
-def _metadata_worker():
+def _external_worker():
     while True:
-        try:
-            _metadata_poll_once()
-        except Exception as exc:
-            logger.warning('Sondeo de metadatos falló: %s', type(exc).__name__)
+        for table, fields, handler in (
+            ('external_metadata_jobs',
+             'id,kind,host,port,database,schema_name,table_name', _execute_metadata),
+            ('external_price_jobs',
+             'id,configuration_id,barcode', _execute_price),
+        ):
+            try:
+                _process_external_queue(table, fields, handler)
+            except Exception as exc:
+                logger.warning('Fallo al consultar cola %s: %s', table, type(exc).__name__)
         time.sleep(3)
 
 
 @app.on_event('startup')
-def _start_metadata_worker():
-    thread = threading.Thread(target=_metadata_worker, name='metadata-worker', daemon=True)
-    thread.start()
-    logger.info('Procesador de external_metadata_jobs iniciado')
+def _start_external_worker():
+    threading.Thread(target=_external_worker, name='external-jobs',
+                     daemon=True).start()
+    logger.info('Procesador de metadatos y precios externos iniciado')
+
+
+
+
+@app.get('/configure-sql')
+def configure_sql_page(request: Request, host: str = '', port: int = 1433):
+    if request.cookies.get('lan_session', '') not in SESSIONS:
+        return RedirectResponse('/login?next=' + quote('/configure-sql?' + urlencode({'host': host, 'port': port}), safe=''))
+    try:
+        _sql_target(host, port)
+    except (ValueError, TypeError):
+        raise HTTPException(400, 'Servidor o puerto fuera de la red autorizada')
+    server = _server_key(host, port)
+    try:
+        saved = server in _saved_credentials()
+    except Exception:
+        saved = False
+    options = ''.join(
+        '<option value="' + html.escape(driver, quote=True) + '">' + html.escape(driver) + '</option>'
+        for driver in ('SQL Server', 'ODBC Driver 17 for SQL Server', 'ODBC Driver 18 for SQL Server')
+    )
+    return page(
+        '<h1>Credenciales SQL Server</h1>'
+        '<p>Servidor: <strong>' + html.escape(server) + '</strong></p>'
+        '<p>Las credenciales se introducen en este Windows y no pasan por Streamlit ni Supabase.</p>'
+        + ('<p>Ya hay credenciales protegidas para este servidor. Puedes actualizarlas.</p>' if saved else '')
+        + '<form method="post" action="/configure-sql">'
+        + '<input type="hidden" name="host" value="' + html.escape(host, quote=True) + '">'
+        + '<input type="hidden" name="port" value="' + str(port) + '">'
+        + '<p><label>Autenticación <select name="mode">'
+          '<option value="sql">SQL Server (usuario y contraseña)</option>'
+          '<option value="windows">Windows (cuenta del conector)</option>'
+          '</select></label></p>'
+          '<p><label>Usuario SQL <input name="user" autocomplete="username"></label></p>'
+          '<p><label>Contraseña SQL <input name="password" type="password" autocomplete="current-password"></label></p>'
+          '<p><label>Instancia (opcional) <input name="instance"></label></p>'
+          '<p><label>Controlador ODBC <select name="driver">' + options + '</select></label></p>'
+          '<p><label><input type="checkbox" name="trust_certificate" value="yes"> Confiar en certificado SQL</label></p>'
+          '<button>Probar y guardar credenciales en Windows</button></form>'
+          '<p>Tras guardar, regresa a Streamlit y pulsa Detectar bases de datos.</p>'
+    )
+
+
+@app.post('/configure-sql')
+async def configure_sql_save(
+    request: Request, host: str = Form(...), port: int = Form(...),
+    mode: str = Form('sql'), user: str = Form(''), password: str = Form(''),
+    driver: str = Form('SQL Server'), instance: str = Form(''),
+    trust_certificate: str = Form(''),
+):
+    auth(request)
+    origin = request.headers.get('origin')
+    if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+        raise HTTPException(403, 'Origen de formulario no autorizado')
+    try:
+        _sql_target(host, port, instance)
+        names = await asyncio.to_thread(
+            sql_databases, host, port, mode, user, password,
+            driver, trust_certificate == 'yes', instance
+        )
+        await asyncio.to_thread(_save_credentials, {
+            'server': _server_key(host, port),
+            'mode': mode,
+            'user': user if mode == 'sql' else '',
+            'password': password if mode == 'sql' else '',
+            'driver': driver,
+            'instance': instance,
+            'trust_certificate': trust_certificate == 'yes',
+        })
+        return page(
+            '<h1>Conexión correcta</h1>'
+            '<p>Credenciales protegidas guardadas en este Windows.</p>'
+            '<p>Bases accesibles: ' + str(len(names)) + '</p>'
+            '<p>Regresa a Configuración de bases externas en Streamlit '
+            'y pulsa Detectar bases de datos.</p>'
+        )
+    except Exception as exc:
+        logger.warning('Fallo configurando credenciales SQL: %s', type(exc).__name__)
+        return page(
+            '<h1>No se pudieron guardar las credenciales</h1>'
+            '<p>No se guardó nada porque la prueba de conexión falló.</p>'
+            '<p>Comprueba usuario, contraseña, controlador, instancia y certificado.</p>'
+            '<p>Tipo de error: ' + html.escape(type(exc).__name__) + '</p>'
+            '<p><a href="/configure-sql?' + urlencode({'host': host, 'port': port}) + '">Reintentar</a></p>'
+        )
+
 
 def main():
     if not URL or not KEY or not PASSWORD or len(PASSWORD) < 12:
