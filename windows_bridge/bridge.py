@@ -114,23 +114,27 @@ def health():
 
 
 @app.get('/login')
-def login_page(request_id: str = '', db_request_id: str = ''):
+def login_page(request_id: str = '', db_request_id: str = '', next: str = ''):
     rid = html.escape(request_id, quote=True)
     db_rid = html.escape(db_request_id, quote=True)
+    next_url = html.escape(next if next.startswith('/configure-sql?') else '', quote=True)
     return page('<h1>Conector local Windows</h1><form method="post" action="/login">'
                 f'<input type="hidden" name="request_id" value="{rid}">'
                 f'<input type="hidden" name="db_request_id" value="{db_rid}">'
+                f'<input type="hidden" name="next" value="{next_url}">'
                 '<input type="password" name="password" placeholder="Contraseña del conector" required>'
                 '<button>Entrar</button></form>')
 
 
 @app.post('/login')
-def login(password: str = Form(...), request_id: str = Form(''), db_request_id: str = Form('')):
+def login(password: str = Form(...), request_id: str = Form(''), db_request_id: str = Form(''), next: str = Form('')):
     if not PASSWORD or len(PASSWORD) < 12 or not secrets.compare_digest(password, PASSWORD):
         raise HTTPException(403, 'Contraseña incorrecta o insegura')
     token = secrets.token_urlsafe(32)
     SESSIONS.add(token)
-    destination = ('/databases?db_request_id=' + quote(db_request_id)) if db_request_id else ('/?request_id=' + quote(request_id))
+    destination = (next if next.startswith('/configure-sql?') and '\\' not in next and '//' not in next else
+                   ('/databases?db_request_id=' + quote(db_request_id)) if db_request_id else
+                   ('/?request_id=' + quote(request_id)))
     response = RedirectResponse(destination, status_code=303)
     response.set_cookie('lan_session', token, httponly=True, samesite='strict', secure=False,
                         max_age=3600)
@@ -701,6 +705,91 @@ def _start_external_worker():
     threading.Thread(target=_external_worker, name='external-jobs',
                      daemon=True).start()
     logger.info('Procesador de metadatos y precios externos iniciado')
+
+
+
+
+@app.get('/configure-sql')
+def configure_sql_page(request: Request, host: str = '', port: int = 1433):
+    if request.cookies.get('lan_session', '') not in SESSIONS:
+        return RedirectResponse('/login?next=' + quote('/configure-sql?' + urlencode({'host': host, 'port': port}), safe=''))
+    try:
+        _sql_target(host, port)
+    except (ValueError, TypeError):
+        raise HTTPException(400, 'Servidor o puerto fuera de la red autorizada')
+    server = _server_key(host, port)
+    try:
+        saved = server in _saved_credentials()
+    except Exception:
+        saved = False
+    options = ''.join(
+        '<option value="' + html.escape(driver, quote=True) + '">' + html.escape(driver) + '</option>'
+        for driver in ('SQL Server', 'ODBC Driver 17 for SQL Server', 'ODBC Driver 18 for SQL Server')
+    )
+    return page(
+        '<h1>Credenciales SQL Server</h1>'
+        '<p>Servidor: <strong>' + html.escape(server) + '</strong></p>'
+        '<p>Las credenciales se introducen en este Windows y no pasan por Streamlit ni Supabase.</p>'
+        + ('<p>Ya hay credenciales protegidas para este servidor. Puedes actualizarlas.</p>' if saved else '')
+        + '<form method="post" action="/configure-sql">'
+        + '<input type="hidden" name="host" value="' + html.escape(host, quote=True) + '">'
+        + '<input type="hidden" name="port" value="' + str(port) + '">'
+        + '<p><label>Autenticación <select name="mode">'
+          '<option value="sql">SQL Server (usuario y contraseña)</option>'
+          '<option value="windows">Windows (cuenta del conector)</option>'
+          '</select></label></p>'
+          '<p><label>Usuario SQL <input name="user" autocomplete="username"></label></p>'
+          '<p><label>Contraseña SQL <input name="password" type="password" autocomplete="current-password"></label></p>'
+          '<p><label>Instancia (opcional) <input name="instance"></label></p>'
+          '<p><label>Controlador ODBC <select name="driver">' + options + '</select></label></p>'
+          '<p><label><input type="checkbox" name="trust_certificate" value="yes"> Confiar en certificado SQL</label></p>'
+          '<button>Probar y guardar credenciales en Windows</button></form>'
+          '<p>Tras guardar, regresa a Streamlit y pulsa Detectar bases de datos.</p>'
+    )
+
+
+@app.post('/configure-sql')
+async def configure_sql_save(
+    request: Request, host: str = Form(...), port: int = Form(...),
+    mode: str = Form('sql'), user: str = Form(''), password: str = Form(''),
+    driver: str = Form('SQL Server'), instance: str = Form(''),
+    trust_certificate: str = Form(''),
+):
+    auth(request)
+    origin = request.headers.get('origin')
+    if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+        raise HTTPException(403, 'Origen de formulario no autorizado')
+    try:
+        _sql_target(host, port, instance)
+        names = await asyncio.to_thread(
+            sql_databases, host, port, mode, user, password,
+            driver, trust_certificate == 'yes', instance
+        )
+        await asyncio.to_thread(_save_credentials, {
+            'server': _server_key(host, port),
+            'mode': mode,
+            'user': user if mode == 'sql' else '',
+            'password': password if mode == 'sql' else '',
+            'driver': driver,
+            'instance': instance,
+            'trust_certificate': trust_certificate == 'yes',
+        })
+        return page(
+            '<h1>Conexión correcta</h1>'
+            '<p>Credenciales protegidas guardadas en este Windows.</p>'
+            '<p>Bases accesibles: ' + str(len(names)) + '</p>'
+            '<p>Regresa a Configuración de bases externas en Streamlit '
+            'y pulsa Detectar bases de datos.</p>'
+        )
+    except Exception as exc:
+        logger.warning('Fallo configurando credenciales SQL: %s', type(exc).__name__)
+        return page(
+            '<h1>No se pudieron guardar las credenciales</h1>'
+            '<p>No se guardó nada porque la prueba de conexión falló.</p>'
+            '<p>Comprueba usuario, contraseña, controlador, instancia y certificado.</p>'
+            '<p>Tipo de error: ' + html.escape(type(exc).__name__) + '</p>'
+            '<p><a href="/configure-sql?' + urlencode({'host': host, 'port': port}) + '">Reintentar</a></p>'
+        )
 
 
 def main():
