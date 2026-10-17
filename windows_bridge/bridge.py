@@ -644,7 +644,7 @@ def _execute_price(job):
            f'FROM {schema}.{table} WHERE {code} = ?')
     with _external_connection(config['host'], config['port'], config['database']) as cn:
         cur = cn.cursor()
-        cur.timeout = 12
+        cn.timeout = 12
         cur.execute(sql, barcode)
         row = cur.fetchone()
         if row is None:
