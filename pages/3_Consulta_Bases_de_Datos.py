@@ -95,6 +95,17 @@ with st.expander('Administrar conexiones y campos',expanded=not bool(sources)):
                 st.session_state.meta_server=key_prefix
                 for k in ('meta_databases','meta_tables','meta_columns','meta_job','meta_kind'):
                     st.session_state.pop(k,None)
+            st.markdown('**Credenciales SQL Server en Windows**')
+            st.caption('Por seguridad, abre esta página desde el mismo equipo Windows '
+                       'que ejecuta el conector. La contraseña no pasa por Streamlit.')
+            from urllib.parse import urlencode
+            setup_url = (
+                'http://127.0.0.1:8765/configure-sql?'
+                + urlencode({'host': host, 'port': port})
+            )
+            st.link_button('Configurar credenciales SQL en Windows', setup_url)
+            st.caption('Después de guardar las credenciales, regresa aquí '
+                       'y pulsa Detectar bases de datos.')
             if st.button('Detectar bases de datos',type='primary'):
                 try:
                     st.session_state.meta_job=metadata_job('databases',host,port)
