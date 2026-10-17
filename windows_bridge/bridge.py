@@ -11,6 +11,8 @@ import sys
 import socket
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import threading
+import time
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -547,6 +549,158 @@ async def choose_database(request: Request, database: str = Form(...)):
     return page('<h1>Configuración completada</h1><p>Base de datos: <strong>'
                 + html.escape(database) + '</strong>.</p><p>Para volver automáticamente '
                 'a Streamlit, configura STREAMLIT_RETURN_URL en bridge.env.</p>')
+
+
+
+
+# Procesadores de solicitudes de consulta externas.
+# Las credenciales SQL permanecen cifradas mediante DPAPI en Windows.
+def _sql_identifier(value):
+    if not isinstance(value, str) or not value or len(value) > 128 or '\x00' in value:
+        raise ValueError('Nombre de columna, esquema o tabla inválido')
+    return '[' + value.replace(']', ']]') + ']'
+
+
+def _external_connection(host, port, database):
+    import pyodbc
+    host = str(host)
+    port = int(port)
+    # _sql_target verifica que el servidor esté en una subred autorizada.
+    server = _sql_target(host, port)
+    saved = _saved_credentials().get(_server_key(host, port))
+    if not saved:
+        raise ValueError('Faltan credenciales SQL guardadas en este Windows para el servidor seleccionado')
+    driver = saved.get('driver', 'SQL Server')
+    if driver not in ('SQL Server', 'ODBC Driver 17 for SQL Server', 'ODBC Driver 18 for SQL Server'):
+        raise ValueError('Controlador ODBC no admitido')
+    if driver not in pyodbc.drivers():
+        raise ValueError('El controlador ODBC seleccionado no está instalado')
+    if not isinstance(database, str) or not database or len(database) > 128 or any(c in database for c in ';{}\x00'):
+        raise ValueError('Nombre de base de datos inválido')
+    server = _sql_target(host, port, saved.get('instance', ''))
+    cs = f'DRIVER={{{driver}}};SERVER={server};DATABASE={database};Connection Timeout=8;'
+    if driver != 'SQL Server':
+        cs += 'Encrypt=yes;TrustServerCertificate=' + ('yes' if saved.get('trust_certificate') else 'no') + ';'
+    if saved.get('mode') == 'windows':
+        cs += 'Trusted_Connection=yes;'
+    elif saved.get('mode') == 'sql':
+        def esc(value):
+            return '{' + str(value).replace('}', '}}') + '}'
+        cs += 'UID=' + esc(saved.get('user', '')) + ';PWD=' + esc(saved.get('password', '')) + ';'
+    else:
+        raise ValueError('Autenticación SQL no admitida')
+    return pyodbc.connect(cs, timeout=8, autocommit=True)
+
+
+def _execute_metadata(job):
+    kind = job['kind']
+    if kind not in ('databases', 'tables', 'columns'):
+        raise ValueError('Tipo de exploración desconocido')
+    database = job.get('database') if kind != 'databases' else 'master'
+    if not database:
+        raise ValueError('Debes elegir una base de datos')
+    with _external_connection(job['host'], job['port'], database) as cn:
+        cur = cn.cursor()
+        if kind == 'databases':
+            cur.execute("SELECT name FROM sys.databases WHERE state_desc='ONLINE' AND HAS_DBACCESS(name)=1 ORDER BY name")
+            return [str(r[0]) for r in cur.fetchmany(500)]
+        if kind == 'tables':
+            cur.execute("SELECT TABLE_SCHEMA,TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY TABLE_SCHEMA,TABLE_NAME")
+            return [{'schema': str(r[0]), 'table': str(r[1])} for r in cur.fetchmany(2000)]
+        schema = job.get('schema_name') or 'dbo'
+        table = job.get('table_name')
+        _sql_identifier(schema)
+        _sql_identifier(table)
+        cur.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION", schema, table)
+        return [{'name': str(r[0])} for r in cur.fetchmany(500)]
+
+
+def _execute_price(job):
+    rows = supabase('GET', 'external_price_sources', params={
+        'id': 'eq.' + str(job['configuration_id']),
+        'enabled': 'eq.true',
+        'select': 'id,engine,host,port,database,schema_name,table_name,code_column,description_column,price_column',
+        'limit': '1',
+    })
+    if not rows:
+        raise ValueError('Configuración externa inexistente o deshabilitada')
+    config = rows[0]
+    if config['engine'] != 'SQL Server':
+        raise ValueError('Este conector actualmente ejecuta consultas de productos solo en SQL Server')
+    schema = _sql_identifier(config.get('schema_name') or 'dbo')
+    table = _sql_identifier(config['table_name'])
+    code = _sql_identifier(config['code_column'])
+    description = _sql_identifier(config['description_column'])
+    price = _sql_identifier(config['price_column'])
+    barcode = str(job['barcode']).strip()
+    if not barcode or len(barcode) > 256:
+        raise ValueError('Código de barras inválido')
+    # Los identificadores se escapan y el código de barras siempre es un parámetro.
+    sql = (f'SELECT TOP (1) {code}, {description}, {price} '
+           f'FROM {schema}.{table} WHERE {code} = ?')
+    with _external_connection(config['host'], config['port'], config['database']) as cn:
+        cur = cn.cursor()
+        cur.timeout = 12
+        cur.execute(sql, barcode)
+        row = cur.fetchone()
+        if row is None:
+            return None
+        if row[2] is None:
+            raise ValueError('El producto encontrado no tiene precio')
+        # json no admite Decimal directamente; el precio se devuelve como texto decimal.
+        return {'barcode': str(row[0]), 'name': str(row[1] or ''),
+                'price': str(row[2])}
+
+
+def _process_external_queue(table, select, execute):
+    now = datetime.now(timezone.utc).isoformat()
+    jobs = supabase('GET', table, params={
+        'status': 'eq.pending', 'expires_at': 'gt.' + now,
+        'order': 'created_at.asc', 'limit': '5', 'select': select,
+    })
+    for job in jobs:
+        jid = str(job['id'])
+        claimed = supabase('PATCH', table, params={
+            'id': 'eq.' + jid, 'status': 'eq.pending',
+            'expires_at': 'gt.' + datetime.now(timezone.utc).isoformat(),
+        }, json={'status': 'processing'})
+        if not claimed:
+            continue
+        try:
+            result = execute(job)
+            supabase('PATCH', table, params={
+                'id': 'eq.' + jid, 'status': 'eq.processing',
+            }, json={'status': 'done', 'result': result, 'error_message': None})
+        except Exception as exc:
+            logger.warning('Error al ejecutar solicitud %s: %s', table, type(exc).__name__)
+            try:
+                supabase('PATCH', table, params={
+                    'id': 'eq.' + jid, 'status': 'eq.processing',
+                }, json={'status': 'error', 'error_message': str(exc)[:350]})
+            except Exception:
+                logger.exception('No se pudo publicar el error de la solicitud')
+
+
+def _external_worker():
+    while True:
+        for table, fields, handler in (
+            ('external_metadata_jobs',
+             'id,kind,host,port,database,schema_name,table_name', _execute_metadata),
+            ('external_price_jobs',
+             'id,configuration_id,barcode', _execute_price),
+        ):
+            try:
+                _process_external_queue(table, fields, handler)
+            except Exception as exc:
+                logger.warning('Fallo al consultar cola %s: %s', table, type(exc).__name__)
+        time.sleep(3)
+
+
+@app.on_event('startup')
+def _start_external_worker():
+    threading.Thread(target=_external_worker, name='external-jobs',
+                     daemon=True).start()
+    logger.info('Procesador de metadatos y precios externos iniciado')
 
 
 def main():
