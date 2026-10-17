@@ -1,4 +1,4 @@
-"""Verificador independiente de bases externas. app.py no se modifica."""
+"""Administración de fuentes externas. La consulta se realiza desde app.py."""
 import html
 import ipaddress
 import re
@@ -9,9 +9,9 @@ from datetime import datetime, timedelta, timezone
 import requests
 import streamlit as st
 
-st.set_page_config(page_title='Consulta externa de precios', page_icon='🏷️', layout='centered')
-st.title('🏷️ Consulta de precios — Bases externas')
-st.caption('Verificador independiente. No utiliza la tabla products de Supabase.')
+st.set_page_config(page_title='Configuración de bases externas', page_icon='⚙️', layout='centered')
+st.title('⚙️ Configuración de bases de datos externas')
+st.caption('Detecta servidores, bases, tablas y columnas. La consulta de precios se realiza en el verificador principal.')
 
 admin_password = str(st.secrets.get('ADMIN_PASSWORD', ''))
 if not admin_password:
@@ -159,7 +159,8 @@ with st.expander('Administrar conexiones y campos',expanded=not bool(sources)):
                                                 'name':name.strip(),'engine':engine,'host':host,'port':port,
                                                 'database':database,'schema_name':chosen['schema'],
                                                 'table_name':chosen['table'],'code_column':code,
-                                                'description_column':description,'price_column':price})
+                                                'description_column':description,'price_column':price,
+                                                'enabled':False})
                                             st.success('Configuración guardada.');st.rerun()
                                         except requests.RequestException as exc:
                                             st.error('No se pudo guardar: '+str(exc))
@@ -175,64 +176,43 @@ with st.expander('Administrar conexiones y campos',expanded=not bool(sources)):
                 except requests.RequestException:
                     st.error('No se pudo eliminar. Puede haber consultas asociadas.')
 
-active = [x for x in sources if x.get('enabled')]
-if not active:
-    st.info('Agrega una conexión para comenzar.'); st.stop()
-selected = st.selectbox('Base de datos a consultar', active, format_func=lambda x: x['name'])
+st.divider()
+st.subheader('Fuente externa que utilizará la consulta')
+if not sources:
+    st.warning('Primero detecta la base, selecciona una tabla y sus columnas y guarda la configuración.')
+    st.stop()
 
-if 'external_job' not in st.session_state: st.session_state.external_job = None
-if 'external_result' not in st.session_state: st.session_state.external_result = None
-if 'external_message' not in st.session_state: st.session_state.external_message = ''
+# Solo una configuración externa habilitada a la vez.
+options = {str(x['id']): x for x in sources}
+active_ids = [str(x['id']) for x in sources if x.get('enabled')]
+selected_id = st.selectbox(
+    'Configuración de productos', list(options),
+    index=list(options).index(active_ids[0]) if active_ids and active_ids[0] in options else 0,
+    format_func=lambda i: (
+        f"{options[i]['name']} — {options[i]['database']} / "
+        f"{options[i]['schema_name']}.{options[i]['table_name']}"
+    ),
+)
+selected = options[selected_id]
+st.write('**Código:**', selected['code_column'])
+st.write('**Descripción:**', selected['description_column'])
+st.write('**Precio:**', selected['price_column'])
+if st.button('Activar esta configuración externa', type='primary'):
+    try:
+        # Deshabilitar primero, y habilitar la seleccionada. Si falla la segunda
+        # operación, ninguna configuración queda activa: nunca usar otra por error.
+        api('PATCH', 'external_price_sources',
+            params={'enabled': 'eq.true'}, data={'enabled': False})
+        api('PATCH', 'external_price_sources',
+            params={'id': 'eq.' + selected_id}, data={'enabled': True})
+        st.success('Configuración externa activada. Para utilizarla, selecciona Base externa en Fuentes de datos.')
+        st.rerun()
+    except requests.RequestException as exc:
+        st.error('No se pudo activar la configuración externa: ' + str(exc))
 
-with st.form('external_scan', clear_on_submit=True):
-    barcode = st.text_input('ESCANEA TU CÓDIGO AQUÍ', placeholder='Código del producto')
-    search = st.form_submit_button('Consultar precio', type='primary', use_container_width=True)
-if search:
-    if barcode.strip():
-        try:
-            rows = api('POST', 'external_price_jobs', data={
-                'configuration_id': selected['id'], 'barcode': barcode.strip(),
-                'status': 'pending',
-                'expires_at': (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()})
-            st.session_state.external_job = rows[0]['id']
-            st.session_state.external_result = None
-            st.session_state.external_message = 'Consultando la base de datos Windows…'
-            st.session_state.external_started = time.monotonic()
-        except requests.RequestException:
-            st.error('No se pudo enviar la consulta a Supabase.')
-    else: st.warning('Escanea o escribe un código.')
-
-@st.fragment(run_every='1s')
-def status():
-    jid = st.session_state.external_job
-    if jid:
-        try:
-            rows = api('GET', 'external_price_jobs', params={
-                'id': 'eq.' + jid, 'select': 'status,result,error_message'})
-            if rows and rows[0]['status'] in ('done', 'error'):
-                item = rows[0]
-                st.session_state.external_result = item.get('result')
-                st.session_state.external_message = (
-                    'Producto no encontrado' if item['status'] == 'done' and not item.get('result')
-                    else ('Error del conector: ' + str(item.get('error_message') or 'Error desconocido'))
-                    if item['status'] == 'error' else '')
-                st.session_state.external_job = None
-                st.session_state.external_finished = time.monotonic()
-            elif time.monotonic() - st.session_state.external_started > 25:
-                st.session_state.external_job = None
-                st.session_state.external_message = 'Tiempo de espera agotado. Comprueba el conector Windows.'
-                st.session_state.external_finished = time.monotonic()
-        except requests.RequestException:
-            st.warning('Esperando respuesta del servicio…')
-    elif st.session_state.get('external_finished') and time.monotonic() - st.session_state.external_finished > 10:
-        st.session_state.external_result = None
-        st.session_state.external_message = ''
-        st.session_state.external_finished = None
-    item = st.session_state.external_result
-    if item:
-        st.markdown('### ' + html.escape(str(item['name'])))
-        st.caption('Código: ' + str(item['barcode']))
-        st.metric('PRECIO DE VENTA', 'RD$ ' + format(float(item['price']), ',.2f'))
-    elif st.session_state.external_message:
-        st.info(st.session_state.external_message)
-status()
+if len(active_ids) == 1:
+    st.info('Configuración externa activa: ' + options[active_ids[0]]['name'])
+elif len(active_ids) > 1:
+    st.error('Hay varias configuraciones externas habilitadas. Activa solo una antes de consultar precios.')
+else:
+    st.warning('Todavía no hay ninguna configuración externa activa.')
