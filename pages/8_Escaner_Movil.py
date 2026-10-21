@@ -147,24 +147,37 @@ def reiniciar():
 if not st.session_state.movil_mostrar_resultado:
     st.title('📱 Consulta Móvil')
     tab1,tab2=st.tabs(['📷 Cámara','⌨️ Bluetooth / Manual'])
+    def leer_foto(archivo):
+        """Lee el código de barras de una foto (cámara del navegador o del teléfono)."""
+        data=archivo.getvalue(); digest=hashlib.sha256(data).hexdigest()
+        if digest==st.session_state.movil_foto:
+            return
+        st.session_state.movil_foto=digest
+        try:
+            import zxingcpp
+            from PIL import Image,ImageOps
+            img=ImageOps.exif_transpose(Image.open(BytesIO(data))).convert('RGB')
+            img.thumbnail((2000,2000))  # fotos de 12 MP: más rápido y lee igual
+            found=zxingcpp.read_barcodes(img)
+            if found:
+                consultar(found[0].text)
+                st.rerun()
+            else: st.warning('No se reconoció el código. Acerca la cámara, enfoca bien y repite la foto.')
+        except ImportError: st.error('Falta instalar zxing-cpp (requirements.txt).')
+        except Exception: st.error('No se pudo procesar la fotografía.')
+
     with tab1:
         st.caption('Fotografía el código de barras para consultar el precio.')
         photo=st.camera_input('Tomar foto del código de barras',key=f"movil_camara_{st.session_state.movil_camera_version}")
         if photo:
-            data=photo.getvalue(); digest=hashlib.sha256(data).hexdigest()
-            if digest!=st.session_state.movil_foto:
-                st.session_state.movil_foto=digest
-                try:
-                    import zxingcpp
-                    from PIL import Image,ImageOps
-                    img=ImageOps.exif_transpose(Image.open(BytesIO(data))).convert('RGB')
-                    found=zxingcpp.read_barcodes(img)
-                    if found:
-                        consultar(found[0].text)
-                        st.rerun()
-                    else: st.warning('No se reconoció el código. Acerca la cámara y repite la foto.')
-                except ImportError: st.error('Falta instalar zxing-cpp (requirements.txt).')
-                except Exception: st.error('No se pudo procesar la fotografía.')
+            leer_foto(photo)
+        # Alternativa sin permiso de cámara del navegador: abre la cámara del teléfono.
+        st.markdown('**¿No se activa la cámara?** Usa la cámara del teléfono:')
+        archivo=st.file_uploader('📸 Tomar foto con la cámara del teléfono',type=['jpg','jpeg','png'],
+                                 key=f"movil_archivo_{st.session_state.movil_camera_version}",
+                                 help='En iPhone/Android elige «Tomar foto» o «Cámara».')
+        if archivo:
+            leer_foto(archivo)
     with tab2:
         st.caption('Lector Bluetooth HID con sufijo Enter, o entrada manual.')
         # Cuadro nuevo y vacío en cada ciclo (la versión cambia al volver a escanear),
