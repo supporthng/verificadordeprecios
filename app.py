@@ -161,23 +161,14 @@ def _leer_cookie():
 
 
 def _escribir_cookie(valor, max_age):
-    """Escribe (o borra con max_age=0) la cookie con JavaScript en la propia
-    página. Se ejecuta en cada carga completa, así nunca queda sin guardar."""
-    usa_html = "unsafe_allow_javascript" in inspect.signature(st.html).parameters
-    destino = "document" if usa_html else "window.parent.document"
-    js = ("<script>(function(){var c=%s+'='+%s+'; Max-Age=%d; Path=/; SameSite=Lax';"
-          "if(location.protocol==='https:')c+='; Secure';%s.cookie=c;})();</script>"
-          % (json.dumps(COOKIE_NAME), json.dumps(valor), int(max_age), destino))
-    with st.container(key="sesion_cookie_js"):
-        if usa_html:
-            st.html(js, unsafe_allow_javascript=True)
-        else:
-            import streamlit.components.v1 as components
-            components.html(js, height=0)
+    """Escribe (o borra con max_age=0) la cookie con JavaScript en la página
+    principal. Se repite en cada carga completa, así nunca queda sin guardar."""
+    from shared import ejecutar_js_en_pagina
+    js = ("(function(){var c=%s+'='+%s+'; Max-Age=%d; Path=/; SameSite=Lax';"
+          "if(location.protocol==='https:')c+='; Secure';document.cookie=c;})();"
+          % (json.dumps(COOKIE_NAME), json.dumps(valor), int(max_age)))
+    ejecutar_js_en_pagina(js, "sesion_cookie_js")
 
-
-st.markdown("<style>.st-key-sesion_cookie_js{display:none!important}</style>",
-            unsafe_allow_html=True)
 
 # Recuperar sesión al refrescar la página o reabrir el navegador.
 if not st.session_state.usuario_id and not st.session_state.logout_pendiente:

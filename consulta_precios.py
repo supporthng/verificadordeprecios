@@ -13,7 +13,6 @@ import streamlit as st
 # El enfoque se aplica directamente al textbox nativo de Streamlit.
 # No utiliza declare_component ni iframe: evita el RuntimeError anterior.
 FOCO_JS = r"""
-<script>
 (() => {
   // Solo el cuadro del verificador (contenedor con clave fija), nunca otros
   // cuadros de la app. Si hay dos (el nuevo y el que está desapareciendo tras
@@ -58,7 +57,6 @@ FOCO_JS = r"""
   }
   requestAnimationFrame(() => setTimeout(enfocar, 50));
 })();
-</script>
 """
 
 SUPABASE_URL = str(st.secrets.get("SUPABASE_URL", "")).strip().rstrip("/")
@@ -795,10 +793,6 @@ def verificador():
             label_visibility="collapsed",
             placeholder="Escanea o escribe el código y pulsa Enter",
         )
-    if "unsafe_allow_javascript" in inspect.signature(st.html).parameters:
-        st.html(FOCO_JS, unsafe_allow_javascript=True)
-    else:
-        st.warning("El enfoque automático requiere una versión de Streamlit compatible con st.html.")
 
     product = st.session_state.current_product
 
@@ -906,6 +900,11 @@ def verificador():
             )
 
 
+
+# Script del cursor: se instala UNA vez en la página principal (fuera del
+# fragmento que se actualiza cada segundo) y desde ahí vigila el cuadro.
+from shared import ejecutar_js_en_pagina
+ejecutar_js_en_pagina(FOCO_JS, "foco_verificador_js")
 
 try:
     verificador()

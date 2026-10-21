@@ -1,6 +1,28 @@
 """Utilidades compartidas entre páginas."""
+import json
 import re
 import unicodedata
+
+
+def ejecutar_js_en_pagina(codigo_js, clave):
+    """Ejecuta JavaScript en la PÁGINA PRINCIPAL de forma fiable.
+
+    Usa components.html (un iframe que Streamlit siempre ejecuta) e inserta el
+    código como <script> en el documento principal, donde están los cuadros de
+    texto y las cookies. El iframe queda oculto (display:none no impide que se
+    ejecute). Si el contenido no cambia entre recargas, no se vuelve a ejecutar.
+    """
+    import streamlit as st
+    import streamlit.components.v1 as components
+    envoltura = (
+        "<script>(function(){try{var d=window.parent.document;"
+        "var s=d.createElement('script');s.textContent=%s;"
+        "d.head.appendChild(s);}catch(e){console.error('JS en página:',e);}})();</script>"
+        % json.dumps(codigo_js))
+    st.markdown("<style>.st-key-%s{display:none!important}</style>" % clave,
+                unsafe_allow_html=True)
+    with st.container(key=clave):
+        components.html(envoltura, height=0)
 
 
 def normalize_header(value):
