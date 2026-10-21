@@ -1,0 +1,8 @@
+fastapi>=0.110,<1
+uvicorn>=0.29,<1
+requests>=2.31,<3
+python-multipart>=0.0.9
+pyinstaller>=6.0,<7
+
+# Necesario para consultas a SQL Server desde el ejecutable
+pyodbc>=5.1,<6
