@@ -31,6 +31,7 @@ resultado. Las credenciales SQL quedan cifradas en el equipo Windows (DPAPI).
 | `inventarios.py` | Inventarios Excel y búsqueda por código |
 | `google_oauth_source.py` | Conexión y lectura de Google Drive / Sheets |
 | `mobile_geofence.py` | Zona autorizada (GPS) de Consulta Móvil |
+| `apariencia.py` | Qué se ve en la pantalla de consulta (logo, QR, cuadro) |
 | `sql/` | Instalación y migraciones de Supabase |
 | `windows_bridge/` | Código del Conector Windows |
 | `installer/` | Instalador del conector (Inno Setup) y su configuración de ejemplo |
@@ -77,7 +78,7 @@ Se cierra sola únicamente si la cuenta se desactiva o se le cambia la contrase�
 | Consulta de Base de Datos | Listado de productos de cualquier fuente |
 | Fuentes de Datos | Administración y selección de la fuente activa |
 | Configurar Consulta | Conexiones SQL Server y conexión Google |
-| Logo del Negocio | Logo y código QR de la pantalla |
+| Logo del Negocio | Logo y código QR, y **Apariencia**: mostrar u ocultar logo, QR y cuadro del código |
 | Administrador de Usuarios | Cambiar su propia contraseña (crear usuarios requiere rol admin) |
 | **Modo verificador (kiosko)** | Solo la pantalla de consulta, sin menú. Para salir pide usuario y clave de un administrador |
 

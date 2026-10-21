@@ -90,13 +90,13 @@ def active_source():
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def cargar_logo_negocio():
-    """Lee el logo persistente desde Supabase Storage, sin hacerlo publico."""
+def cargar_imagen(nombre):
+    """Lee una imagen (logo.png o qr-movil.png) del bucket privado de Supabase."""
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         return None
     try:
         response = requests.get(
-            f"{SUPABASE_URL}/storage/v1/object/logo-negocio/logo.png",
+            f"{SUPABASE_URL}/storage/v1/object/logo-negocio/{nombre}",
             headers={
                 "apikey": SUPABASE_SERVICE_ROLE_KEY,
                 "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
@@ -111,15 +111,15 @@ def cargar_logo_negocio():
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def logo_base64():
-    """Logo ya redimensionado y codificado. Se calcula una vez por minuto,
+def imagen_base64(nombre, ancho, alto):
+    """Imagen ya redimensionada y codificada. Se calcula una vez por minuto,
     no en cada actualización del verificador (que ocurre cada segundo)."""
-    logo = cargar_logo_negocio()
-    if not logo:
+    datos = cargar_imagen(nombre)
+    if not datos:
         return None
     try:
-        with Image.open(BytesIO(logo)) as original:
-            imagen = ImageOps.contain(original.convert("RGBA"), (220, 130))
+        with Image.open(BytesIO(datos)) as original:
+            imagen = ImageOps.contain(original.convert("RGBA"), (ancho, alto))
             salida = BytesIO()
             imagen.save(salida, format="PNG")
         return base64.b64encode(salida.getvalue()).decode("ascii")
@@ -373,7 +373,8 @@ CSS += """
 
 # El textbox sigue en el DOM y recibe el foco y los codigos del escaner.
 # Se oculta solo visualmente: NO usar display:none ni visibility:hidden.
-CSS += """
+# Se aplica o no según la pestaña Apariencia (ver verificador()).
+CSS_CUADRO_OCULTO = """
 <style>
 /* El input sigue montado y enfocable; solo se oculta visualmente.
    Nunca usar display:none, visibility:hidden ni type=hidden. */
@@ -392,6 +393,21 @@ div[data-testid="stTextInput"] input {
     height: 48px !important;
     opacity: 0 !important;
     pointer-events: none !important;
+}
+</style>
+"""
+
+# Cuadro visible: centrado y discreto. Sigue recibiendo el foco igual.
+CSS_CUADRO_VISIBLE = """
+<style>
+div[data-testid="stTextInput"] {
+    max-width: 460px !important;
+    margin: 0 auto 6px !important;
+}
+div[data-testid="stTextInput"] input {
+    text-align: center !important;
+    font-size: 20px !important;
+    letter-spacing: 1px;
 }
 </style>
 """
@@ -743,6 +759,14 @@ def verificador():
     # Mantener el textbox nativo montado en TODOS los estados, incluso mientras
     # se muestra un producto o un código inexistente. Al desmontarlo, Streamlit
     # pierde el foco y puede descartar la siguiente lectura del escáner.
+    try:
+        from apariencia import obtener as obtener_apariencia
+        vista = obtener_apariencia()
+    except Exception:
+        vista = {"mostrar_logo": True, "mostrar_qr": True, "mostrar_cuadro": False}
+    st.markdown(CSS_CUADRO_VISIBLE if vista["mostrar_cuadro"] else CSS_CUADRO_OCULTO,
+                unsafe_allow_html=True)
+
     clave_cuadro = f"search_input_{st.session_state.scan_n}"
     st.text_input(
         "Código de barras",
@@ -836,18 +860,29 @@ def verificador():
         )
 
 
-        imagen_base64 = logo_base64()
-        if imagen_base64:
-            # El logo se centra respecto a TODA la pantalla, no respecto
-            # a columnas de Streamlit que varían con el ancho del dispositivo.
+        # Logo y QR según Apariencia, centrados respecto a TODA la pantalla.
+        imagenes = []
+        if vista["mostrar_logo"]:
+            logo = imagen_base64("logo.png", 220, 130)
+            if logo:
+                imagenes.append(
+                    '<img alt="Logo de la empresa" style="display:block;width:auto;'
+                    'max-width:220px;height:auto;max-height:130px;object-fit:contain;" '
+                    f'src="data:image/png;base64,{logo}">')
+        if vista["mostrar_qr"]:
+            qr = imagen_base64("qr-movil.png", 130, 130)
+            if qr:
+                imagenes.append(
+                    '<div style="text-align:center;color:#64748b;font-size:13px;font-weight:600">'
+                    '<img alt="Código QR para consultar desde el celular" style="display:block;'
+                    'width:auto;max-width:130px;height:auto;max-height:130px;margin:0 auto 4px;'
+                    f'background:#fff;padding:4px;border-radius:8px" src="data:image/png;base64,{qr}">'
+                    'Consulta desde tu celular</div>')
+        if imagenes:
             st.markdown(
                 '<div style="width:100%;display:flex;justify-content:center;'
-                'align-items:center;margin:10px auto 0;">'
-                '<img alt="Logo de la empresa" '
-                'style="display:block;width:auto;max-width:220px;'
-                'height:auto;max-height:130px;object-fit:contain;" '
-                f'src="data:image/png;base64,{imagen_base64}">'
-                '</div>',
+                'align-items:center;gap:clamp(18px,4vw,48px);flex-wrap:wrap;margin:10px auto 0;">'
+                + "".join(imagenes) + '</div>',
                 unsafe_allow_html=True,
             )
 
