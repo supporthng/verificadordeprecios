@@ -15,31 +15,48 @@ import streamlit as st
 FOCO_JS = r"""
 <script>
 (() => {
-  const SELECTOR = 'div[data-testid="stTextInput"] input';
+  // Solo el cuadro del verificador (contenedor con clave fija), nunca otros
+  // cuadros de la app. Si hay dos (el nuevo y el que está desapareciendo tras
+  // una lectura), se usa el ÚLTIMO, que es el nuevo.
+  const SELECTOR = '.st-key-cuadro_codigo input';
+  const cuadro = () => {
+    const lista = document.querySelectorAll(SELECTOR);
+    return lista.length ? lista[lista.length - 1] : null;
+  };
+  const editable = (el) => !!(el && el !== document.body && el.matches &&
+    el.matches('input,textarea,select,[contenteditable="true"]'));
+  const esNuestro = (el) => !!(el && el.closest && el.closest('.st-key-cuadro_codigo'));
   function enfocar() {
-    const input = document.querySelector(SELECTOR);
+    const input = cuadro();
     if (!input || input.disabled || input.readOnly) return;
-    // No interrumpir al usuario si está escribiendo en otro control.
     const activo = document.activeElement;
-    if (activo && activo !== document.body && activo !== input &&
-        (activo.matches('input,textarea,select,[contenteditable="true"]'))) return;
-    if (activo !== input) {
-      try { input.focus({preventScroll:true}); } catch (_) { input.focus(); }
-    }
+    if (activo === input) return;
+    // No interrumpir si alguien escribe en OTRO control (p. ej. clave de admin).
+    if (editable(activo) && !esNuestro(activo)) return;
+    try { input.focus({preventScroll: true}); } catch (_) { input.focus(); }
   }
-  // Instalar solo una vez, incluso cuando Streamlit actualiza el fragmento.
-  if (!window.__consultaPreciosFocoInstalado) {
-    window.__consultaPreciosFocoInstalado = true;
-    new MutationObserver(() => requestAnimationFrame(enfocar))
-      .observe(document.body, {childList:true, subtree:true});
-    window.addEventListener('focus', enfocar);
-    window.addEventListener('pageshow', enfocar);
+  window.__cpEnfocar = enfocar;
+  // Instalar una sola vez por ventana, aunque el fragmento se actualice.
+  if (!window.__cpFocoV2) {
+    window.__cpFocoV2 = true;
+    new MutationObserver(() => requestAnimationFrame(() => window.__cpEnfocar()))
+      .observe(document.body, {childList: true, subtree: true});
+    ['focus', 'pageshow', 'click', 'touchend'].forEach((ev) =>
+      window.addEventListener(ev, () => setTimeout(() => window.__cpEnfocar(), 0), true));
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) setTimeout(enfocar, 100);
+      if (!document.hidden) setTimeout(() => window.__cpEnfocar(), 100);
     });
-    setInterval(enfocar, 650);
+    // Respaldo para el escáner: si llega una tecla y el cursor NO está en un
+    // cuadro de texto, se mueve al cuadro del verificador ANTES de que la tecla
+    // se escriba, así no se pierde ningún dígito.
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (editable(document.activeElement)) return;
+      window.__cpEnfocar();
+    }, true);
+    setInterval(() => window.__cpEnfocar(), 500);
   }
-  requestAnimationFrame(() => setTimeout(enfocar, 120));
+  requestAnimationFrame(() => setTimeout(enfocar, 50));
 })();
 </script>
 """
@@ -768,14 +785,16 @@ def verificador():
                 unsafe_allow_html=True)
 
     clave_cuadro = f"search_input_{st.session_state.scan_n}"
-    st.text_input(
-        "Código de barras",
-        key=clave_cuadro,
-        on_change=buscar_producto,
-        args=(clave_cuadro,),
-        label_visibility="collapsed",
-        placeholder="Escanea o escribe el código y pulsa Enter",
-    )
+    # Contenedor con clave fija: el script de enfoque lo localiza siempre.
+    with st.container(key="cuadro_codigo"):
+        st.text_input(
+            "Código de barras",
+            key=clave_cuadro,
+            on_change=buscar_producto,
+            args=(clave_cuadro,),
+            label_visibility="collapsed",
+            placeholder="Escanea o escribe el código y pulsa Enter",
+        )
     if "unsafe_allow_javascript" in inspect.signature(st.html).parameters:
         st.html(FOCO_JS, unsafe_allow_javascript=True)
     else:
