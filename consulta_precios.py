@@ -1,237 +1,857 @@
-"""Consulta móvil con cámara fotográfica y lector Bluetooth HID."""
-import hashlib
 import html
+import base64
 from io import BytesIO
-import streamlit as st
-import requests
+from PIL import Image, ImageOps
 from datetime import datetime, timedelta, timezone
 import time
+import inspect
 
-# Verificación previa: nunca consultar productos sin autorización geográfica.
-from mobile_geofence import get_settings, validate_location
-from streamlit_js_eval import get_geolocation
+import pandas as pd
+import requests
+import streamlit as st
 
-try:
-    geo_settings = get_settings()
-except Exception:
-    st.error('Consulta Móvil bloqueada: no se pudo verificar la configuración geográfica.')
-    st.stop()
+# El enfoque se aplica directamente al textbox nativo de Streamlit.
+# No utiliza declare_component ni iframe: evita el RuntimeError anterior.
+FOCO_JS = r"""
+<script>
+(() => {
+  const SELECTOR = 'div[data-testid="stTextInput"] input';
+  function enfocar() {
+    const input = document.querySelector(SELECTOR);
+    if (!input || input.disabled || input.readOnly) return;
+    // No interrumpir al usuario si está escribiendo en otro control.
+    const activo = document.activeElement;
+    if (activo && activo !== document.body && activo !== input &&
+        (activo.matches('input,textarea,select,[contenteditable="true"]'))) return;
+    if (activo !== input) {
+      try { input.focus({preventScroll:true}); } catch (_) { input.focus(); }
+    }
+  }
+  // Instalar solo una vez, incluso cuando Streamlit actualiza el fragmento.
+  if (!window.__consultaPreciosFocoInstalado) {
+    window.__consultaPreciosFocoInstalado = true;
+    new MutationObserver(() => requestAnimationFrame(enfocar))
+      .observe(document.body, {childList:true, subtree:true});
+    window.addEventListener('focus', enfocar);
+    window.addEventListener('pageshow', enfocar);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) setTimeout(enfocar, 100);
+    });
+    setInterval(enfocar, 650);
+  }
+  requestAnimationFrame(() => setTimeout(enfocar, 120));
+})();
+</script>
+"""
 
-# El enlace público nunca funciona si la restricción está desactivada.
-if st.session_state.get('mobile_public_access') and not geo_settings['enabled']:
-    st.error('Consulta Móvil pública no disponible: activa y configura la zona autorizada en Administración.')
-    st.stop()
+SUPABASE_URL = str(st.secrets.get("SUPABASE_URL", "")).strip().rstrip("/")
+SUPABASE_ANON_KEY = str(st.secrets.get("SUPABASE_ANON_KEY", "")).strip()
 
-if geo_settings['enabled']:
-    # Un componente distinto al anterior solicita el GPS desde el navegador.
-    # No se autoriza el escáner hasta recibir coordenadas verificables.
-    st.session_state['mobile_geo_allowed'] = False
-    st.caption('📍 Para consultar precios, permite el acceso a tu ubicación precisa.')
-    # Montar el componente GPS desde el primer render. El navegador puede
-    # exigir pulsar su propio control azul para conceder el permiso.
-    st.markdown('**👇 Pulsa el botón azul de ubicación que aparece debajo para activar el GPS.**')
-    st.caption('Si el navegador ya autorizó la ubicación, el escáner se abrirá automáticamente.')
+SUPABASE_SERVICE_ROLE_KEY = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+
+def admin_api(method, table, params=None, payload=None):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise RuntimeError("Falta SUPABASE_SERVICE_ROLE_KEY en Secrets.")
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    response = requests.request(
+        method, f"{SUPABASE_URL}/rest/v1/{table}",
+        params=params, json=payload, headers=headers, timeout=12,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+@st.cache_data(ttl=4, show_spinner=False)
+def active_source():
+    settings = admin_api("GET", "price_source_settings",
+                         params={"id": "eq.1", "select": "source_type"})
+    if not settings:
+        raise RuntimeError("Falta configurar el origen de datos.")
+    mode = settings[0]["source_type"]
+    if mode == "local":
+        return mode, None
+    if mode == "google":
+        return mode, None
+    if mode != "external":
+        raise RuntimeError("Origen de datos desconocido.")
+    sources = admin_api("GET", "external_price_sources",
+                        params={"enabled": "eq.true", "select": "id,name", "limit": "2"})
+    if len(sources) != 1:
+        raise RuntimeError(
+            "La fuente externa requiere exactamente una configuración habilitada. "
+            "Configúrala en Fuentes de datos."
+        )
+    return mode, sources[0]["id"]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def cargar_logo_negocio():
+    """Lee el logo persistente desde Supabase Storage, sin hacerlo publico."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return None
     try:
-        # get_geolocation usa navigator.geolocation del navegador y entrega
-        # un objeto con coords.latitude, coords.longitude y coords.accuracy.
-        response = get_geolocation()
-    except Exception as exc:
-        st.error('No se pudo iniciar la geolocalización del navegador.')
-        st.caption(f'Detalle técnico: {type(exc).__name__}: {exc}')
-        st.stop()
-    if not response:
-        st.info('Esperando ubicación. Si no aparece el permiso, pulsa el botón azul de GPS situado arriba.')
-        st.stop()
-    if isinstance(response, dict) and response.get('error'):
-        st.error('El navegador no pudo obtener la ubicación: ' + str(response['error']))
-        st.stop()
-    coords = response.get('coords', response) if isinstance(response, dict) else {}
-    if not isinstance(coords, dict):
-        coords = {}
-    current_location = {name: coords.get(name) for name in ('latitude', 'longitude', 'accuracy')}
-    if any(value is None for value in current_location.values()):
-        st.warning('El navegador no devolvió coordenadas completas. Activa la ubicación precisa y vuelve a intentarlo.')
-        st.stop()
-    authorized, geo_message = validate_location(current_location, geo_settings)
-    if not authorized:
-        st.warning(geo_message)
-        st.stop()
-    st.success(geo_message)
-    st.session_state['mobile_geo_allowed'] = True
-else:
-    st.session_state['mobile_geo_allowed'] = True
+        response = requests.get(
+            f"{SUPABASE_URL}/storage/v1/object/logo-negocio/logo.png",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+            },
+            timeout=8,
+        )
+        if response.status_code == 200 and response.headers.get("content-type", "").startswith("image/"):
+            return response.content
+    except requests.RequestException:
+        pass
+    return None
 
-for key, default in {'movil_codigo':'','movil_ultimo':'','movil_producto':None,'movil_job':None,'movil_error':'','movil_foto':'','movil_mostrar_resultado':False,'movil_camera_version':0,'movil_resultado_desde':None}.items():
-    st.session_state.setdefault(key,default)
 
-def api(method,table,params=None,payload=None):
-    url=str(st.secrets.get('SUPABASE_URL','')).rstrip('/')
-    key=str(st.secrets.get('SUPABASE_SERVICE_ROLE_KEY',''))
-    if not url or not key: raise RuntimeError('Faltan credenciales de Supabase.')
-    r=requests.request(method,url+'/rest/v1/'+table,params=params,json=payload,
-        headers={'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'return=representation'},timeout=15)
-    r.raise_for_status()
-    return r.json()
+@st.cache_data(ttl=60, show_spinner=False)
+def logo_base64():
+    """Logo ya redimensionado y codificado. Se calcula una vez por minuto,
+    no en cada actualización del verificador (que ocurre cada segundo)."""
+    logo = cargar_logo_negocio()
+    if not logo:
+        return None
+    try:
+        with Image.open(BytesIO(logo)) as original:
+            imagen = ImageOps.contain(original.convert("RGBA"), (220, 130))
+            salida = BytesIO()
+            imagen.save(salida, format="PNG")
+        return base64.b64encode(salida.getvalue()).decode("ascii")
+    except (OSError, ValueError):
+        return None
 
-def consultar(code):
-    if not st.session_state.get('mobile_geo_allowed', False):
-        st.error('Consulta bloqueada: ubicación no autorizada.')
+
+CSS = """
+<style>
+.stApp { background: #f4f7fc; }
+.block-container {
+    max-width: 100%;
+    padding: .5rem .8rem 1rem;
+}
+#MainMenu, footer { visibility: hidden; }
+header[data-testid="stHeader"] { background: transparent; }
+.main-header {
+    background: linear-gradient(135deg, #0c2e59, #0759c9);
+    border-radius: 20px;
+    padding: clamp(12px, 3vw, 28px);
+    text-align: center;
+    color: white;
+    margin-bottom: 12px;
+}
+.main-header h1 {
+    color: white !important;
+    font-size: clamp(20px, 4vw, 38px);
+    margin: 0;
+}
+.main-header p {
+    color: #dceaff;
+    font-size: clamp(12px, 2vw, 17px);
+    margin: 6px 0 0;
+}
+.scan-title {
+    color: #102b50;
+    text-align: center;
+    font-weight: 850;
+    font-size: clamp(18px, 3.5vw, 32px);
+    margin: 10px 0;
+}
+div[data-testid="stTextInput"] input {
+    text-align: center !important;
+    font-size: clamp(16px, 2vw, 21px) !important;
+    min-height: 44px;
+    height: 44px;
+    padding: 4px 12px;
+    border-radius: 14px;
+    border: 2px solid #d5e1f1;
+    background: white;
+}
+.product-card {
+    background: white;
+    border: 1px solid #dce5f2;
+    border-radius: 20px;
+    padding: clamp(16px, 4vw, 36px);
+    text-align: center;
+    margin: 10px auto;
+    box-shadow: 0 7px 25px rgba(20,50,90,.07);
+}
+/* Resultado ampliado para pantallas de verificadores de precios. */
+.product-card.result-card {
+    width: 100%;
+    min-height: 76dvh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(8px, 1.5vh, 18px);
+    padding: clamp(16px, 3vw, 40px);
+    margin: 0 auto;
+}
+.result-card .product-name {
+    font-size: clamp(28px, 5.5vw, 66px);
+    margin: 2px 0;
+}
+.result-card .product-code {
+    font-size: clamp(17px, 2.5vw, 26px);
+    margin: 0;
+}
+.result-card .product-price {
+    font-size: clamp(54px, 10vw, 126px);
+    margin: 0;
+}
+.result-card .product-label, .result-card .price-label {
+    font-size: clamp(15px, 2vw, 23px);
+}
+@media (max-width: 600px) {
+    .product-card.result-card { min-height: 72dvh; }
+    .result-card .product-price { font-size: clamp(42px, 11vw, 78px); }
+}
+@media (orientation: landscape) and (max-height: 650px) {
+    .product-card.result-card { min-height: 79dvh; padding: 10px 22px; gap: 6px; }
+    .result-card .product-name { font-size: clamp(28px, 5vw, 58px); }
+    .result-card .product-price { font-size: clamp(55px, 9vw, 110px); }
+}
+.product-label, .price-label {
+    color: #64748b;
+    font-weight: 800;
+    letter-spacing: 1px;
+    font-size: clamp(12px, 2vw, 17px);
+}
+.product-name {
+    color: #102b50;
+    font-size: clamp(22px, 4.5vw, 40px);
+    font-weight: 850;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+    margin: 12px 0;
+}
+.product-code {
+    color: #64748b;
+    font-size: clamp(14px, 2vw, 21px);
+    overflow-wrap: anywhere;
+    margin-bottom: 22px;
+}
+.product-price {
+    color: #0757c3;
+    font-size: clamp(40px, 8vw, 76px);
+    font-weight: 900;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+    margin-top: 8px;
+}
+@media (max-width: 600px) {
+    .block-container { padding: .6rem .6rem 1rem; }
+    .main-header { padding: 13px 10px; margin-bottom: 8px; }
+    .main-header h1 { font-size: clamp(19px, 5.5vw, 27px); }
+    .scan-title { margin: 6px 0; font-size: clamp(17px, 5vw, 24px); }
+    div[data-testid="stTextInput"] input { min-height: 48px; }
+    .product-card { padding: 18px 12px; }
+}
+@media (orientation: landscape) and (max-height: 650px) {
+    .block-container { padding-top: .25rem; padding-bottom: .4rem; }
+    .main-header { padding: 8px 12px; margin-bottom: 5px; }
+    .main-header h1 { font-size: clamp(18px, 3vw, 27px); }
+    .main-header p { margin-top: 2px; font-size: 12px; }
+    .scan-title { margin: 4px 0; font-size: clamp(17px, 3vw, 24px); }
+    div[data-testid="stTextInput"] input { min-height: 44px; }
+    .product-card { padding: 12px; margin: 4px auto; }
+    .product-name { margin: 6px 0; }
+    .product-code { margin-bottom: 8px; }
+}
+
+.search-card { min-height: 255px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+.search-card .search-label { color: #64748b; font-weight: 800; letter-spacing: 1px; font-size: 14px; }
+.search-card .search-text { color: #102b50; font-weight: 750; font-size: clamp(18px, 3vw, 24px); }
+.search-visual { width: min(300px, 90%); height: 105px; overflow: hidden; }
+.search-lens { animation: scan-barcode 2.1s ease-in-out infinite; transform-origin: center; }
+@keyframes scan-barcode { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(180px); } }
+@media (prefers-reduced-motion: reduce) { .search-lens { animation: none; } }
+.not-found-name { color: #102b50; font-size: clamp(23px, 4.5vw, 40px); font-weight: 850; line-height: 1.2; margin: 16px 0; }
+.business-logo-label {
+    text-align: center;
+    color: #64748b;
+    font-weight: 750;
+    letter-spacing: 1px;
+    margin: 22px 0 8px;
+}
+
+/* Codigo de barras decorativo con barrido continuo, sin recursos externos. */
+.animated-barcode-card {
+    width: min(310px, 75vw); margin: 8px auto 20px; padding: 16px 18px 12px;
+    background: #fff; border-radius: 12px; text-align: center;
+    box-shadow: 0 2px 10px rgba(20,50,90,.04);
+}
+.animated-bars {
+    position: relative; height: 105px; overflow: hidden;
+    background: repeating-linear-gradient(90deg,
+        #102b50 0px, #102b50 2px, #fff 2px, #fff 5px,
+        #102b50 5px, #102b50 9px, #fff 9px, #fff 12px,
+        #102b50 12px, #102b50 13px, #fff 13px, #fff 17px,
+        #102b50 17px, #102b50 22px, #fff 22px, #fff 26px);
+}
+.animated-scan-line {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 4px;
+    background: #ff9d20; box-shadow: 0 0 9px 3px rgba(255,157,32,.7);
+    animation: barcode-sweep 2.4s ease-in-out infinite alternate;
+}
+@keyframes barcode-sweep { from { left: 0; } to { left: calc(100% - 4px); } }
+.animated-barcode-caption { color: #102b50; margin-top: 10px; font-size: 16px; }
+@media (prefers-reduced-motion: reduce) { .animated-scan-line { animation: none; left: 50%; } }
+@media (max-width: 600px) { .animated-barcode-card { width: min(260px, 76vw); } }
+</style>
+"""
+# Color verde del campo de la antigua Prueba del Cursor.
+# Solo modifica la apariencia; no cambia el mecanismo de enfoque.
+CSS += """
+<style>
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stTextInput"] input:focus-visible {
+    outline: none !important;
+    border-color: #16823c !important;
+    box-shadow: 0 0 0 3px #d9f5df !important;
+}
+</style>
+"""
+
+# Ajuste para pantallas integradas de verificadores (ej. 2connect).
+# Se preserva la lógica del escáner, el enfoque y los tiempos de resultados.
+CSS += """
+<style>
+@media (max-height: 720px) and (min-width: 600px) {
+  [data-testid="stMainBlockContainer"], .block-container {
+    padding-top: 0.25rem !important;
+    padding-bottom: 0.2rem !important;
+  }
+  [data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
+  .main-header {
+    padding: 9px 14px !important;
+    margin-bottom: 2px !important;
+    border-radius: 12px !important;
+  }
+  .main-header h1 { font-size: clamp(19px, 3.2vh, 27px) !important; }
+  .main-header p { font-size: 11px !important; margin-top: 2px !important; }
+  .animated-barcode-card {
+    height: auto !important;
+    width: min(260px, 60vw) !important;
+    padding: 8px 12px 6px !important;
+    margin: 1px auto 2px !important;
+  }
+  .animated-bars { height: clamp(45px, 11vh, 70px) !important; }
+  .animated-barcode-caption { margin-top: 3px !important; font-size: 12px !important; }
+  .scan-title { margin: 2px 0 !important; font-size: clamp(17px, 3vh, 23px) !important; }
+  div[data-testid="stTextInput"] input {
+    height: 39px !important;
+    min-height: 39px !important;
+  }
+  [data-testid="stImage"] img {
+    max-height: clamp(55px, 14vh, 88px) !important;
+    width: auto !important;
+    object-fit: contain !important;
+    margin: 0 auto !important;
+  }
+  [data-testid="stImage"] { text-align: center !important; }
+  .product-card.result-card {
+    min-height: 68dvh !important;
+    padding: 12px 20px !important;
+  }
+}
+@media (max-height: 480px) and (min-width: 600px) {
+  .main-header { padding: 6px 12px !important; }
+  .animated-bars { height: 42px !important; }
+  .animated-barcode-card { padding: 5px 10px 3px !important; }
+  .scan-title { font-size: 17px !important; }
+  [data-testid="stImage"] img { max-height: 54px !important; }
+}
+</style>
+"""
+
+# El textbox sigue en el DOM y recibe el foco y los codigos del escaner.
+# Se oculta solo visualmente: NO usar display:none ni visibility:hidden.
+CSS += """
+<style>
+/* El input sigue montado y enfocable; solo se oculta visualmente.
+   Nunca usar display:none, visibility:hidden ni type=hidden. */
+div[data-testid="stTextInput"] {
+    position: absolute !important;
+    left: -10000px !important;
+    top: auto !important;
+    width: 300px !important;
+    height: 48px !important;
+    opacity: 0 !important;
+    overflow: visible !important;
+    pointer-events: none !important;
+}
+div[data-testid="stTextInput"] input {
+    width: 300px !important;
+    height: 48px !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+</style>
+"""
+
+# Pantalla 2connect: distribuir el contenido por la ALTURA real del visor.
+# No cambiar el input oculto, FOCO_JS, ni la lógica del lector.
+CSS += """
+<style>
+.stApp { background:#f4f8ff !important; }
+.main-header {
+  background:linear-gradient(110deg,#0b315f,#0757d4) !important;
+  border-radius:14px !important;
+  box-shadow:0 5px 14px rgba(8,60,130,.10) !important;
+  padding:clamp(14px,3vh,24px) 48px !important;
+  margin-bottom:clamp(12px,3vh,24px) !important;
+}
+.main-header h1 { font-size:clamp(22px,3.6vw,37px) !important; }
+.main-header p { font-size:clamp(12px,1.5vw,16px) !important; }
+.animated-barcode-card {
+  width:min(460px,75vw) !important;
+  max-width:100% !important;
+  padding:clamp(12px,2vh,22px) clamp(15px,2vw,25px) 10px !important;
+  margin:0 auto clamp(14px,3vh,24px) !important;
+  border-radius:16px !important;
+  box-shadow:0 6px 18px rgba(17,54,98,.10) !important;
+}
+.animated-bars { height:clamp(75px,18vh,140px) !important; }
+.animated-barcode-caption { margin-top:7px !important; font-size:clamp(13px,1.6vw,17px) !important; }
+.scan-title { font-size:clamp(22px,3.2vw,34px) !important; margin:0 !important; }
+.scan-hint { color:#7c8ca6; text-align:center; font-weight:500;
+  font-size:clamp(14px,1.8vw,19px); margin:5px auto 0; }
+[data-testid="stImage"] { text-align:center !important; }
+[data-testid="stImage"] img { object-fit:contain !important; width:auto !important; margin:auto !important; }
+/* Pantalla horizontal del equipo: evitar el diseño miniatura anterior.
+   Escalar tamaños con la altura útil en vez de reducirlos al mínimo. */
+@media (orientation:landscape) and (min-width:600px) and (max-height:800px) {
+  [data-testid="stMainBlockContainer"], .block-container {
+    padding-top:0.25rem !important;
+    padding-bottom:0.15rem !important;
+  }
+  [data-testid="stVerticalBlock"] { gap:clamp(4px,1.1vh,10px) !important; }
+  .main-header {
+    box-sizing:border-box !important;
+    min-height:clamp(82px,20dvh,142px) !important;
+    padding:clamp(12px,3vh,20px) 50px !important;
+    margin-bottom:clamp(10px,2.5vh,18px) !important;
+    display:flex !important;
+    flex-direction:column !important;
+    justify-content:center !important;
+  }
+  .main-header h1 { font-size:clamp(22px,5vh,34px) !important; }
+  .main-header p { font-size:clamp(12px,2.7vh,16px) !important; margin-top:5px !important; }
+  .animated-barcode-card {
+    width:min(440px,70vw) !important;
+    padding:clamp(10px,2vh,18px) 20px 9px !important;
+    margin:0 auto clamp(12px,3vh,22px) !important;
+  }
+  .animated-bars { height:clamp(80px,21dvh,140px) !important; }
+  .animated-barcode-caption { font-size:clamp(13px,2.8vh,17px) !important; margin-top:6px !important; }
+  .scan-title { font-size:clamp(21px,4.8vh,32px) !important; }
+  .scan-hint { font-size:clamp(13px,3vh,18px) !important; margin-top:5px !important; }
+  [data-testid="stImage"] img { max-height:clamp(65px,16dvh,110px) !important; }
+}
+@media (orientation:landscape) and (min-width:600px) and (max-height:420px) {
+  .main-header { min-height:72px !important; margin-bottom:6px !important; }
+  .animated-barcode-card { margin-bottom:6px !important; padding:7px 16px 5px !important; }
+  .animated-bars { height:clamp(60px,19dvh,90px) !important; }
+  .scan-title { font-size:clamp(18px,4.8vh,24px) !important; }
+  [data-testid="stImage"] img { max-height:clamp(48px,13dvh,70px) !important; }
+}
+@media (max-width:599px) {
+  .main-header { padding:13px 38px !important; }
+  .main-header h1 { font-size:clamp(17px,4.7vw,24px) !important; }
+  .animated-barcode-card { width:min(330px,80vw) !important; }
+  .scan-title { font-size:clamp(18px,5vw,24px) !important; }
+}
+</style>
+"""
+
+# Prioridad sobre reglas de pantallas compactas anteriores.
+CSS += """
+<style>
+@media (max-height: 800px) and (min-width: 600px) {
+  [data-testid="stImage"] { display: flex !important; justify-content: center !important; }
+  [data-testid="stImage"] img {
+    max-height: 112px !important;
+    max-width: 145px !important;
+    width: auto !important;
+    object-fit: contain !important;
+  }
+}
+</style>
+"""
+# Solo en PRODUCTO NO ENCONTRADO: barras rojas estáticas y fondo tenue.
+CSS += """<style>
+.animated-barcode-card.barcode-not-found {background:#fff1f2 !important;}
+.animated-barcode-card.barcode-not-found .animated-bars {
+  background:repeating-linear-gradient(90deg,#b91c1c 0px,#b91c1c 3px,transparent 3px,transparent 6px,#dc2626 6px,#dc2626 8px,transparent 8px,transparent 12px) !important;
+  animation:none !important;
+}
+.animated-barcode-card.barcode-not-found .animated-scan-line,
+.animated-barcode-card.barcode-not-found .animated-bars::before,
+.animated-barcode-card.barcode-not-found .animated-bars::after {display:none !important;animation:none !important;}
+.scan-title.scan-title-not-found {color:#b91c1c !important;font-weight:800 !important;}
+</style>"""
+
+# Diseño aprobado: producto sin fotografía, precio en franja azul.
+CSS += """<style>
+.resultado-pantalla {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: min(86dvh, 760px) !important;
+  min-height: 250px !important;
+  margin: 0 auto !important;
+  border-radius: 15px !important;
+  overflow: hidden !important;
+  background: #f6faff !important;
+  display: flex !important;
+  flex-direction: column !important;
+  box-shadow: 0 4px 18px rgba(14,49,101,.07);
+  text-align: center !important;
+}
+.resultado-datos {
+  flex: 1 1 53% !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: clamp(4px, 1.2dvh, 12px) !important;
+  padding: 8px 20px !important;
+}
+.resultado-etiqueta {color:#8799b4;letter-spacing:.15em;font-weight:800;font-size:clamp(12px,1.5vw,19px)}
+.resultado-nombre {color:#0d2d58;font-weight:900;font-size:clamp(24px,3.3vw,56px);line-height:1.13;overflow-wrap:anywhere;max-width:100%;text-wrap:balance}
+.resultado-codigo {color:#8497b2;font-size:clamp(13px,1.5vw,22px)}
+.resultado-precio-panel {
+  flex: 0 0 42% !important;
+  min-height: 0 !important;
+  background:linear-gradient(105deg,#0860e8,#0851d3) !important;
+  color:white !important;
+  display:flex !important;
+  flex-direction:row !important;
+  justify-content:center !important;
+  align-items:center !important;
+  gap:clamp(12px,2vw,35px) !important;
+  padding:8px 18px !important;
+}
+.resultado-precio-etiqueta {font-weight:800;letter-spacing:.05em;font-size:clamp(13px,1.5vw,22px);white-space:nowrap;color:white}
+.resultado-precio {font-weight:900;font-size:clamp(44px,5.9vw,105px);line-height:1.04;white-space:nowrap;color:white;font-variant-numeric:tabular-nums}
+@media (max-width:650px) {
+  .resultado-precio-panel {flex-direction:column !important;gap:4px !important;}
+  .resultado-precio {font-size:clamp(38px,8vw,65px)}
+}
+@media (orientation:landscape) and (max-height:550px) {
+  .resultado-pantalla {height:87dvh !important;}
+  .resultado-datos {flex-basis:53% !important;padding:5px 14px !important;gap:4px !important;}
+  .resultado-nombre {font-size:clamp(20px,3.3vw,43px) !important;}
+  .resultado-precio-panel {flex-basis:43% !important;}
+  .resultado-precio {font-size:clamp(40px,6vw,78px) !important;}
+}
+</style>"""
+
+
+# Tipografía ampliada para el resultado, ajustada al 2connect horizontal.
+# Se aplica al final para prevalecer sobre las reglas compactas anteriores.
+CSS += """<style>
+.resultado-pantalla .resultado-datos {
+  padding: clamp(10px,2dvh,22px) clamp(14px,3vw,40px) !important;
+  gap: clamp(8px,2dvh,16px) !important;
+}
+.resultado-pantalla .resultado-nombre {
+  font-size: clamp(31px, 4.6vw, 72px) !important;
+  line-height: 1.12 !important;
+  max-width: 96% !important;
+  text-wrap: balance !important;
+}
+.resultado-pantalla .resultado-etiqueta {
+  font-size: clamp(15px, 1.8vw, 23px) !important;
+}
+.resultado-pantalla .resultado-codigo {
+  font-size: clamp(17px, 2.1vw, 27px) !important;
+}
+.resultado-pantalla .resultado-precio-panel {
+  flex-direction: column !important;
+  gap: clamp(5px,1.2dvh,14px) !important;
+}
+.resultado-pantalla .resultado-precio-etiqueta {
+  font-size: clamp(17px, 2.2vw, 27px) !important;
+}
+.resultado-pantalla .resultado-precio {
+  font-size: clamp(64px, 9.5vw, 136px) !important;
+  line-height: 1.05 !important;
+}
+@media (orientation: landscape) and (max-height: 550px) {
+  .resultado-pantalla .resultado-nombre {font-size: clamp(29px,4.2vw,58px) !important;}
+  .resultado-pantalla .resultado-precio {font-size: clamp(59px,8.7vw,112px) !important;}
+  .resultado-pantalla .resultado-datos {gap: 6px !important;}
+}
+</style>"""
+
+st.markdown(CSS, unsafe_allow_html=True)
+
+
+
+for key, default in (
+    ("search_input", ""),
+    ("last_searched_barcode", ""),
+    ("current_product", None),
+    ("result_time", None),
+    ("not_found", False),
+    ("external_job", None),
+    ("external_started", None),
+    ("consult_error", None),
+    ("source_snapshot", None),
+):
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+
+def buscar_producto():
+    query = str(st.session_state.get("search_input", "")).strip()
+    # Vaciar el cuadro tras CADA lectura: si queda el código anterior, la
+    # siguiente lectura se pega detrás ("123" + "123" = "123123") y no se encuentra.
+    st.session_state.search_input = ""
+    if not query:
         return
-    code=str(code).strip()
-    if not code:return
-    st.session_state.movil_mostrar_resultado=True
-    st.session_state.movil_ultimo=code
-    st.session_state.movil_producto=None
-    st.session_state.movil_job=None
-    st.session_state.movil_error=''
-    st.session_state.movil_resultado_desde=None
+    st.session_state.last_searched_barcode = query
+    st.session_state.current_product = None
+    st.session_state.not_found = False
+    st.session_state.consult_error = None
+    st.session_state.external_job = None
+    st.session_state.result_time = None
     try:
-        settings=api('GET','price_source_settings',{'id':'eq.1','select':'source_type'})
-        if not settings: raise RuntimeError('Configura primero la fuente de datos.')
-        mode=settings[0]['source_type']
-        if mode=='local':
+        mode, source_id = active_source()
+        if mode == "local":
             # Consulta directa por clave primaria: no descarga el inventario completo.
             from inventarios import find_barcode
-            st.session_state.movil_producto=find_barcode(code)
-            st.session_state.movil_resultado_desde=time.monotonic()
-            return
-        elif mode=='google':
-            from google_oauth_source import config,catalog
-            cfg=config()
-            if not cfg or not cfg.get('file_id'): raise RuntimeError('Configura Google desde Administración.')
-            df=catalog(cfg['kind'],cfg['file_id'],cfg['sheet_name'] or '',cfg['code_column'],cfg['name_column'],cfg['price_column'])
-            rows=df.to_dict('records')
-        elif mode=='external':
-            sources=api('GET','external_price_sources',{'enabled':'eq.true','select':'id','limit':'2'})
-            if len(sources)!=1: raise RuntimeError('Debe existir exactamente una fuente externa habilitada.')
-            jobs=api('POST','external_price_jobs',payload={'configuration_id':sources[0]['id'],'barcode':code,'status':'pending','expires_at':(datetime.now(timezone.utc)+timedelta(minutes=2)).isoformat()})
-            if not jobs or not jobs[0].get('id'): raise RuntimeError('No se pudo registrar la consulta.')
-            st.session_state.movil_job={'id':jobs[0]['id'],'started':time.monotonic()}
-            return
-        else: raise RuntimeError('Fuente desconocida.')
-        st.session_state.movil_producto=next((r for r in rows if str(r.get('barcode','')).strip()==code),None)
-        st.session_state.movil_resultado_desde=time.monotonic()
-    except Exception as exc:
-        st.session_state.movil_error='No se pudo consultar la fuente seleccionada: '+str(exc)
-
-st.markdown("""<style>
-/* El resultado utiliza siempre colores claros, incluso con tema oscuro. */
-.mobile-result {background:#f3f8ff;color:#092851;border-radius:18px;padding:20px 15px;margin:14px 0 22px;box-sizing:border-box}
-.mobile-result .product-label {font-size:14px;font-weight:800;letter-spacing:.07em;color:#436186}
-.mobile-result .product-name {font-size:clamp(27px,7vw,48px);font-weight:900;line-height:1.15;overflow-wrap:anywhere;margin:10px 0}
-.mobile-result .product-code {font-size:15px;color:#526986;margin-bottom:18px;overflow-wrap:anywhere}
-.mobile-result .price-panel {background:linear-gradient(110deg,#0b60df,#0649bc);border-radius:15px;padding:20px 14px;color:white;text-align:center}
-.mobile-result .price-label {font-size:15px;font-weight:800;letter-spacing:.04em;color:white}
-.mobile-result .price-value {font-size:clamp(38px,10vw,70px);font-weight:900;line-height:1.2;color:white;overflow-wrap:anywhere}
-.mobile-result .missing {font-size:clamp(24px,7vw,42px);font-weight:900;color:#b91c1c;text-align:center;padding:24px 4px}
-/* Estado sin producto: reproduce la pantalla de espera del verificador principal. */
-.mobile-not-found {background:#f3f8ff;color:#102b50;border-radius:18px;padding:20px 12px 28px;text-align:center;margin:14px 0 22px}
-.mobile-not-found .barcode-card {background:#fff1f2;border-radius:16px;padding:18px 14px;max-width:440px;margin:0 auto 24px}
-.mobile-not-found .barcode-bars {height:118px;width:100%;background:repeating-linear-gradient(90deg,#b91c1c 0px,#b91c1c 3px,transparent 3px,transparent 6px,#b91c1c 6px,#b91c1c 8px,transparent 8px,transparent 12px);}
-.mobile-not-found .barcode-caption {font-size:13px;color:#102b50;margin-top:10px}
-.mobile-not-found .scan-title {font-size:clamp(24px,6vw,40px);font-weight:900;color:#b91c1c;line-height:1.15;margin:10px auto}
-.mobile-not-found .scan-hint {font-size:clamp(14px,3.7vw,19px);color:#7b8ba5;margin-top:10px}
-@media(max-width:650px){.mobile-result{padding:15px 10px}.mobile-result .price-panel{padding:20px 8px}}
-</style>""",unsafe_allow_html=True)
-
-def reiniciar():
-    st.session_state.movil_mostrar_resultado=False
-    st.session_state.movil_ultimo=''
-    st.session_state.movil_producto=None
-    st.session_state.movil_job=None
-    st.session_state.movil_error=''
-    st.session_state.movil_foto=''
-    st.session_state.movil_resultado_desde=None
-    st.session_state.movil_camera_version+=1
-
-if not st.session_state.movil_mostrar_resultado:
-    st.title('📱 Consulta Móvil')
-    tab1,tab2=st.tabs(['📷 Cámara','⌨️ Bluetooth / Manual'])
-    with tab1:
-        st.caption('Fotografía el código de barras para consultar el precio.')
-        photo=st.camera_input('Tomar foto del código de barras',key=f"movil_camara_{st.session_state.movil_camera_version}")
-        if photo:
-            data=photo.getvalue(); digest=hashlib.sha256(data).hexdigest()
-            if digest!=st.session_state.movil_foto:
-                st.session_state.movil_foto=digest
-                try:
-                    import zxingcpp
-                    from PIL import Image,ImageOps
-                    img=ImageOps.exif_transpose(Image.open(BytesIO(data))).convert('RGB')
-                    found=zxingcpp.read_barcodes(img)
-                    if found:
-                        consultar(found[0].text)
-                        st.rerun()
-                    else: st.warning('No se reconoció el código. Acerca la cámara y repite la foto.')
-                except ImportError: st.error('Falta instalar zxing-cpp (requirements.txt).')
-                except Exception: st.error('No se pudo procesar la fotografía.')
-    with tab2:
-        st.caption('Lector Bluetooth HID con sufijo Enter, o entrada manual.')
-        def _consultar_y_vaciar():
-            # Vaciar tras cada lectura para que la siguiente no se pegue a la anterior.
-            codigo=st.session_state.movil_codigo
-            st.session_state.movil_codigo=''
-            consultar(codigo)
-        st.text_input('Código de barras',key='movil_codigo',placeholder='Escanea o escribe el código',on_change=_consultar_y_vaciar)
-        # Si on_change ya consultó, el cuadro está vacío y el botón no repite la consulta.
-        st.button('Consultar',use_container_width=True,on_click=_consultar_y_vaciar)
-
-@st.fragment(run_every='1s')
-def resultado():
-    job=st.session_state.movil_job
-    if job:
-        if time.monotonic()-job['started']>25:
-            st.session_state.movil_job=None
-            st.session_state.movil_error='La fuente externa no respondió en 25 segundos.'
+            product = find_barcode(query)
+            if product is None:
+                st.session_state.not_found = True
+            else:
+                st.session_state.current_product = product
+            st.session_state.result_time = time.monotonic()
+        elif mode == "google":
+            from google_oauth_source import config as google_config, catalog as google_catalog
+            cfg = google_config()
+            if not cfg or not cfg.get("file_id"):
+                raise RuntimeError("Configura el archivo de Google desde Administración.")
+            df = google_catalog(cfg["kind"], cfg["file_id"], cfg["sheet_name"] or "",
+                                cfg["code_column"], cfg["name_column"], cfg["price_column"])
+            hits = df[df["barcode"].astype(str).str.strip() == query].head(1)
+            if hits.empty:
+                st.session_state.not_found = True
+            else:
+                st.session_state.current_product = hits.iloc[0].to_dict()
+            st.session_state.result_time = time.monotonic()
         else:
-            try:
-                rows=api('GET','external_price_jobs',{'id':'eq.'+str(job['id']),'select':'status,result,error_message'})
-                if not rows: raise RuntimeError('Solicitud no encontrada.')
-                item=rows[0]
-                if item['status']=='done':
-                    st.session_state.movil_producto=item.get('result')
-                    st.session_state.movil_job=None
-                    st.session_state.movil_resultado_desde=time.monotonic()
-                elif item['status']=='error':
-                    st.session_state.movil_error='Error de consulta en la base externa.'
-                    st.session_state.movil_job=None
-                else:
-                    st.info('Consultando base externa…')
-                    return
-            except Exception:
-                st.session_state.movil_error='No se pudo obtener la respuesta del conector.'
-                st.session_state.movil_job=None
-    if not st.session_state.movil_mostrar_resultado:
+            rows = admin_api("POST", "external_price_jobs", payload={
+                "configuration_id": source_id,
+                "barcode": query,
+                "status": "pending",
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+            })
+            if not rows or not rows[0].get("id"):
+                raise RuntimeError("No se pudo registrar la consulta externa")
+            st.session_state.external_job = rows[0]["id"]
+            st.session_state.external_started = time.monotonic()
+    except Exception as exc:
+        st.session_state.consult_error = (
+            "No se pudo consultar la fuente seleccionada: " + str(exc)
+        )
+        st.session_state.result_time = time.monotonic()
+
+
+def check_external_result():
+    jid = st.session_state.external_job
+    if not jid:
         return
-    # El plazo comienza cuando termina la consulta, no cuando se toma la foto.
-    inicio=st.session_state.movil_resultado_desde
-    if inicio is not None and time.monotonic()-inicio >= 5:
-        reiniciar()
-        st.rerun()
-    if st.session_state.movil_error:
-        st.error(st.session_state.movil_error)
-    elif st.session_state.movil_ultimo:
-        product=st.session_state.movil_producto
-        if product:
-            name=html.escape(str(product.get('name') or 'Sin descripción'))
-            barcode=html.escape(str(product.get('barcode') or st.session_state.movil_ultimo))
-            try: price=f"RD$ {float(product.get('price')):,.2f}"
-            except (ValueError,TypeError): price=html.escape(str(product.get('price') or 'No disponible'))
-            st.markdown('<div class="mobile-result"><div class="product-label">PRODUCTO</div>'
-                        f'<div class="product-name">{name}</div><div class="product-code">Código: {barcode}</div>'
-                        '<div class="price-panel"><div class="price-label">PRECIO DE VENTA</div>'
-                        f'<div class="price-value">{price}</div></div></div>',unsafe_allow_html=True)
-        elif not st.session_state.movil_job:
-            barcode=html.escape(st.session_state.movil_ultimo)
+    if time.monotonic() - st.session_state.external_started > 25:
+        st.session_state.external_job = None
+        st.session_state.consult_error = (
+            "La base externa no respondió a tiempo. No se consultó la base local."
+        )
+        st.session_state.result_time = time.monotonic()
+        return
+    try:
+        rows = admin_api("GET", "external_price_jobs",
+                         params={"id": "eq." + jid, "select": "status,result,error_message"})
+        if not rows:
+            raise RuntimeError("La solicitud externa no existe.")
+        job = rows[0]
+        if job["status"] == "done":
+            result = job.get("result")
+            if result:
+                st.session_state.current_product = {
+                    "barcode": result.get("barcode") or st.session_state.get("last_searched_barcode", ""),
+                    "name": result.get("name", ""),
+                    "price": result.get("price", 0),
+                }
+            else:
+                st.session_state.not_found = True
+            st.session_state.external_job = None
+            st.session_state.result_time = time.monotonic()
+        elif job["status"] == "error":
+            st.session_state.external_job = None
+            st.session_state.consult_error = (
+                "No se pudo consultar SQL Server. Revisa el conector y la conexión externa."
+            )
+            st.session_state.result_time = time.monotonic()
+    except (requests.RequestException, RuntimeError) as exc:
+        st.session_state.external_job = None
+        st.session_state.consult_error = "No se pudo obtener la respuesta de la base externa."
+        st.session_state.result_time = time.monotonic()
+
+
+@st.fragment(run_every=1.0)
+def verificador():
+    # Evitar mostrar resultados de una fuente distinta si el administrador la cambia.
+    try:
+        mode, source_id = active_source()
+        snapshot = (mode, source_id)
+        if st.session_state.source_snapshot != snapshot:
+            st.session_state.source_snapshot = snapshot
+            st.session_state.current_product = None
+            st.session_state.not_found = False
+            st.session_state.external_job = None
+            st.session_state.result_time = None
+            st.session_state.consult_error = None
+            st.session_state.last_searched_barcode = ""
+    except Exception:
+        st.error("No se pudo leer la fuente activa. Revisa Configuración.")
+        return
+
+    if mode == "external":
+        check_external_result()
+    started = st.session_state.result_time
+
+    # Los códigos inexistentes vuelven antes al lector; los productos encontrados
+    # conservan el tiempo habitual para leer el precio.
+    display_seconds = 7 if st.session_state.not_found else 10
+    if started is not None and time.monotonic() - started >= display_seconds:
+        st.session_state.current_product = None
+        st.session_state.not_found = False
+        st.session_state.consult_error = None
+        st.session_state.result_time = None
+        # El widget puede no existir cuando se muestra un resultado.
+        # Streamlit limpia automaticamente su estado al ocultarlo.
+
+    # Mantener el textbox nativo montado en TODOS los estados, incluso mientras
+    # se muestra un producto o un código inexistente. Al desmontarlo, Streamlit
+    # pierde el foco y puede descartar la siguiente lectura del escáner.
+    st.text_input(
+        "Código de barras",
+        key="search_input",
+        on_change=buscar_producto,
+        label_visibility="collapsed",
+        placeholder="Escanea o escribe el código y pulsa Enter",
+    )
+    if "unsafe_allow_javascript" in inspect.signature(st.html).parameters:
+        st.html(FOCO_JS, unsafe_allow_javascript=True)
+    else:
+        st.warning("El enfoque automático requiere una versión de Streamlit compatible con st.html.")
+
+    product = st.session_state.current_product
+
+    if product is not None:
+        name = html.escape(str(product["name"]))
+        barcode = html.escape(str(product["barcode"]))
+        price = float(product["price"])
+
+        st.markdown(
+            '<div class="resultado-pantalla">'
+            '<div class="resultado-datos">'
+            '<div class="resultado-etiqueta">PRODUCTO</div>'
+            f'<div class="resultado-nombre">{name}</div>'
+            f'<div class="resultado-codigo">Código: {barcode}</div>'
+            '</div>'
+            '<div class="resultado-precio-panel">'
+            '<div class="resultado-precio-etiqueta">PRECIO DE VENTA</div>'
+            f'<div class="resultado-precio">RD$ {price:,.2f}</div>'
+            '</div></div>', 
+            unsafe_allow_html=True,
+        )
+
+    elif st.session_state.consult_error:
+        st.error(st.session_state.consult_error)
+    elif st.session_state.external_job:
+        # Solo se muestra una animación amigable; no exponer detalles técnicos.
+        st.markdown(
+            '<div class="product-card search-card">'
+            '<div class="search-label">VERIFICANDO PRECIO</div>'
+            '<svg class="search-visual" viewBox="0 0 300 105" role="img" '
+            'aria-label="Lupa buscando un código de barras">'
+            '<g fill="#64748b">'
+            + ''.join(
+                f'<rect x="{15 + i * 9}" y="22" width="{4 if i % 3 == 0 else 2}" '
+                f'height="{55 if i % 4 == 0 else 45}" />' for i in range(27)
+            )
+            + '</g><g class="search-lens">'
+            '<circle cx="36" cy="42" r="23" fill="#e8f1ff" fill-opacity="0.9" '
+            'stroke="#0759c9" stroke-width="5"/>'
+            '<path d="M53 59 L78 84" stroke="#0759c9" stroke-width="9" '
+            'stroke-linecap="round"/></g></svg>'
+            '<div class="search-text">Buscando producto...</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="main-header">'
+            '<h1>🏷️ CONSULTA DE PRECIOS</h1>'
+            '<p>Consulta rápida de productos y precios</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Codigo de barras animado: solo decorativo, no altera la lectura real.
+        # Estado de error: barras rojas inmóviles, sin línea de escaneo.
+        # Estado normal: conserva la animación original.
+        clase_error = " barcode-not-found" if st.session_state.not_found else ""
+        st.markdown(f"""
+        <div class="animated-barcode-card{clase_error}" aria-label="Código de barras decorativo">
+          <div class="animated-bars"><div class="animated-scan-line"></div></div>
+          <div class="animated-barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Conservar exactamente la misma pantalla de espera si no se encuentra
+        # el producto; solo cambia el mensaje principal durante 3 segundos.
+        titulo_escaneo = (
+            "PRODUCTO NO ENCONTRADO"
+            if st.session_state.not_found
+            else "ESCANEA TU CÓDIGO AQUÍ"
+        )
+        st.markdown(
+            f'<div class="scan-title{" scan-title-not-found" if st.session_state.not_found else ""}">{titulo_escaneo}</div>'
+            + ('' if st.session_state.not_found else
+               '<div class="scan-hint">El precio se mostrará automáticamente</div>'),
+            unsafe_allow_html=True,
+        )
+
+
+        imagen_base64 = logo_base64()
+        if imagen_base64:
+            # El logo se centra respecto a TODA la pantalla, no respecto
+            # a columnas de Streamlit que varían con el ancho del dispositivo.
             st.markdown(
-                '<div class="mobile-not-found">'
-                '<div class="barcode-card"><div class="barcode-bars"></div>'
-                '<div class="barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div></div>'
-                '<div class="scan-title">PRODUCTO NO ENCONTRADO</div>'
-                '<div class="scan-hint">El precio se mostrará automáticamente</div>'
-                '</div>', unsafe_allow_html=True)
-resultado()
-if st.session_state.movil_mostrar_resultado:
-    if st.button('📷 Escanear otro producto',type='primary',use_container_width=True):
-        reiniciar()
-        st.rerun()
+                '<div style="width:100%;display:flex;justify-content:center;'
+                'align-items:center;margin:10px auto 0;">'
+                '<img alt="Logo de la empresa" '
+                'style="display:block;width:auto;max-width:220px;'
+                'height:auto;max-height:130px;object-fit:contain;" '
+                f'src="data:image/png;base64,{imagen_base64}">'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+
+
+try:
+    verificador()
+except Exception:
+    st.error("No se pudo iniciar la consulta de precios. Revisa la conexión y la fuente seleccionada.")
