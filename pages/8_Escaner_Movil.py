@@ -167,10 +167,14 @@ if not st.session_state.movil_mostrar_resultado:
                 except Exception: st.error('No se pudo procesar la fotografía.')
     with tab2:
         st.caption('Lector Bluetooth HID con sufijo Enter, o entrada manual.')
-        st.text_input('Código de barras',key='movil_codigo',placeholder='Escanea o escribe el código',on_change=lambda:consultar(st.session_state.movil_codigo))
-        if st.button('Consultar',use_container_width=True):
-            consultar(st.session_state.movil_codigo)
-            st.rerun()
+        def _consultar_y_vaciar():
+            # Vaciar tras cada lectura para que la siguiente no se pegue a la anterior.
+            codigo=st.session_state.movil_codigo
+            st.session_state.movil_codigo=''
+            consultar(codigo)
+        st.text_input('Código de barras',key='movil_codigo',placeholder='Escanea o escribe el código',on_change=_consultar_y_vaciar)
+        # Si on_change ya consultó, el cuadro está vacío y el botón no repite la consulta.
+        st.button('Consultar',use_container_width=True,on_click=_consultar_y_vaciar)
 
 @st.fragment(run_every='1s')
 def resultado():
