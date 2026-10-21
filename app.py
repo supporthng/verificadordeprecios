@@ -477,6 +477,7 @@ config = [
     ("configurar", "pages/7_Google_Drive.py", "Conexión Google Drive / Sheets", "☁️"),
     ("configurar", "pages/3_Consulta_Bases_de_Datos.py", "Configurar Consulta", "⚙️"),
     ("logo", "pages/3_Logo_del_negocio.py", "Logo del Negocio", "🖼️"),
+    ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
     ("usuarios", "pages/5_Administrador_Usuarios.py", "Administrador de Usuarios", "👥"),
     ("ubicacion_movil", "pages/9_Ubicacion_Movil.py", "Ubicación Consulta Móvil", "📍"),
 ]
