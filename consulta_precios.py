@@ -597,7 +597,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 
 for key, default in (
-    ("search_input", ""),
+    ("scan_n", 0),
     ("last_searched_barcode", ""),
     ("current_product", None),
     ("result_time", None),
@@ -611,11 +611,11 @@ for key, default in (
         st.session_state[key] = default
 
 
-def buscar_producto():
-    query = str(st.session_state.get("search_input", "")).strip()
-    # Vaciar el cuadro tras CADA lectura: si queda el código anterior, la
-    # siguiente lectura se pega detrás ("123" + "123" = "123123") y no se encuentra.
-    st.session_state.search_input = ""
+def buscar_producto(clave):
+    query = str(st.session_state.get(clave, "")).strip()
+    # Cada lectura usa un cuadro NUEVO y vacío (otra clave). Si quedara el código
+    # anterior, la siguiente lectura se pegaría detrás ("123"+"123") y no se encontraría.
+    st.session_state.scan_n += 1
     if not query:
         return
     st.session_state.last_searched_barcode = query
@@ -743,10 +743,12 @@ def verificador():
     # Mantener el textbox nativo montado en TODOS los estados, incluso mientras
     # se muestra un producto o un código inexistente. Al desmontarlo, Streamlit
     # pierde el foco y puede descartar la siguiente lectura del escáner.
+    clave_cuadro = f"search_input_{st.session_state.scan_n}"
     st.text_input(
         "Código de barras",
-        key="search_input",
+        key=clave_cuadro,
         on_change=buscar_producto,
+        args=(clave_cuadro,),
         label_visibility="collapsed",
         placeholder="Escanea o escribe el código y pulsa Enter",
     )
