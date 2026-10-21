@@ -26,9 +26,28 @@ MENSAJE_GENERICO = "Usuario o contraseña incorrectos."
 _HASH_FICTICIO = None
 
 
+def diagnostico_secrets():
+    """Explica qué falta en Secrets mostrando solo NOMBRES de claves, nunca valores."""
+    faltan = [n for n, v in (("SUPABASE_URL", URL), ("SUPABASE_SERVICE_ROLE_KEY", KEY)) if not v.strip()]
+    try:
+        nombres = sorted(str(k) for k in st.secrets.keys())
+    except Exception:  # sin archivo de Secrets, st.secrets.keys() falla
+        nombres = []
+    if not nombres:
+        detalle = "La app no tiene ningún Secret configurado."
+    else:
+        secciones = [n for n in nombres if hasattr(st.secrets.get(n), "keys")]
+        detalle = "Claves encontradas: " + ", ".join(nombres) + "."
+        if secciones:
+            detalle += (" Las claves deben ir al inicio, no dentro de una sección "
+                        "[" + "], [".join(secciones) + "].")
+    return ("Faltan en Streamlit Secrets: " + ", ".join(faltan) + ". " + detalle +
+            " Revisa Manage app > Settings > Secrets (los nombres distinguen mayúsculas).")
+
+
 def api(method, params=None, data=None):
     if not URL or not KEY:
-        raise RuntimeError("Faltan las credenciales técnicas de Supabase en Secrets.")
+        raise RuntimeError(diagnostico_secrets())
     r = requests.request(method, URL + "/rest/v1/verificador_usuarios",
         headers={"apikey": KEY, "Authorization": "Bearer " + KEY,
                  "Content-Type": "application/json", "Prefer": "return=representation"},
