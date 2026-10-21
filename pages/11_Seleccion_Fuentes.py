@@ -58,10 +58,27 @@ elif selected == 'external':
         st.success('Configuración externa activa: ' + enabled[0]['name'])
     else:
         st.warning('Debes activar exactamente una configuración en Configurar Consulta.')
-else:
-    st.info('Verifica que el archivo y las columnas estén configurados en la conexión de Google.')
+google_listo = False
+if selected == 'google':
+    # No permitir activar Google si no está configurado: el verificador quedaría sin precios.
+    try:
+        from google_oauth_source import faltantes, config as google_config
+        if faltantes():
+            st.warning('Google no está configurado en Streamlit Secrets. '
+                       'Ver Configuración > Conexión Google Drive / Sheets.')
+        else:
+            cfg = google_config() or {}
+            google_listo = all(cfg.get(k) for k in ('refresh_token_encrypted', 'kind', 'file_id',
+                                                    'code_column', 'name_column', 'price_column'))
+            if google_listo:
+                st.success('Archivo de Google configurado.')
+            else:
+                st.warning('Conecta la cuenta y elige archivo y columnas en Conexión Google Drive / Sheets.')
+    except Exception as exc:
+        st.warning('No se pudo verificar la conexión de Google: ' + str(exc))
 
 ready = (selected != 'local' or any(item.get('is_active') for item in inventories))
+ready = ready and (selected != 'google' or google_listo)
 ready = ready and (selected != 'external' or sum(bool(item.get('enabled')) for item in sources) == 1)
 if st.button('Guardar fuente seleccionada', type='primary', disabled=not ready):
     try:

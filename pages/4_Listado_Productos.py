@@ -47,8 +47,9 @@ except requests.RequestException as exc:
 choices = {'local': 'Supabase / Inventario activo (Excel)'}
 google_cfg = None
 try:
-    from google_oauth_source import config as google_config, catalog as google_catalog
-    google_cfg = google_config()
+    from google_oauth_source import config as google_config, catalog as google_catalog, faltantes
+    # Si Google no está configurado en Secrets, no se ofrece ni se avisa.
+    google_cfg = None if faltantes() else google_config()
     if google_cfg and all(google_cfg.get(k) for k in
                           ('refresh_token_encrypted', 'kind', 'file_id',
                            'code_column', 'name_column', 'price_column')):

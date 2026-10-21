@@ -11,12 +11,26 @@ if not allowed(user,"configurar"):
     st.stop()
 st.caption("Cada instalación puede conectar la cuenta Google de su cliente. No se solicita contraseña de Google.")
 
-try:
-    for key in ("GOOGLE_OAUTH_CLIENT_ID","GOOGLE_OAUTH_CLIENT_SECRET",
-                "GOOGLE_OAUTH_REDIRECT_URI","GOOGLE_TOKEN_ENCRYPTION_KEY"):
-        setting(key)
-except Exception as e:
-    st.error(str(e));st.stop()
+from google_oauth_source import faltantes
+_faltan = faltantes()
+if _faltan:
+    st.info("Google Drive / Sheets no está configurado. Es **opcional**: si tus precios "
+            "vienen de Excel o de SQL Server, puedes ignorar esta sección.")
+    with st.expander("Cómo activarlo"):
+        st.markdown(
+            "1. En **Google Cloud Console** crea un proyecto y habilita **Google Drive API** "
+            "y **Google Sheets API**.\n"
+            "2. En *APIs y servicios > Pantalla de consentimiento OAuth*, configúrala y agrega "
+            "tu correo como usuario de prueba.\n"
+            "3. En *APIs y servicios > Credenciales > Crear credenciales > ID de cliente OAuth*, "
+            "elige **Aplicación web** y en *URI de redireccionamiento autorizados* pon la "
+            "dirección de esta app (ej. `https://TU-APP.streamlit.app/`).\n"
+            "4. Copia el ID y el secreto del cliente a Streamlit Secrets junto con:\n"
+            "   - `GOOGLE_OAUTH_REDIRECT_URI`: la misma dirección del punto 3, idéntica.\n"
+            "   - `GOOGLE_TOKEN_ENCRYPTION_KEY`: genérala con "
+            "`python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`\n\n"
+            "Faltan ahora: " + ", ".join(f"`{n}`" for n in _faltan))
+    st.stop()
 
 # OAuth state atado a la sesión administrativa, de un solo uso.
 code=st.query_params.get("code")

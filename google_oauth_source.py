@@ -23,6 +23,15 @@ def setting(name):
         raise RuntimeError("Falta "+name+" en Streamlit Secrets.")
     return value
 
+GOOGLE_SECRETS = ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET",
+                  "GOOGLE_OAUTH_REDIRECT_URI", "GOOGLE_TOKEN_ENCRYPTION_KEY")
+
+
+def faltantes():
+    """Nombres de los Secrets de Google que faltan (lista vacía = configurado)."""
+    return [n for n in GOOGLE_SECRETS if not str(st.secrets.get(n, "")).strip()]
+
+
 def cipher():
     return Fernet(setting("GOOGLE_TOKEN_ENCRYPTION_KEY").encode())
 

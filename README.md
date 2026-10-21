@@ -64,8 +64,11 @@ cambiarla. Después crea los usuarios en **Administrador de Usuarios**.
 
 ## Usuarios y permisos
 
-- **Rol administrador:** acceso a todo, incluida *Ubicación Consulta Móvil*. Nunca se
-  recuerda su sesión en el navegador.
+- **Rol administrador:** acceso a todo, incluida *Ubicación Consulta Móvil*.
+
+La sesión **solo se cierra con el botón "Cerrar sesión"** (o la ✕ en la cuenta kiosko).
+Recargar la página, reiniciar el equipo o que Streamlit Cloud reinicie la app no la cierra.
+Se cierra sola únicamente si la cuenta se desactiva o se le cambia la contraseña.
 - **Rol usuario:** accede solo a las secciones de sus permisos:
 
 | Permiso | Sección |

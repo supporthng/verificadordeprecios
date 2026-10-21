@@ -4,6 +4,7 @@ import json
 import hmac
 import hashlib
 import base64
+import requests
 import streamlit as st
 from streamlit_cookies_controller import CookieController
 from auth_usuarios import (allowed, bootstrap, cambiar_password, current_user,
@@ -58,7 +59,9 @@ if not _cookie_secret:
 cookies = CookieController()
 
 COOKIE_NAME = "consulta_precios_login_v2"
-COOKIE_SECONDS = 60 * 60 * 24 * 30
+# La sesión dura hasta que el usuario pulse "Cerrar sesión". La cookie se
+# renueva en cada visita, así que un equipo en uso nunca llega a vencer.
+COOKIE_SECONDS = 60 * 60 * 24 * 365
 
 def _token(usuario):
     payload = {"id": str(usuario["id"]), "exp": int(time.time()) + COOKIE_SECONDS,
@@ -68,25 +71,34 @@ def _token(usuario):
     return body + "." + sig
 
 def _recover(token):
+    """Devuelve (estado, id). estado: 'ok', 'invalida' (borrar cookie) o
+    'temporal' (Supabase no respondió: conservar la cookie y reintentar)."""
     try:
         body, sig = token.rsplit(".", 1)
         correct = hmac.new(_cookie_secret.encode(), body.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, correct):
-            return None
+            return "invalida", None
         payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
         if int(payload["exp"]) <= time.time():
-            return None
+            return "invalida", None
+    except (ValueError, KeyError, TypeError, OverflowError):
+        return "invalida", None
+    try:
         from auth_usuarios import api
         rows = api("GET", {"id": "eq." + str(payload["id"]), "select": "id,username,password_hash,active,role", "limit": 1})
-        # Nunca restaurar sesiones de administradores desde la cookie.
-        if not rows or not rows[0]["active"] or es_admin(rows[0]):
-            return None
+    except (RuntimeError, requests.RequestException):
+        # Fallo de red o de Supabase: NO cerrar la sesión por esto.
+        return "temporal", None
+    try:
+        # Cuenta eliminada, desactivada o con contraseña cambiada: sesión inválida.
+        if not rows or not rows[0]["active"]:
+            return "invalida", None
         version = hashlib.sha256(rows[0]["password_hash"].encode()).hexdigest()[:24]
         if not hmac.compare_digest(payload["v"], version):
-            return None
-        return rows[0]["id"]
-    except (ValueError, KeyError, TypeError, RuntimeError, OverflowError):
-        return None
+            return "invalida", None
+        return "ok", rows[0]["id"]
+    except (ValueError, KeyError, TypeError):
+        return "invalida", None
 
 # Procesar el retorno OAuth en la raíz ANTES del login y de st.navigation.
 # El regreso desde accounts.google.com crea una sesión nueva de Streamlit:
@@ -128,16 +140,21 @@ st.session_state.setdefault("logout_pendiente", False)
 st.session_state.setdefault("autorizar_salida_consulta", False)
 st.session_state.setdefault("fallos_login", 0)
 st.session_state.setdefault("bloqueo_hasta", 0.0)
+# Guardar la cookie en la ejecución SIGUIENTE al inicio de sesión: si se
+# guarda justo antes de st.rerun(), el navegador puede no llegar a recibirla.
+st.session_state.setdefault("cookie_por_guardar", False)
 
 # Recuperar sesión al refrescar la página o reabrir el navegador.
 if not st.session_state.usuario_id and not st.session_state.logout_pendiente:
     token = cookies.get(COOKIE_NAME)
     if token:
-        restored_id = _recover(token)
-        if restored_id:
+        estado, restored_id = _recover(token)
+        if estado == "ok":
             st.session_state.usuario_id = restored_id
-        else:
+            st.session_state.cookie_por_guardar = True  # renovar el vencimiento
+        elif estado == "invalida":
             cookies.remove(COOKIE_NAME)
+        # estado "temporal": se conserva la cookie y se reintenta abajo.
 
 # CookieController recibe las cookies del navegador de forma asíncrona.
 # En una sesión nueva, el primer get() puede devolver None antes de que
@@ -149,18 +166,35 @@ if not st.session_state.usuario_id and not st.session_state.logout_pendiente:
             return
         token_persistente = cookies.get(COOKIE_NAME)
         if token_persistente:
-            identificador = _recover(token_persistente)
-            if identificador:
+            estado, identificador = _recover(token_persistente)
+            if estado == "ok":
                 st.session_state.usuario_id = identificador
+                st.session_state.cookie_por_guardar = True
                 st.rerun(scope="app")
-            else:
+            elif estado == "invalida":
                 cookies.remove(COOKIE_NAME)
+            else:
+                # Se reintenta cada segundo hasta que Supabase responda.
+                st.info("Reconectando con el servidor… tu sesión sigue abierta.")
     _esperar_cookie_recordada()
 
-user = current_user()
-# No restaurar automáticamente cuentas con permisos de administración.
-# La opción de recordar acceso es exclusiva de cuentas no administradoras.
-if user and (es_admin(user) or allowed(user, "usuarios")):
+try:
+    user = current_user()
+except (RuntimeError, requests.RequestException):
+    # Supabase no respondió: no cerrar la sesión; reintentar en unos segundos.
+    st.warning("Sin conexión con el servidor. Reintentando… tu sesión sigue abierta.")
+    time.sleep(3)
+    st.rerun()
+
+if user and st.session_state.cookie_por_guardar:
+    try:
+        cookies.set(COOKIE_NAME, _token(user), max_age=COOKIE_SECONDS)
+        st.session_state.cookie_por_guardar = False
+    except Exception:
+        pass
+if not user and st.session_state.logout_pendiente:
+    # Repetir el borrado mientras se muestra el login: garantiza que la
+    # cookie desaparezca aunque el primer intento coincidiera con un rerun.
     try:
         cookies.remove(COOKIE_NAME)
     except Exception:
@@ -235,11 +269,8 @@ if not user:
         with st.form("inicio_sesion"):
             nombre = st.text_input("👤 Usuario", placeholder="Ingresa tu usuario")
             clave = st.text_input("🔒 Contraseña", type="password", placeholder="Ingresa tu contraseña")
-            recordar_acceso = st.checkbox(
-                "Recordar mi acceso en este verificador",
-                value=False,
-                help="Disponible solo para usuarios no administradores. Mantiene la sesión iniciada en este equipo durante 30 días; no guarda la contraseña."
-            )
+            st.caption("La sesión queda abierta en este equipo hasta que pulses "
+                       "«Cerrar sesión». No se guarda la contraseña.")
             entrar = st.form_submit_button("➜  Iniciar sesión", use_container_width=True)
         if entrar:
             # Límite por sesión (cubre usuarios inexistentes). El bloqueo
@@ -257,15 +288,8 @@ if not user:
                 if valido:
                     st.session_state.usuario_id = cuenta["id"]
                     st.session_state.logout_pendiente = False
-                    # Nunca recordar administradores, aunque marquen la casilla.
-                    es_administrador = es_admin(cuenta) or allowed(cuenta, "usuarios")
-                    try:
-                        if recordar_acceso and not es_administrador:
-                            cookies.set(COOKIE_NAME, _token(cuenta), max_age=COOKIE_SECONDS)
-                        else:
-                            cookies.remove(COOKIE_NAME)
-                    except Exception:
-                        pass
+                    # La cookie se guarda en la siguiente ejecución (ver cookie_por_guardar).
+                    st.session_state.cookie_por_guardar = True
                     st.session_state.fallos_login = 0
                     st.session_state.logout_pendiente = False
                     if "salir" in st.query_params:
@@ -347,13 +371,10 @@ if (solicitar_salida or st.session_state.autorizar_salida_consulta) and es_kiosk
                 if "salir" in st.query_params:
                     del st.query_params["salir"]
                 if iniciar_admin:
-                    # Cambiar la sesión actual por la del administrador, sin recordarla.
+                    # Cambiar la sesión actual por la del administrador.
                     st.session_state.usuario_id = administrador["id"]
                     st.session_state.logout_pendiente = False
-                    try:
-                        cookies.remove(COOKIE_NAME)
-                    except Exception:
-                        pass
+                    st.session_state.cookie_por_guardar = True
                     st.rerun(scope="app")
                 else:
                     _cerrar_sesion()
@@ -402,12 +423,8 @@ if user and user["must_change_password"]:
         else:
             try:
                 cambiar_password(user, a)
-                # La contraseña cambió: renovar cookie con el nuevo hash.
-                updated = current_user()
-                if not (es_admin(updated) or allowed(updated, "usuarios")):
-                    # Solo se renueva una sesión que ya estaba recordada.
-                    if cookies.get(COOKIE_NAME):
-                        cookies.set(COOKIE_NAME, _token(updated), max_age=COOKIE_SECONDS)
+                # La contraseña cambió: la cookie anterior deja de valer; emitir una nueva.
+                st.session_state.cookie_por_guardar = True
                 st.success("Contraseña cambiada.")
                 st.rerun()
             except (ValueError, RuntimeError) as exc:
