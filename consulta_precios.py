@@ -825,14 +825,10 @@ def verificador():
         )
         st.markdown(
             f'<div class="scan-title{" scan-title-not-found" if st.session_state.not_found else ""}">{titulo_escaneo}</div>'
-            + ('<div class="scan-hint" style="color:#b91c1c;font-weight:700">'
-               'El código consultado no está registrado en la fuente seleccionada.</div>'
-               if st.session_state.not_found else
+            + ('' if st.session_state.not_found else
                '<div class="scan-hint">El precio se mostrará automáticamente</div>'),
             unsafe_allow_html=True,
         )
-        if st.session_state.not_found:
-            st.error('PRODUCTO NO ENCONTRADO')
 
 
         imagen_base64 = logo_base64()
