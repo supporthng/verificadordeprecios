@@ -1,4 +1,5 @@
 """Navegación con inicio de sesión obligatorio, incluso para consultar precios."""
+import inspect
 import time
 import json
 import hmac
@@ -64,7 +65,9 @@ COOKIE_NAME = "consulta_precios_login_v2"
 COOKIE_SECONDS = 60 * 60 * 24 * 365
 
 def _token(usuario):
-    payload = {"id": str(usuario["id"]), "exp": int(time.time()) + COOKIE_SECONDS,
+    # Vencimiento redondeado al día: el token no cambia en cada recarga.
+    vence = (int(time.time()) // 86400) * 86400 + COOKIE_SECONDS
+    payload = {"id": str(usuario["id"]), "exp": vence,
                "v": hashlib.sha256(usuario["password_hash"].encode()).hexdigest()[:24]}
     body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
     sig = hmac.new(_cookie_secret.encode(), body.encode(), hashlib.sha256).hexdigest()
@@ -140,20 +143,51 @@ st.session_state.setdefault("logout_pendiente", False)
 st.session_state.setdefault("autorizar_salida_consulta", False)
 st.session_state.setdefault("fallos_login", 0)
 st.session_state.setdefault("bloqueo_hasta", 0.0)
-# Guardar la cookie en la ejecución SIGUIENTE al inicio de sesión: si se
-# guarda justo antes de st.rerun(), el navegador puede no llegar a recibirla.
-st.session_state.setdefault("cookie_por_guardar", False)
+
+
+def _leer_cookie():
+    """Lee la cookie de sesión. st.context.cookies la entrega AL INSTANTE al
+    abrir la página; CookieController queda como respaldo (llega con retraso)."""
+    try:
+        valor = st.context.cookies.get(COOKIE_NAME)
+        if valor:
+            return valor
+    except Exception:
+        pass
+    try:
+        return cookies.get(COOKIE_NAME)
+    except Exception:
+        return None
+
+
+def _escribir_cookie(valor, max_age):
+    """Escribe (o borra con max_age=0) la cookie con JavaScript en la propia
+    página. Se ejecuta en cada carga completa, así nunca queda sin guardar."""
+    usa_html = "unsafe_allow_javascript" in inspect.signature(st.html).parameters
+    destino = "document" if usa_html else "window.parent.document"
+    js = ("<script>(function(){var c=%s+'='+%s+'; Max-Age=%d; Path=/; SameSite=Lax';"
+          "if(location.protocol==='https:')c+='; Secure';%s.cookie=c;})();</script>"
+          % (json.dumps(COOKIE_NAME), json.dumps(valor), int(max_age), destino))
+    with st.container(key="sesion_cookie_js"):
+        if usa_html:
+            st.html(js, unsafe_allow_javascript=True)
+        else:
+            import streamlit.components.v1 as components
+            components.html(js, height=0)
+
+
+st.markdown("<style>.st-key-sesion_cookie_js{display:none!important}</style>",
+            unsafe_allow_html=True)
 
 # Recuperar sesión al refrescar la página o reabrir el navegador.
 if not st.session_state.usuario_id and not st.session_state.logout_pendiente:
-    token = cookies.get(COOKIE_NAME)
+    token = _leer_cookie()
     if token:
         estado, restored_id = _recover(token)
         if estado == "ok":
             st.session_state.usuario_id = restored_id
-            st.session_state.cookie_por_guardar = True  # renovar el vencimiento
         elif estado == "invalida":
-            cookies.remove(COOKIE_NAME)
+            _escribir_cookie("", 0)
         # estado "temporal": se conserva la cookie y se reintenta abajo.
 
 # CookieController recibe las cookies del navegador de forma asíncrona.
@@ -169,10 +203,12 @@ if not st.session_state.usuario_id and not st.session_state.logout_pendiente:
             estado, identificador = _recover(token_persistente)
             if estado == "ok":
                 st.session_state.usuario_id = identificador
-                st.session_state.cookie_por_guardar = True
                 st.rerun(scope="app")
             elif estado == "invalida":
-                cookies.remove(COOKIE_NAME)
+                try:
+                    cookies.remove(COOKIE_NAME)
+                except Exception:
+                    pass
             else:
                 # Se reintenta cada segundo hasta que Supabase responda.
                 st.info("Reconectando con el servidor… tu sesión sigue abierta.")
@@ -186,15 +222,13 @@ except (RuntimeError, requests.RequestException):
     time.sleep(3)
     st.rerun()
 
-if user and st.session_state.cookie_por_guardar:
-    try:
-        cookies.set(COOKIE_NAME, _token(user), max_age=COOKIE_SECONDS)
-        st.session_state.cookie_por_guardar = False
-    except Exception:
-        pass
-if not user and st.session_state.logout_pendiente:
-    # Repetir el borrado mientras se muestra el login: garantiza que la
-    # cookie desaparezca aunque el primer intento coincidiera con un rerun.
+if user:
+    # Sesión abierta: (re)escribir la cookie en cada carga. Así se guarda aunque
+    # una carga anterior se haya interrumpido, y su vencimiento se renueva.
+    _escribir_cookie(_token(user), COOKIE_SECONDS)
+elif st.session_state.logout_pendiente:
+    # Sesión cerrada con el botón: borrar la cookie mientras se muestra el login.
+    _escribir_cookie("", 0)
     try:
         cookies.remove(COOKIE_NAME)
     except Exception:
@@ -288,8 +322,6 @@ if not user:
                 if valido:
                     st.session_state.usuario_id = cuenta["id"]
                     st.session_state.logout_pendiente = False
-                    # La cookie se guarda en la siguiente ejecución (ver cookie_por_guardar).
-                    st.session_state.cookie_por_guardar = True
                     st.session_state.fallos_login = 0
                     st.session_state.logout_pendiente = False
                     if "salir" in st.query_params:
@@ -313,10 +345,7 @@ def _cerrar_sesion():
     st.session_state.usuario_id = None
     for permiso_temporal in ("admin_authenticated", "fuentes_admin_ok", "external_admin_ok"):
         st.session_state[permiso_temporal] = False
-    try:
-        cookies.remove(COOKIE_NAME)
-    except Exception:
-        pass
+    # La cookie se borra en la siguiente carga (logout_pendiente).
     st.rerun()
 
 # La X de consulta exige la contraseña de la cuenta administradora.
@@ -374,7 +403,6 @@ if (solicitar_salida or st.session_state.autorizar_salida_consulta) and es_kiosk
                     # Cambiar la sesión actual por la del administrador.
                     st.session_state.usuario_id = administrador["id"]
                     st.session_state.logout_pendiente = False
-                    st.session_state.cookie_por_guardar = True
                     st.rerun(scope="app")
                 else:
                     _cerrar_sesion()
@@ -424,7 +452,6 @@ if user and user["must_change_password"]:
             try:
                 cambiar_password(user, a)
                 # La contraseña cambió: la cookie anterior deja de valer; emitir una nueva.
-                st.session_state.cookie_por_guardar = True
                 st.success("Contraseña cambiada.")
                 st.rerun()
             except (ValueError, RuntimeError) as exc:
