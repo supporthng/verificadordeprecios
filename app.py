@@ -1,599 +1,1008 @@
-"""Navegación con inicio de sesión obligatorio, incluso para consultar precios."""
-import inspect
-import time
-import json
-import hmac
-import hashlib
+import html
+import re
 import base64
+from io import BytesIO
+from PIL import Image, ImageOps
+from datetime import datetime, timedelta, timezone
+import time
+import inspect
+
+import pandas as pd
 import requests
 import streamlit as st
-from streamlit_cookies_controller import CookieController
-from auth_usuarios import (allowed, bootstrap, cambiar_password, current_user,
-                           es_admin, es_kiosko, intentar_login)
 
-st.set_page_config(
-    page_title="Consulta de Precios",
-    page_icon="🏷️",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+# El enfoque se aplica directamente al textbox nativo de Streamlit.
+# No utiliza declare_component ni iframe: evita el RuntimeError anterior.
+FOCO_JS = r"""
+(() => {
+  // Solo el cuadro del verificador (contenedor con clave fija), nunca otros
+  // cuadros de la app. Si hay dos (el nuevo y el que está desapareciendo tras
+  // una lectura), se usa el ÚLTIMO, que es el nuevo.
+  const SELECTOR = '.st-key-cuadro_codigo input';
+  const cuadro = () => {
+    const lista = document.querySelectorAll(SELECTOR);
+    return lista.length ? lista[lista.length - 1] : null;
+  };
+  const editable = (el) => !!(el && el !== document.body && el.matches &&
+    el.matches('input,textarea,select,[contenteditable="true"]'));
+  const esNuestro = (el) => !!(el && el.closest && el.closest('.st-key-cuadro_codigo'));
+  function enfocar() {
+    const input = cuadro();
+    if (!input || input.disabled || input.readOnly) return;
+    const activo = document.activeElement;
+    if (activo === input) return;
+    // No interrumpir si alguien escribe en OTRO control (p. ej. clave de admin).
+    if (editable(activo) && !esNuestro(activo)) return;
+    try { input.focus({preventScroll: true}); } catch (_) { input.focus(); }
+  }
+  window.__cpEnfocar = enfocar;
+  // Instalar una sola vez por ventana, aunque el fragmento se actualice.
+  if (!window.__cpFocoV2) {
+    window.__cpFocoV2 = true;
+    new MutationObserver(() => requestAnimationFrame(() => window.__cpEnfocar()))
+      .observe(document.body, {childList: true, subtree: true});
+    ['focus', 'pageshow', 'click', 'touchend'].forEach((ev) =>
+      window.addEventListener(ev, () => setTimeout(() => window.__cpEnfocar(), 0), true));
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) setTimeout(() => window.__cpEnfocar(), 100);
+    });
+    // Respaldo para el escáner: si llega una tecla y el cursor NO está en un
+    // cuadro de texto, se mueve al cuadro del verificador ANTES de que la tecla
+    // se escriba, así no se pierde ningún dígito.
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (editable(document.activeElement)) return;
+      window.__cpEnfocar();
+    }, true);
+    setInterval(() => window.__cpEnfocar(), 500);
+  }
+  requestAnimationFrame(() => setTimeout(enfocar, 50));
+})();
+"""
 
-# Acceso público exclusivo a Consulta Móvil, por ruta directa o enlace antiguo.
-# Se ejecuta ANTES del inicio de sesión y de cualquier navegación privada.
-# La página móvil realiza su propia comprobación geográfica antes de consultar.
-from urllib.parse import urlsplit
+SUPABASE_URL = str(st.secrets.get("SUPABASE_URL", "")).strip().rstrip("/")
+SUPABASE_ANON_KEY = str(st.secrets.get("SUPABASE_ANON_KEY", "")).strip()
 
-try:
-    _ruta_actual = urlsplit(st.context.url).path.rstrip("/").lower()
-except (AttributeError, TypeError, ValueError):
-    _ruta_actual = ""
+SUPABASE_SERVICE_ROLE_KEY = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
 
-_escaner_publico = (
-    _ruta_actual == "/escaner_movil"
-    or str(st.query_params.get("movil", "")) == "1"
-)
-if _escaner_publico:
-    st.session_state["mobile_public_access"] = True
-    pagina_publica = st.Page(
-        "pages/8_Escaner_Movil.py",
-        title="Consulta Móvil",
-        icon="📱",
-        url_path="Escaner_Movil",
-        default=True,
+def admin_api(method, table, params=None, payload=None):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise RuntimeError("Falta SUPABASE_SERVICE_ROLE_KEY en Secrets.")
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    response = requests.request(
+        method, f"{SUPABASE_URL}/rest/v1/{table}",
+        params=params, json=payload, headers=headers, timeout=12,
     )
-    st.navigation([pagina_publica], position="hidden").run()
-    st.stop()
-st.session_state["mobile_public_access"] = False
+    response.raise_for_status()
+    return response.json()
 
-try:
-    bootstrap()
-except Exception as exc:
-    st.error("No se pudo inicializar el sistema de usuarios: " + str(exc))
-    st.stop()
 
-# Sesión persistente y cifrada en una cookie del navegador.
-# No se guardan contraseñas en el navegador.
-_cookie_secret = str(st.secrets.get("SESSION_COOKIE_KEY", "")).strip()
-if not _cookie_secret:
-    st.error("Falta SESSION_COOKIE_KEY en Streamlit Secrets para activar las sesiones persistentes.")
-    st.stop()
-cookies = CookieController()
-
-COOKIE_NAME = "consulta_precios_login_v2"
-# La sesión dura hasta que el usuario pulse "Cerrar sesión". La cookie se
-# renueva en cada visita, así que un equipo en uso nunca llega a vencer.
-COOKIE_SECONDS = 60 * 60 * 24 * 365
-
-def _token(usuario):
-    # Vencimiento redondeado al día: el token no cambia en cada recarga.
-    vence = (int(time.time()) // 86400) * 86400 + COOKIE_SECONDS
-    payload = {"id": str(usuario["id"]), "exp": vence,
-               "v": hashlib.sha256(usuario["password_hash"].encode()).hexdigest()[:24]}
-    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
-    sig = hmac.new(_cookie_secret.encode(), body.encode(), hashlib.sha256).hexdigest()
-    return body + "." + sig
-
-def _recover(token):
-    """Devuelve (estado, id). estado: 'ok', 'invalida' (borrar cookie) o
-    'temporal' (Supabase no respondió: conservar la cookie y reintentar)."""
-    try:
-        body, sig = token.rsplit(".", 1)
-        correct = hmac.new(_cookie_secret.encode(), body.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, correct):
-            return "invalida", None
-        payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-        if int(payload["exp"]) <= time.time():
-            return "invalida", None
-    except (ValueError, KeyError, TypeError, OverflowError):
-        return "invalida", None
-    try:
-        from auth_usuarios import api
-        rows = api("GET", {"id": "eq." + str(payload["id"]), "select": "id,username,password_hash,active,role", "limit": 1})
-    except (RuntimeError, requests.RequestException):
-        # Fallo de red o de Supabase: NO cerrar la sesión por esto.
-        return "temporal", None
-    try:
-        # Cuenta eliminada, desactivada o con contraseña cambiada: sesión inválida.
-        if not rows or not rows[0]["active"]:
-            return "invalida", None
-        version = hashlib.sha256(rows[0]["password_hash"].encode()).hexdigest()[:24]
-        if not hmac.compare_digest(payload["v"], version):
-            return "invalida", None
-        return "ok", rows[0]["id"]
-    except (ValueError, KeyError, TypeError):
-        return "invalida", None
-
-# Procesar el retorno OAuth en la raíz ANTES del login y de st.navigation.
-# El regreso desde accounts.google.com crea una sesión nueva de Streamlit:
-# st.session_state NO es una ubicación fiable para retener el código OAuth.
-# La autorización solo puede haberse iniciado desde la página administrativa,
-# que genera un state firmado con caducidad (verify_state).
-if "code" in st.query_params or "error" in st.query_params:
-    _oauth_code = str(st.query_params.get("code", ""))
-    _oauth_state = str(st.query_params.get("state", ""))
-    _oauth_error = str(st.query_params.get("error", ""))
-    try:
-        from google_oauth_source import verify_state, exchange_code, connect
-        if _oauth_error:
-            raise RuntimeError("Google rechazó la autorización: " + _oauth_error)
-        if not _oauth_code or not verify_state(_oauth_state):
-            raise RuntimeError("Autorización inválida o vencida. Inicia nuevamente desde Administración.")
-        # No depende del login de Streamlit. El state firmado fue emitido
-        # únicamente desde la página administrativa protegida.
-        connect(exchange_code(_oauth_code))
-        st.session_state["google_oauth_notice"] = (
-            "success", "Cuenta de Google conectada correctamente. Inicia sesión como administrador para continuar."
+@st.cache_data(ttl=4, show_spinner=False)
+def active_source():
+    settings = admin_api("GET", "price_source_settings",
+                         params={"id": "eq.1", "select": "source_type"})
+    if not settings:
+        raise RuntimeError("Falta configurar el origen de datos.")
+    mode = settings[0]["source_type"]
+    if mode == "local":
+        return mode, None
+    if mode == "google":
+        return mode, None
+    if mode != "external":
+        raise RuntimeError("Origen de datos desconocido.")
+    sources = admin_api("GET", "external_price_sources",
+                        params={"enabled": "eq.true", "select": "id,name", "limit": "2"})
+    if len(sources) != 1:
+        raise RuntimeError(
+            "La fuente externa requiere exactamente una configuración habilitada. "
+            "Configúrala en Fuentes de datos."
         )
-    except Exception as exc:
-        st.session_state["google_oauth_notice"] = (
-            "error", "No se pudo completar la conexión Google: " + str(exc)
-        )
-    finally:
-        # Limpiar el código de un solo uso después de intentar el canje.
-        for _key in ("code", "state", "scope", "authuser", "prompt", "error", "iss"):
-            if _key in st.query_params:
-                del st.query_params[_key]
-
-# La X solicita autorización; nunca cierra sesión sin contraseña de admin.
-solicitar_salida = str(st.query_params.get("salir", "")) == "1"
-
-st.session_state.setdefault("usuario_id", None)
-# Impide que una cookie antigua reactive la sesión inmediatamente después de salir.
-st.session_state.setdefault("logout_pendiente", False)
-st.session_state.setdefault("autorizar_salida_consulta", False)
-# Cuenta kiosko: pasar a Escáner Móvil también exige clave de administrador.
-st.session_state.setdefault("autorizar_cambio_movil", False)
-st.session_state.setdefault("fallos_login", 0)
-st.session_state.setdefault("bloqueo_hasta", 0.0)
+    return mode, sources[0]["id"]
 
 
-def _leer_cookie():
-    """Lee la cookie de sesión. st.context.cookies la entrega AL INSTANTE al
-    abrir la página; CookieController queda como respaldo (llega con retraso)."""
+@st.cache_data(ttl=60, show_spinner=False)
+def cargar_imagen(nombre):
+    """Lee una imagen (logo.png o qr-movil.png) del bucket privado de Supabase."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return None
     try:
-        valor = st.context.cookies.get(COOKIE_NAME)
-        if valor:
-            return valor
-    except Exception:
+        response = requests.get(
+            f"{SUPABASE_URL}/storage/v1/object/logo-negocio/{nombre}",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+            },
+            timeout=8,
+        )
+        if response.status_code == 200 and response.headers.get("content-type", "").startswith("image/"):
+            return response.content
+    except requests.RequestException:
         pass
+    return None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def imagen_base64(nombre, ancho, alto):
+    """Imagen ya redimensionada y codificada. Se calcula una vez por minuto,
+    no en cada actualización del verificador (que ocurre cada segundo)."""
+    datos = cargar_imagen(nombre)
+    if not datos:
+        return None
     try:
-        return cookies.get(COOKIE_NAME)
-    except Exception:
+        with Image.open(BytesIO(datos)) as original:
+            imagen = ImageOps.contain(original.convert("RGBA"), (ancho, alto))
+            salida = BytesIO()
+            imagen.save(salida, format="PNG")
+        return base64.b64encode(salida.getvalue()).decode("ascii")
+    except (OSError, ValueError):
         return None
 
 
-def _escribir_cookie(valor, max_age):
-    """Escribe (o borra con max_age=0) la cookie con JavaScript en la página
-    principal. Se repite en cada carga completa, así nunca queda sin guardar."""
-    from shared import ejecutar_js_en_pagina
-    js = ("(function(){var c=%s+'='+%s+'; Max-Age=%d; Path=/; SameSite=Lax';"
-          "if(location.protocol==='https:')c+='; Secure';document.cookie=c;})();"
-          % (json.dumps(COOKIE_NAME), json.dumps(valor), int(max_age)))
-    ejecutar_js_en_pagina(js, "sesion_cookie_js")
+CSS = """
+<style>
+.stApp { background: #f4f7fc; }
+.block-container {
+    max-width: 100%;
+    padding: .5rem .8rem 1rem;
+}
+#MainMenu, footer { visibility: hidden; }
+header[data-testid="stHeader"] { background: transparent; }
+.main-header {
+    background: linear-gradient(135deg, #0c2e59, #0759c9);
+    border-radius: 20px;
+    padding: clamp(12px, 3vw, 28px);
+    text-align: center;
+    color: white;
+    margin-bottom: 12px;
+}
+.main-header h1 {
+    color: white !important;
+    font-size: clamp(20px, 4vw, 38px);
+    margin: 0;
+}
+.main-header p {
+    color: #dceaff;
+    font-size: clamp(12px, 2vw, 17px);
+    margin: 6px 0 0;
+}
+.scan-title {
+    color: #102b50;
+    text-align: center;
+    font-weight: 850;
+    font-size: clamp(18px, 3.5vw, 32px);
+    margin: 10px 0;
+}
+div[data-testid="stTextInput"] input {
+    text-align: center !important;
+    font-size: clamp(16px, 2vw, 21px) !important;
+    min-height: 44px;
+    height: 44px;
+    padding: 4px 12px;
+    border-radius: 14px;
+    border: 2px solid #d5e1f1;
+    background: white;
+}
+.product-card {
+    background: white;
+    border: 1px solid #dce5f2;
+    border-radius: 20px;
+    padding: clamp(16px, 4vw, 36px);
+    text-align: center;
+    margin: 10px auto;
+    box-shadow: 0 7px 25px rgba(20,50,90,.07);
+}
+/* Resultado ampliado para pantallas de verificadores de precios. */
+.product-card.result-card {
+    width: 100%;
+    min-height: 76dvh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(8px, 1.5vh, 18px);
+    padding: clamp(16px, 3vw, 40px);
+    margin: 0 auto;
+}
+.result-card .product-name {
+    font-size: clamp(28px, 5.5vw, 66px);
+    margin: 2px 0;
+}
+.result-card .product-code {
+    font-size: clamp(17px, 2.5vw, 26px);
+    margin: 0;
+}
+.result-card .product-price {
+    font-size: clamp(54px, 10vw, 126px);
+    margin: 0;
+}
+.result-card .product-label, .result-card .price-label {
+    font-size: clamp(15px, 2vw, 23px);
+}
+@media (max-width: 600px) {
+    .product-card.result-card { min-height: 72dvh; }
+    .result-card .product-price { font-size: clamp(42px, 11vw, 78px); }
+}
+@media (orientation: landscape) and (max-height: 650px) {
+    .product-card.result-card { min-height: 79dvh; padding: 10px 22px; gap: 6px; }
+    .result-card .product-name { font-size: clamp(28px, 5vw, 58px); }
+    .result-card .product-price { font-size: clamp(55px, 9vw, 110px); }
+}
+.product-label, .price-label {
+    color: #64748b;
+    font-weight: 800;
+    letter-spacing: 1px;
+    font-size: clamp(12px, 2vw, 17px);
+}
+.product-name {
+    color: #102b50;
+    font-size: clamp(22px, 4.5vw, 40px);
+    font-weight: 850;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+    margin: 12px 0;
+}
+.product-code {
+    color: #64748b;
+    font-size: clamp(14px, 2vw, 21px);
+    overflow-wrap: anywhere;
+    margin-bottom: 22px;
+}
+.product-price {
+    color: #0757c3;
+    font-size: clamp(40px, 8vw, 76px);
+    font-weight: 900;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+    margin-top: 8px;
+}
+@media (max-width: 600px) {
+    .block-container { padding: .6rem .6rem 1rem; }
+    .main-header { padding: 13px 10px; margin-bottom: 8px; }
+    .main-header h1 { font-size: clamp(19px, 5.5vw, 27px); }
+    .scan-title { margin: 6px 0; font-size: clamp(17px, 5vw, 24px); }
+    div[data-testid="stTextInput"] input { min-height: 48px; }
+    .product-card { padding: 18px 12px; }
+}
+@media (orientation: landscape) and (max-height: 650px) {
+    .block-container { padding-top: .25rem; padding-bottom: .4rem; }
+    .main-header { padding: 8px 12px; margin-bottom: 5px; }
+    .main-header h1 { font-size: clamp(18px, 3vw, 27px); }
+    .main-header p { margin-top: 2px; font-size: 12px; }
+    .scan-title { margin: 4px 0; font-size: clamp(17px, 3vw, 24px); }
+    div[data-testid="stTextInput"] input { min-height: 44px; }
+    .product-card { padding: 12px; margin: 4px auto; }
+    .product-name { margin: 6px 0; }
+    .product-code { margin-bottom: 8px; }
+}
+
+.search-card { min-height: 255px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+.search-card .search-label { color: #64748b; font-weight: 800; letter-spacing: 1px; font-size: 14px; }
+.search-card .search-text { color: #102b50; font-weight: 750; font-size: clamp(18px, 3vw, 24px); }
+.search-visual { width: min(300px, 90%); height: 105px; overflow: hidden; }
+.search-lens { animation: scan-barcode 2.1s ease-in-out infinite; transform-origin: center; }
+@keyframes scan-barcode { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(180px); } }
+@media (prefers-reduced-motion: reduce) { .search-lens { animation: none; } }
+.not-found-name { color: #102b50; font-size: clamp(23px, 4.5vw, 40px); font-weight: 850; line-height: 1.2; margin: 16px 0; }
+.business-logo-label {
+    text-align: center;
+    color: #64748b;
+    font-weight: 750;
+    letter-spacing: 1px;
+    margin: 22px 0 8px;
+}
+
+/* Codigo de barras decorativo con barrido continuo, sin recursos externos. */
+.animated-barcode-card {
+    width: min(310px, 75vw); margin: 8px auto 20px; padding: 16px 18px 12px;
+    background: #fff; border-radius: 12px; text-align: center;
+    box-shadow: 0 2px 10px rgba(20,50,90,.04);
+}
+.animated-bars {
+    position: relative; height: 105px; overflow: hidden;
+    background: repeating-linear-gradient(90deg,
+        #102b50 0px, #102b50 2px, #fff 2px, #fff 5px,
+        #102b50 5px, #102b50 9px, #fff 9px, #fff 12px,
+        #102b50 12px, #102b50 13px, #fff 13px, #fff 17px,
+        #102b50 17px, #102b50 22px, #fff 22px, #fff 26px);
+}
+.animated-scan-line {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 4px;
+    background: #ff9d20; box-shadow: 0 0 9px 3px rgba(255,157,32,.7);
+    animation: barcode-sweep 2.4s ease-in-out infinite alternate;
+}
+@keyframes barcode-sweep { from { left: 0; } to { left: calc(100% - 4px); } }
+.animated-barcode-caption { color: #102b50; margin-top: 10px; font-size: 16px; }
+@media (prefers-reduced-motion: reduce) { .animated-scan-line { animation: none; left: 50%; } }
+@media (max-width: 600px) { .animated-barcode-card { width: min(260px, 76vw); } }
+</style>
+"""
+# Color verde del campo de la antigua Prueba del Cursor.
+# Solo modifica la apariencia; no cambia el mecanismo de enfoque.
+CSS += """
+<style>
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stTextInput"] input:focus-visible {
+    outline: none !important;
+    border-color: #16823c !important;
+    box-shadow: 0 0 0 3px #d9f5df !important;
+}
+</style>
+"""
+
+# Ajuste para pantallas integradas de verificadores (ej. 2connect).
+# Se preserva la lógica del escáner, el enfoque y los tiempos de resultados.
+CSS += """
+<style>
+@media (max-height: 720px) and (min-width: 600px) {
+  [data-testid="stMainBlockContainer"], .block-container {
+    padding-top: 0.25rem !important;
+    padding-bottom: 0.2rem !important;
+  }
+  [data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
+  .main-header {
+    padding: 9px 14px !important;
+    margin-bottom: 2px !important;
+    border-radius: 12px !important;
+  }
+  .main-header h1 { font-size: clamp(19px, 3.2vh, 27px) !important; }
+  .main-header p { font-size: 11px !important; margin-top: 2px !important; }
+  .animated-barcode-card {
+    height: auto !important;
+    width: min(260px, 60vw) !important;
+    padding: 8px 12px 6px !important;
+    margin: 1px auto 2px !important;
+  }
+  .animated-bars { height: clamp(45px, 11vh, 70px) !important; }
+  .animated-barcode-caption { margin-top: 3px !important; font-size: 12px !important; }
+  .scan-title { margin: 2px 0 !important; font-size: clamp(17px, 3vh, 23px) !important; }
+  div[data-testid="stTextInput"] input {
+    height: 39px !important;
+    min-height: 39px !important;
+  }
+  [data-testid="stImage"] img {
+    max-height: clamp(55px, 14vh, 88px) !important;
+    width: auto !important;
+    object-fit: contain !important;
+    margin: 0 auto !important;
+  }
+  [data-testid="stImage"] { text-align: center !important; }
+  .product-card.result-card {
+    min-height: 68dvh !important;
+    padding: 12px 20px !important;
+  }
+}
+@media (max-height: 480px) and (min-width: 600px) {
+  .main-header { padding: 6px 12px !important; }
+  .animated-bars { height: 42px !important; }
+  .animated-barcode-card { padding: 5px 10px 3px !important; }
+  .scan-title { font-size: 17px !important; }
+  [data-testid="stImage"] img { max-height: 54px !important; }
+}
+</style>
+"""
+
+# El textbox sigue en el DOM y recibe el foco y los codigos del escaner.
+# Se oculta solo visualmente: NO usar display:none ni visibility:hidden.
+# Se aplica o no según la pestaña Apariencia (ver verificador()).
+CSS_CUADRO_OCULTO = """
+<style>
+/* El contenedor sale del flujo: no ocupa espacio ni separación en pantalla. */
+.st-key-cuadro_codigo {
+    position: absolute !important; width: 0 !important; height: 0 !important;
+    overflow: visible !important; margin: 0 !important;
+}
+/* El input sigue montado y enfocable; solo se oculta visualmente.
+   Nunca usar display:none, visibility:hidden ni type=hidden. */
+div[data-testid="stTextInput"] {
+    position: absolute !important;
+    left: -10000px !important;
+    top: auto !important;
+    width: 300px !important;
+    height: 48px !important;
+    opacity: 0 !important;
+    overflow: visible !important;
+    pointer-events: none !important;
+}
+div[data-testid="stTextInput"] input {
+    width: 300px !important;
+    height: 48px !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+</style>
+"""
+
+# Cuadro visible: centrado y discreto. Sigue recibiendo el foco igual.
+CSS_CUADRO_VISIBLE = """
+<style>
+/* Flota abajo al centro, encima de la pantalla adaptable. */
+.st-key-cuadro_codigo {
+    position: fixed !important; z-index: 1000 !important;
+    left: 50% !important; transform: translateX(-50%) !important;
+    bottom: clamp(8px, 2dvh, 20px) !important; top: auto !important;
+    width: min(420px, 50vw) !important;
+}
+/* Reservar ese espacio abajo para que no tape el logo ni el QR. */
+.pantalla-espera.pantalla-fija { padding-bottom: calc(clamp(10px, 2.4dvh, 26px) + 58px) !important; }
+div[data-testid="stTextInput"] {
+    max-width: 460px !important;
+    margin: 0 auto !important;
+}
+div[data-testid="stTextInput"] input {
+    text-align: center !important;
+    font-size: 20px !important;
+    letter-spacing: 1px;
+}
+</style>
+"""
+
+# Pantalla 2connect: distribuir el contenido por la ALTURA real del visor.
+# No cambiar el input oculto, FOCO_JS, ni la lógica del lector.
+CSS += """
+<style>
+.stApp { background:#f4f8ff !important; }
+.main-header {
+  background:linear-gradient(110deg,#0b315f,#0757d4) !important;
+  border-radius:14px !important;
+  box-shadow:0 5px 14px rgba(8,60,130,.10) !important;
+  padding:clamp(14px,3vh,24px) 48px !important;
+  margin-bottom:clamp(12px,3vh,24px) !important;
+}
+.main-header h1 { font-size:clamp(22px,3.6vw,37px) !important; }
+.main-header p { font-size:clamp(12px,1.5vw,16px) !important; }
+.animated-barcode-card {
+  width:min(460px,75vw) !important;
+  max-width:100% !important;
+  padding:clamp(12px,2vh,22px) clamp(15px,2vw,25px) 10px !important;
+  margin:0 auto clamp(14px,3vh,24px) !important;
+  border-radius:16px !important;
+  box-shadow:0 6px 18px rgba(17,54,98,.10) !important;
+}
+.animated-bars { height:clamp(75px,18vh,140px) !important; }
+.animated-barcode-caption { margin-top:7px !important; font-size:clamp(13px,1.6vw,17px) !important; }
+.scan-title { font-size:clamp(22px,3.2vw,34px) !important; margin:0 !important; }
+.scan-hint { color:#7c8ca6; text-align:center; font-weight:500;
+  font-size:clamp(14px,1.8vw,19px); margin:5px auto 0; }
+[data-testid="stImage"] { text-align:center !important; }
+[data-testid="stImage"] img { object-fit:contain !important; width:auto !important; margin:auto !important; }
+/* Pantalla horizontal del equipo: evitar el diseño miniatura anterior.
+   Escalar tamaños con la altura útil en vez de reducirlos al mínimo. */
+@media (orientation:landscape) and (min-width:600px) and (max-height:800px) {
+  [data-testid="stMainBlockContainer"], .block-container {
+    padding-top:0.25rem !important;
+    padding-bottom:0.15rem !important;
+  }
+  [data-testid="stVerticalBlock"] { gap:clamp(4px,1.1vh,10px) !important; }
+  .main-header {
+    box-sizing:border-box !important;
+    min-height:clamp(82px,20dvh,142px) !important;
+    padding:clamp(12px,3vh,20px) 50px !important;
+    margin-bottom:clamp(10px,2.5vh,18px) !important;
+    display:flex !important;
+    flex-direction:column !important;
+    justify-content:center !important;
+  }
+  .main-header h1 { font-size:clamp(22px,5vh,34px) !important; }
+  .main-header p { font-size:clamp(12px,2.7vh,16px) !important; margin-top:5px !important; }
+  .animated-barcode-card {
+    width:min(440px,70vw) !important;
+    padding:clamp(10px,2vh,18px) 20px 9px !important;
+    margin:0 auto clamp(12px,3vh,22px) !important;
+  }
+  .animated-bars { height:clamp(80px,21dvh,140px) !important; }
+  .animated-barcode-caption { font-size:clamp(13px,2.8vh,17px) !important; margin-top:6px !important; }
+  .scan-title { font-size:clamp(21px,4.8vh,32px) !important; }
+  .scan-hint { font-size:clamp(13px,3vh,18px) !important; margin-top:5px !important; }
+  [data-testid="stImage"] img { max-height:clamp(65px,16dvh,110px) !important; }
+}
+@media (orientation:landscape) and (min-width:600px) and (max-height:420px) {
+  .main-header { min-height:72px !important; margin-bottom:6px !important; }
+  .animated-barcode-card { margin-bottom:6px !important; padding:7px 16px 5px !important; }
+  .animated-bars { height:clamp(60px,19dvh,90px) !important; }
+  .scan-title { font-size:clamp(18px,4.8vh,24px) !important; }
+  [data-testid="stImage"] img { max-height:clamp(48px,13dvh,70px) !important; }
+}
+@media (max-width:599px) {
+  .main-header { padding:13px 38px !important; }
+  .main-header h1 { font-size:clamp(17px,4.7vw,24px) !important; }
+  .animated-barcode-card { width:min(330px,80vw) !important; }
+  .scan-title { font-size:clamp(18px,5vw,24px) !important; }
+}
+</style>
+"""
+
+# Prioridad sobre reglas de pantallas compactas anteriores.
+CSS += """
+<style>
+@media (max-height: 800px) and (min-width: 600px) {
+  [data-testid="stImage"] { display: flex !important; justify-content: center !important; }
+  [data-testid="stImage"] img {
+    max-height: 112px !important;
+    max-width: 145px !important;
+    width: auto !important;
+    object-fit: contain !important;
+  }
+}
+</style>
+"""
+# Solo en PRODUCTO NO ENCONTRADO: barras rojas estáticas y fondo tenue.
+CSS += """<style>
+.animated-barcode-card.barcode-not-found {background:#fff1f2 !important;}
+.animated-barcode-card.barcode-not-found .animated-bars {
+  background:repeating-linear-gradient(90deg,#b91c1c 0px,#b91c1c 3px,transparent 3px,transparent 6px,#dc2626 6px,#dc2626 8px,transparent 8px,transparent 12px) !important;
+  animation:none !important;
+}
+.animated-barcode-card.barcode-not-found .animated-scan-line,
+.animated-barcode-card.barcode-not-found .animated-bars::before,
+.animated-barcode-card.barcode-not-found .animated-bars::after {display:none !important;animation:none !important;}
+.scan-title.scan-title-not-found {color:#b91c1c !important;font-weight:800 !important;}
+</style>"""
+
+# Diseño aprobado: producto sin fotografía, precio en franja azul.
+CSS += """<style>
+.resultado-pantalla {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: min(86dvh, 760px) !important;
+  min-height: 250px !important;
+  margin: 0 auto !important;
+  border-radius: 15px !important;
+  overflow: hidden !important;
+  background: #f6faff !important;
+  display: flex !important;
+  flex-direction: column !important;
+  box-shadow: 0 4px 18px rgba(14,49,101,.07);
+  text-align: center !important;
+}
+.resultado-datos {
+  flex: 1 1 53% !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: clamp(4px, 1.2dvh, 12px) !important;
+  padding: 8px 20px !important;
+}
+.resultado-etiqueta {color:#8799b4;letter-spacing:.15em;font-weight:800;font-size:clamp(12px,1.5vw,19px)}
+.resultado-nombre {color:#0d2d58;font-weight:900;font-size:clamp(24px,3.3vw,56px);line-height:1.13;overflow-wrap:anywhere;max-width:100%;text-wrap:balance}
+.resultado-codigo {color:#8497b2;font-size:clamp(13px,1.5vw,22px)}
+.resultado-precio-panel {
+  flex: 0 0 42% !important;
+  min-height: 0 !important;
+  background:linear-gradient(105deg,#0860e8,#0851d3) !important;
+  color:white !important;
+  display:flex !important;
+  flex-direction:row !important;
+  justify-content:center !important;
+  align-items:center !important;
+  gap:clamp(12px,2vw,35px) !important;
+  padding:8px 18px !important;
+}
+.resultado-precio-etiqueta {font-weight:800;letter-spacing:.05em;font-size:clamp(13px,1.5vw,22px);white-space:nowrap;color:white}
+.resultado-precio {font-weight:900;font-size:clamp(44px,5.9vw,105px);line-height:1.04;white-space:nowrap;color:white;font-variant-numeric:tabular-nums}
+@media (max-width:650px) {
+  .resultado-precio-panel {flex-direction:column !important;gap:4px !important;}
+  .resultado-precio {font-size:clamp(38px,8vw,65px)}
+}
+@media (orientation:landscape) and (max-height:550px) {
+  .resultado-pantalla {height:87dvh !important;}
+  .resultado-datos {flex-basis:53% !important;padding:5px 14px !important;gap:4px !important;}
+  .resultado-nombre {font-size:clamp(20px,3.3vw,43px) !important;}
+  .resultado-precio-panel {flex-basis:43% !important;}
+  .resultado-precio {font-size:clamp(40px,6vw,78px) !important;}
+}
+</style>"""
 
 
-# Recuperar sesión al refrescar la página o reabrir el navegador.
-if not st.session_state.usuario_id and not st.session_state.logout_pendiente:
-    token = _leer_cookie()
-    if token:
-        estado, restored_id = _recover(token)
-        if estado == "ok":
-            st.session_state.usuario_id = restored_id
-        elif estado == "invalida":
-            _escribir_cookie("", 0)
-        # estado "temporal": se conserva la cookie y se reintenta abajo.
+# Tipografía ampliada para el resultado, ajustada al 2connect horizontal.
+# Se aplica al final para prevalecer sobre las reglas compactas anteriores.
+CSS += """<style>
+.resultado-pantalla .resultado-datos {
+  padding: clamp(10px,2dvh,22px) clamp(14px,3vw,40px) !important;
+  gap: clamp(8px,2dvh,16px) !important;
+}
+.resultado-pantalla .resultado-nombre {
+  font-size: clamp(31px, 4.6vw, 72px) !important;
+  line-height: 1.12 !important;
+  max-width: 96% !important;
+  text-wrap: balance !important;
+}
+.resultado-pantalla .resultado-etiqueta {
+  font-size: clamp(15px, 1.8vw, 23px) !important;
+}
+.resultado-pantalla .resultado-codigo {
+  font-size: clamp(17px, 2.1vw, 27px) !important;
+}
+.resultado-pantalla .resultado-precio-panel {
+  flex-direction: column !important;
+  gap: clamp(5px,1.2dvh,14px) !important;
+}
+.resultado-pantalla .resultado-precio-etiqueta {
+  font-size: clamp(17px, 2.2vw, 27px) !important;
+}
+.resultado-pantalla .resultado-precio {
+  font-size: clamp(64px, 9.5vw, 136px) !important;
+  line-height: 1.05 !important;
+}
+@media (orientation: landscape) and (max-height: 550px) {
+  .resultado-pantalla .resultado-nombre {font-size: clamp(29px,4.2vw,58px) !important;}
+  .resultado-pantalla .resultado-precio {font-size: clamp(59px,8.7vw,112px) !important;}
+  .resultado-pantalla .resultado-datos {gap: 6px !important;}
+}
+</style>"""
 
-# CookieController recibe las cookies del navegador de forma asíncrona.
-# En una sesión nueva, el primer get() puede devolver None antes de que
-# el componente termine de inicializarse. Reintentar sin pedir credenciales.
-if not st.session_state.usuario_id and not st.session_state.logout_pendiente:
-    @st.fragment(run_every="1s")
-    def _esperar_cookie_recordada():
-        if st.session_state.get("usuario_id"):
-            return
-        token_persistente = cookies.get(COOKIE_NAME)
-        if token_persistente:
-            estado, identificador = _recover(token_persistente)
-            if estado == "ok":
-                st.session_state.usuario_id = identificador
-                st.rerun(scope="app")
-            elif estado == "invalida":
-                try:
-                    cookies.remove(COOKIE_NAME)
-                except Exception:
-                    pass
+# Diseño adaptable: la pantalla de espera y la del precio se ajustan SOLAS al
+# alto del equipo (2connect, monitor, tableta). Va al final para prevalecer.
+CSS += """
+<style>
+/* Elementos que solo llevan estilos o scripts: no ocupan espacio. */
+[data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"] > :not(style))) {
+  display: none !important;
+}
+/* Sin los márgenes negativos que Streamlit pone a los bloques de texto. */
+[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla),
+[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla) [data-testid="stMarkdown"],
+[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla) [data-testid="stMarkdownContainer"] {
+  margin-top: 0 !important; margin-bottom: 0 !important;
+}
+
+/* ---------- Pantalla de espera ---------- */
+.pantalla-espera {
+  display: flex; flex-direction: column; align-items: center;
+  gap: clamp(8px, 2.4dvh, 26px);
+  width: 100%; box-sizing: border-box;
+  height: calc(100dvh - 7rem); min-height: 420px;   /* usuarios con menú */
+}
+/* Verificador (kiosko): ocupa exactamente la pantalla, sin depender de Streamlit. */
+.pantalla-espera.pantalla-fija {
+  position: fixed; inset: 0; z-index: 50;
+  height: auto; min-height: 0; background: #f4f8ff;
+  padding: clamp(8px, 2dvh, 22px) clamp(10px, 2vw, 28px) clamp(10px, 2.4dvh, 26px);
+}
+.pantalla-espera > * { flex: 0 0 auto; }
+.pantalla-espera .main-header {
+  width: 100%; box-sizing: border-box; margin: 0 !important; min-height: 0 !important;
+  padding: clamp(8px, 2.6dvh, 28px) 40px !important; border-radius: 14px !important;
+}
+.pantalla-espera .main-header h1 {
+  font-size: clamp(18px, 6.2dvh, 46px) !important; line-height: 1.15 !important;
+  margin: 0 !important; padding: 0 !important;
+}
+.pantalla-espera .main-header p {
+  font-size: clamp(11px, 2.8dvh, 20px) !important; margin: 0.5dvh 0 0 !important;
+}
+.pantalla-espera .animated-barcode-card {
+  width: min(560px, 60vw) !important; margin: 0 !important; box-sizing: border-box;
+  padding: 1.4dvh 18px 1dvh !important;
+}
+.pantalla-espera .animated-bars { height: clamp(34px, 17dvh, 160px) !important; }
+.pantalla-espera .animated-barcode-caption {
+  font-size: clamp(10px, 2.2dvh, 16px) !important; margin-top: 0.6dvh !important;
+}
+.pantalla-espera .espera-textos { text-align: center; }
+.pantalla-espera .scan-title {
+  font-size: clamp(16px, 5.8dvh, 42px) !important; line-height: 1.1 !important; margin: 0 !important;
+}
+.pantalla-espera .scan-hint {
+  font-size: clamp(11px, 2.8dvh, 20px) !important; margin: 0.4dvh 0 0 !important;
+}
+.pantalla-espera .scan-hint-codigo { color: #b91c1c !important; font-weight: 700; }
+/* Logo y QR: usan TODO el alto que queda (se encogen o agrandan solos). */
+.pantalla-espera .verif-imagenes {
+  flex: 1 1 0; min-height: 0; width: 100%;
+  display: flex; justify-content: center; align-items: center;
+  gap: clamp(18px, 6vw, 80px);
+}
+.verif-logo {
+  display: block; width: auto; height: auto; object-fit: contain;
+  max-width: min(34vw, 320px); max-height: min(100%, 260px);
+}
+.verif-qr {
+  height: 100%; min-height: 0; max-height: 300px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.8dvh;
+}
+.verif-qr img {
+  display: block; flex: 0 1 auto; min-height: 0; width: auto; height: auto;
+  max-height: calc(100% - 2.6em); max-width: min(30vw, 240px); object-fit: contain;
+  background: #fff; padding: 4px; border-radius: 8px; box-sizing: border-box;
+}
+/* Etiqueta destacada bajo el QR. */
+.verif-qr span {
+  flex: 0 0 auto; display: inline-block; background: #0757d4; color: #ffffff;
+  font-weight: 800; letter-spacing: .02em; white-space: nowrap;
+  font-size: clamp(12px, 2.8dvh, 20px); line-height: 1.15;
+  padding: 0.6dvh 12px; border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(7, 87, 212, .25);
+}
+
+/* ---------- Pantalla del precio (kiosko): también a pantalla completa ---------- */
+.resultado-pantalla.pantalla-fija {
+  position: fixed !important; z-index: 50;
+  inset: clamp(6px, 1.5dvh, 16px) clamp(8px, 1.5vw, 20px) !important;
+  width: auto !important; height: auto !important; min-height: 0 !important; margin: 0 !important;
+}
+</style>"""
+
+# Cada <style> debe empezar en SU PROPIA línea: si queda pegado a un </style>
+# anterior, Markdown lo trata como texto y puede mostrar el CSS en pantalla.
+CSS = re.sub(r"</style>\s*<style>", "</style>\n<style>", CSS)
+st.markdown(CSS, unsafe_allow_html=True)
+
+
+
+for key, default in (
+    ("scan_n", 0),
+    ("last_searched_barcode", ""),
+    ("current_product", None),
+    ("result_time", None),
+    ("not_found", False),
+    ("external_job", None),
+    ("external_started", None),
+    ("consult_error", None),
+    ("source_snapshot", None),
+):
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+
+def buscar_producto(clave):
+    query = str(st.session_state.get(clave, "")).strip()
+    # Cada lectura usa un cuadro NUEVO y vacío (otra clave). Si quedara el código
+    # anterior, la siguiente lectura se pegaría detrás ("123"+"123") y no se encontraría.
+    st.session_state.scan_n += 1
+    if not query:
+        return
+    st.session_state.last_searched_barcode = query
+    st.session_state.current_product = None
+    st.session_state.not_found = False
+    st.session_state.consult_error = None
+    st.session_state.external_job = None
+    st.session_state.result_time = None
+    try:
+        mode, source_id = active_source()
+        if mode == "local":
+            # Consulta directa por clave primaria: no descarga el inventario completo.
+            from inventarios import find_barcode
+            product = find_barcode(query)
+            if product is None:
+                st.session_state.not_found = True
             else:
-                # Se reintenta cada segundo hasta que Supabase responda.
-                st.info("Reconectando con el servidor… tu sesión sigue abierta.")
-    _esperar_cookie_recordada()
+                st.session_state.current_product = product
+            st.session_state.result_time = time.monotonic()
+        elif mode == "google":
+            from google_oauth_source import config as google_config, catalog as google_catalog
+            cfg = google_config()
+            if not cfg or not cfg.get("file_id"):
+                raise RuntimeError("Configura el archivo de Google desde Administración.")
+            df = google_catalog(cfg["kind"], cfg["file_id"], cfg["sheet_name"] or "",
+                                cfg["code_column"], cfg["name_column"], cfg["price_column"])
+            hits = df[df["barcode"].astype(str).str.strip() == query].head(1)
+            if hits.empty:
+                st.session_state.not_found = True
+            else:
+                st.session_state.current_product = hits.iloc[0].to_dict()
+            st.session_state.result_time = time.monotonic()
+        else:
+            rows = admin_api("POST", "external_price_jobs", payload={
+                "configuration_id": source_id,
+                "barcode": query,
+                "status": "pending",
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+            })
+            if not rows or not rows[0].get("id"):
+                raise RuntimeError("No se pudo registrar la consulta externa")
+            st.session_state.external_job = rows[0]["id"]
+            st.session_state.external_started = time.monotonic()
+    except Exception as exc:
+        st.session_state.consult_error = (
+            "No se pudo consultar la fuente seleccionada: " + str(exc)
+        )
+        st.session_state.result_time = time.monotonic()
+
+
+def check_external_result():
+    jid = st.session_state.external_job
+    if not jid:
+        return
+    if time.monotonic() - st.session_state.external_started > 25:
+        st.session_state.external_job = None
+        st.session_state.consult_error = (
+            "La base externa no respondió a tiempo. No se consultó la base local."
+        )
+        st.session_state.result_time = time.monotonic()
+        return
+    try:
+        rows = admin_api("GET", "external_price_jobs",
+                         params={"id": "eq." + jid, "select": "status,result,error_message"})
+        if not rows:
+            raise RuntimeError("La solicitud externa no existe.")
+        job = rows[0]
+        if job["status"] == "done":
+            result = job.get("result")
+            if result:
+                st.session_state.current_product = {
+                    "barcode": result.get("barcode") or st.session_state.get("last_searched_barcode", ""),
+                    "name": result.get("name", ""),
+                    "price": result.get("price", 0),
+                }
+            else:
+                st.session_state.not_found = True
+            st.session_state.external_job = None
+            st.session_state.result_time = time.monotonic()
+        elif job["status"] == "error":
+            st.session_state.external_job = None
+            st.session_state.consult_error = (
+                "No se pudo consultar SQL Server. Revisa el conector y la conexión externa."
+            )
+            st.session_state.result_time = time.monotonic()
+    except (requests.RequestException, RuntimeError) as exc:
+        st.session_state.external_job = None
+        st.session_state.consult_error = "No se pudo obtener la respuesta de la base externa."
+        st.session_state.result_time = time.monotonic()
+
+
+@st.fragment(run_every=1.0)
+def verificador():
+    # Evitar mostrar resultados de una fuente distinta si el administrador la cambia.
+    try:
+        mode, source_id = active_source()
+        snapshot = (mode, source_id)
+        if st.session_state.source_snapshot != snapshot:
+            st.session_state.source_snapshot = snapshot
+            st.session_state.current_product = None
+            st.session_state.not_found = False
+            st.session_state.external_job = None
+            st.session_state.result_time = None
+            st.session_state.consult_error = None
+            st.session_state.last_searched_barcode = ""
+    except Exception:
+        st.error("No se pudo leer la fuente activa. Revisa Configuración.")
+        return
+
+    if mode == "external":
+        check_external_result()
+    started = st.session_state.result_time
+
+    # Los códigos inexistentes vuelven antes al lector; los productos encontrados
+    # conservan el tiempo habitual para leer el precio.
+    display_seconds = 7 if st.session_state.not_found else 10
+    if started is not None and time.monotonic() - started >= display_seconds:
+        st.session_state.current_product = None
+        st.session_state.not_found = False
+        st.session_state.consult_error = None
+        st.session_state.result_time = None
+        # El widget puede no existir cuando se muestra un resultado.
+        # Streamlit limpia automaticamente su estado al ocultarlo.
+
+    # Mantener el textbox nativo montado en TODOS los estados, incluso mientras
+    # se muestra un producto o un código inexistente. Al desmontarlo, Streamlit
+    # pierde el foco y puede descartar la siguiente lectura del escáner.
+    # app.py indica si la sesión es la cuenta del verificador (kiosko).
+    modo_kiosko = bool(st.session_state.get("modo_kiosko", False))
+    try:
+        from apariencia import obtener as obtener_apariencia
+        vista = obtener_apariencia()
+    except Exception:
+        vista = {"mostrar_logo": True, "mostrar_qr": True, "mostrar_cuadro": False}
+    st.markdown(CSS_CUADRO_VISIBLE if vista["mostrar_cuadro"] else CSS_CUADRO_OCULTO,
+                unsafe_allow_html=True)
+
+    clave_cuadro = f"search_input_{st.session_state.scan_n}"
+    # Contenedor con clave fija: el script de enfoque lo localiza siempre.
+    with st.container(key="cuadro_codigo"):
+        st.text_input(
+            "Código de barras",
+            key=clave_cuadro,
+            on_change=buscar_producto,
+            args=(clave_cuadro,),
+            label_visibility="collapsed",
+            placeholder="Escanea o escribe el código y pulsa Enter",
+        )
+
+    product = st.session_state.current_product
+
+    if product is not None:
+        name = html.escape(str(product["name"]))
+        # Mostrar el código que se escaneó (lo que el cliente consultó).
+        barcode = html.escape(str(st.session_state.get("last_searched_barcode") or product["barcode"]))
+        price = float(product["price"])
+
+        st.markdown(
+            f'<div class="resultado-pantalla{" pantalla-fija" if modo_kiosko else ""}">'
+            '<div class="resultado-datos">'
+            '<div class="resultado-etiqueta">PRODUCTO</div>'
+            f'<div class="resultado-nombre">{name}</div>'
+            f'<div class="resultado-codigo">Código consultado: <strong>{barcode}</strong></div>'
+            '</div>'
+            '<div class="resultado-precio-panel">'
+            '<div class="resultado-precio-etiqueta">PRECIO DE VENTA</div>'
+            f'<div class="resultado-precio">RD$ {price:,.2f}</div>'
+            '</div></div>', 
+            unsafe_allow_html=True,
+        )
+
+    elif st.session_state.consult_error:
+        st.error(st.session_state.consult_error)
+    elif st.session_state.external_job:
+        # Solo se muestra una animación amigable; no exponer detalles técnicos.
+        st.markdown(
+            '<div class="product-card search-card">'
+            '<div class="search-label">VERIFICANDO PRECIO</div>'
+            '<svg class="search-visual" viewBox="0 0 300 105" role="img" '
+            'aria-label="Lupa buscando un código de barras">'
+            '<g fill="#64748b">'
+            + ''.join(
+                f'<rect x="{15 + i * 9}" y="22" width="{4 if i % 3 == 0 else 2}" '
+                f'height="{55 if i % 4 == 0 else 45}" />' for i in range(27)
+            )
+            + '</g><g class="search-lens">'
+            '<circle cx="36" cy="42" r="23" fill="#e8f1ff" fill-opacity="0.9" '
+            'stroke="#0759c9" stroke-width="5"/>'
+            '<path d="M53 59 L78 84" stroke="#0759c9" stroke-width="9" '
+            'stroke-linecap="round"/></g></svg>'
+            '<div class="search-text">Buscando producto...</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        # Pantalla de espera como UN solo bloque. En el verificador (kiosko)
+        # ocupa exactamente el alto de la pantalla y se adapta sola: la franja,
+        # el código de barras y el título toman su tamaño, y el logo y el QR
+        # se agrandan o encogen para llenar el espacio que queda.
+        no_encontrado = st.session_state.not_found
+        clase_error = " barcode-not-found" if no_encontrado else ""
+        titulo_escaneo = "PRODUCTO NO ENCONTRADO" if no_encontrado else "ESCANEA TU CÓDIGO AQUÍ"
+
+        imagenes = []
+        if vista["mostrar_logo"]:
+            logo = imagen_base64("logo.png", 440, 260)
+            if logo:
+                imagenes.append(
+                    '<img class="verif-logo" alt="Logo de la empresa" '
+                    f'src="data:image/png;base64,{logo}">')
+        if vista["mostrar_qr"]:
+            qr = imagen_base64("qr-movil.png", 300, 300)
+            if qr:
+                imagenes.append(
+                    '<div class="verif-qr"><img alt="Código QR para consultar desde el celular" '
+                    f'src="data:image/png;base64,{qr}"><span>📱 Consulta desde tu celular</span></div>')
+
+        clase_pantalla = "pantalla-espera" + (" pantalla-fija" if modo_kiosko else "")
+        st.markdown(
+            f'<div class="{clase_pantalla}">'
+            '<div class="main-header"><h1>🏷️ CONSULTA DE PRECIOS</h1>'
+            '<p>Consulta rápida de productos y precios</p></div>'
+            f'<div class="animated-barcode-card{clase_error}" aria-label="Código de barras decorativo">'
+            '<div class="animated-bars"><div class="animated-scan-line"></div></div>'
+            '<div class="animated-barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div></div>'
+            '<div class="espera-textos">'
+            f'<div class="scan-title{" scan-title-not-found" if no_encontrado else ""}">{titulo_escaneo}</div>'
+            + ('<div class="scan-hint scan-hint-codigo">Código consultado: <strong>'
+               + html.escape(str(st.session_state.get("last_searched_barcode", ""))) + '</strong></div>'
+               if no_encontrado else
+               '<div class="scan-hint">El precio se mostrará automáticamente</div>')
+            + '</div>'
+            + ('<div class="verif-imagenes">' + "".join(imagenes) + '</div>' if imagenes else '')
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+
+
+# Script del cursor: se instala UNA vez en la página principal (fuera del
+# fragmento que se actualiza cada segundo) y desde ahí vigila el cuadro.
+from shared import ejecutar_js_en_pagina
+ejecutar_js_en_pagina(FOCO_JS, "foco_verificador_js")
 
 try:
-    user = current_user()
-except (RuntimeError, requests.RequestException):
-    # Supabase no respondió: no cerrar la sesión; reintentar en unos segundos.
-    st.warning("Sin conexión con el servidor. Reintentando… tu sesión sigue abierta.")
-    time.sleep(3)
-    st.rerun()
-
-if user:
-    # Sesión abierta: (re)escribir la cookie en cada carga. Así se guarda aunque
-    # una carga anterior se haya interrumpido, y su vencimiento se renueva.
-    _escribir_cookie(_token(user), COOKIE_SECONDS)
-elif st.session_state.logout_pendiente:
-    # Sesión cerrada con el botón: borrar la cookie mientras se muestra el login.
-    _escribir_cookie("", 0)
-    try:
-        cookies.remove(COOKIE_NAME)
-    except Exception:
-        pass
-if not user:
-    _oauth_login_notice = st.session_state.get("google_oauth_notice")
-    if _oauth_login_notice:
-        if _oauth_login_notice[0] == "success":
-            st.success(_oauth_login_notice[1])
-        else:
-            st.error(_oauth_login_notice[1])
-    st.markdown("""
-    <style>
-      .stApp { background: radial-gradient(ellipse at 4% 92%, #dce8ff 0%, transparent 46%),
-                radial-gradient(ellipse at 98% 0%, #e9f1ff 0%, transparent 40%), #f7faff; }
-      [data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none !important; }
-      .block-container { max-width: 1100px; padding-top: clamp(35px, 9vh, 115px); }
-      .login-head { text-align:center; padding: 20px 10px 15px; width:100%; margin:0 auto; }
-      .login-icon { display:inline-flex; align-items:center; justify-content:center;
-          width:70px; height:70px; border-radius:20px; background:#eaf1ff;
-          font-size:36px; margin-bottom:14px; }
-      .login-title { font-weight:800; font-size:clamp(18px, 3.1vw, 40px); color:#172f56;
-          margin:0 0 8px; line-height:1.2; white-space:nowrap; letter-spacing:-.5px; }
-      .login-subtitle { color:#71809a; font-size:15px; margin:10px 0 8px; }
-      [data-testid="stForm"] { background:white; border:1px solid #e3eaf6;
-          border-radius:22px; padding:22px 28px 30px;
-          box-shadow:0 16px 45px rgba(27, 57, 112, .11); }
-      /* Colores explícitos: Safari iOS y temas oscuros de Streamlit */
-      [data-testid="stForm"] [data-testid="stTextInput"] input {
-          background:#f9fbff !important; color:#172f56 !important;
-          -webkit-text-fill-color:#172f56 !important;
-          caret-color:#172f56 !important; border-radius:11px; min-height:46px;
-          font-size:16px !important; color-scheme:light;
-      }
-      [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
-          color:#65758d !important; -webkit-text-fill-color:#65758d !important; opacity:1 !important;
-      }
-      [data-testid="stForm"] [data-testid="stWidgetLabel"],
-      [data-testid="stForm"] [data-testid="stWidgetLabel"] p,
-      [data-testid="stForm"] label,
-      [data-testid="stForm"] [data-testid="stCheckbox"] p,
-      [data-testid="stForm"] [data-testid="stCheckbox"] label {
-          color:#172f56 !important;
-      }
-      [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
-          border-color:#2563eb !important;
-      }
-      [data-testid="stForm"] button[kind="secondaryFormSubmit"] {
-          background:linear-gradient(105deg,#1679ee,#265cf1); color:white;
-          border:0; border-radius:11px; min-height:48px; font-weight:700;
-          box-shadow:0 5px 15px rgba(24,102,232,.20); }
-      [data-testid="stForm"] button[kind="secondaryFormSubmit"]:hover {
-          color:white; background:#165cda; }
-      @media (max-width:600px) {
-          .block-container { padding:24px 12px 20px; }
-          [data-testid="stForm"] { padding:16px 18px 22px; }
-          .login-icon { width:60px; height:60px; font-size:30px; }
-          .login-title { font-size:clamp(13px, 3.4vw, 20px); letter-spacing:-.6px; }
-      }
-    </style>
-    """, unsafe_allow_html=True)
-    # Encabezado a todo el ancho para centrar el título sin saltos de línea.
-    st.markdown("""
-    <div class="login-head">
-      <div class="login-icon">🔐</div>
-      <h1 class="login-title">Sistema de Consulta de Precios</h1>
-      <p class="login-subtitle">Inicia sesión para acceder al sistema</p>
-    </div>
-    """, unsafe_allow_html=True)
-    _, centro, _ = st.columns([1, 1.05, 1], gap="small")
-    with centro:
-        with st.form("inicio_sesion"):
-            nombre = st.text_input("👤 Usuario", placeholder="Ingresa tu usuario")
-            clave = st.text_input("🔒 Contraseña", type="password", placeholder="Ingresa tu contraseña")
-            st.caption("La sesión queda abierta en este equipo hasta que pulses "
-                       "«Cerrar sesión». No se guarda la contraseña.")
-            entrar = st.form_submit_button("➜  Iniciar sesión", use_container_width=True)
-        if entrar:
-            # Límite por sesión (cubre usuarios inexistentes). El bloqueo
-            # por cuenta se guarda en Supabase dentro de intentar_login().
-            if time.monotonic() < st.session_state.bloqueo_hasta:
-                st.error("Demasiados intentos. Espera 5 minutos.")
-            else:
-                mensaje = ""
-                try:
-                    cuenta, mensaje = intentar_login(nombre, clave)
-                except RuntimeError as exc:
-                    st.error(str(exc))
-                    cuenta = None
-                valido = cuenta is not None
-                if valido:
-                    st.session_state.usuario_id = cuenta["id"]
-                    st.session_state.logout_pendiente = False
-                    st.session_state.fallos_login = 0
-                    st.session_state.logout_pendiente = False
-                    if "salir" in st.query_params:
-                        del st.query_params["salir"]
-                    # El acceso ya está validado: mostrar Consulta de Precios
-                    # inmediatamente. No bloquear la página esperando la cookie.
-                    st.rerun()
-                else:
-                    st.session_state.fallos_login += 1
-                    if st.session_state.fallos_login >= 5:
-                        st.session_state.bloqueo_hasta = time.monotonic() + 300
-                        st.session_state.fallos_login = 0
-                    if mensaje:
-                        st.error(mensaje)
-    st.stop()
-
-def _cerrar_sesion():
-    # Bloquear recuperación desde la cookie durante el cambio a login.
-    st.session_state.logout_pendiente = True
-    st.session_state.autorizar_salida_consulta = False
-    st.session_state.autorizar_cambio_movil = False
-    st.session_state.usuario_id = None
-    for permiso_temporal in ("admin_authenticated", "fuentes_admin_ok", "external_admin_ok"):
-        st.session_state[permiso_temporal] = False
-    # La cookie se borra en la siguiente carga (logout_pendiente).
-    st.rerun()
-
-# La X de consulta exige la contraseña de la cuenta administradora.
-# No cerrar ni invalidar la sesión hasta validar la clave en el servidor.
-if (solicitar_salida or st.session_state.autorizar_salida_consulta
-        or st.session_state.autorizar_cambio_movil) and es_kiosko(user):
-    # Temporizador en el servidor: no depende de que el navegador ejecute JavaScript.
-    if "inicio_autorizacion_admin" not in st.session_state:
-        st.session_state.inicio_autorizacion_admin = time.monotonic()
-
-    @st.fragment(run_every="1s")
-    def pantalla_autorizacion_admin():
-        st.markdown("""
-        <style>
-          [data-testid="stSidebar"], [data-testid="collapsedControl"],
-          [data-testid="stSidebarCollapsedControl"] {display:none!important;}
-          .block-container {max-width:580px!important; padding-top:clamp(50px,12vh,130px)!important;}
-        </style>
-        """, unsafe_allow_html=True)
-
-        # Campo fuera del formulario para detectar si el usuario comienza a escribir.
-        nombre_admin = str(st.session_state.get("salida_usuario_admin", "")).strip()
-        transcurridos = time.monotonic() - st.session_state.inicio_autorizacion_admin
-        modo_cambio = bool(st.session_state.autorizar_cambio_movil)
-        if not nombre_admin and transcurridos >= 10:
-            st.session_state.autorizar_salida_consulta = False
-            st.session_state.autorizar_cambio_movil = False
-            st.session_state.pop("inicio_autorizacion_admin", None)
-            if "salir" in st.query_params:
-                del st.query_params["salir"]
-            st.rerun(scope="app")
-
-        if modo_cambio:
-            st.title("🔐 Autorizar cambio a Escáner Móvil")
-            st.info("Para cambiar este verificador a Escáner Móvil, introduce el usuario y la contraseña del administrador.")
-        else:
-            st.title("🔐 Autorizar salida")
-            st.info("Para cerrar cualquiera de los verificadores, introduce el usuario y la contraseña del administrador.")
-        st.text_input("Usuario administrador", key="salida_usuario_admin")
-        if not nombre_admin:
-            st.caption(f"Regreso automático a Consulta de Precios en {max(0, 10 - int(transcurridos))} segundos si no escribe el usuario.")
-        with st.form("formulario_credenciales_admin_para_salir", clear_on_submit=False):
-            clave_administrador = st.text_input("Contraseña del administrador", type="password", key="salida_clave_admin")
-            if modo_cambio:
-                confirmar_salida = st.form_submit_button("Confirmar cambio a Escáner Móvil", use_container_width=True)
-                iniciar_admin = False
-            else:
-                confirmar_salida = st.form_submit_button("Confirmar salida", use_container_width=True)
-                iniciar_admin = st.form_submit_button("Iniciar sesión como administrador", use_container_width=True)
-        if confirmar_salida or iniciar_admin:
-            try:
-                # Cualquier cuenta con rol administrador; aplica el mismo bloqueo por intentos.
-                administrador, _ = intentar_login(nombre_admin, clave_administrador)
-                valido_admin = es_admin(administrador)
-            except (RuntimeError, ValueError, TypeError, KeyError):
-                administrador = None
-                valido_admin = False
-            if valido_admin:
-                st.session_state.pop("inicio_autorizacion_admin", None)
-                st.session_state.autorizar_salida_consulta = False
-                st.session_state.pop("salida_usuario_admin", None)
-                st.session_state.pop("salida_clave_admin", None)
-                if "salir" in st.query_params:
-                    del st.query_params["salir"]
-                if modo_cambio:
-                    # El cambio de página se hace después de st.navigation (más abajo).
-                    st.session_state.autorizar_cambio_movil = False
-                    st.session_state.cambio_movil_autorizado = True
-                    st.rerun(scope="app")
-                elif iniciar_admin:
-                    # Cambiar la sesión actual por la del administrador.
-                    st.session_state.usuario_id = administrador["id"]
-                    st.session_state.logout_pendiente = False
-                    st.rerun(scope="app")
-                else:
-                    _cerrar_sesion()
-            else:
-                st.error("Usuario o contraseña del administrador incorrectos. La sesión no ha cambiado.")
-        if st.button("Cancelar y volver al verificador", key="cancelar_salida_consulta"):
-            st.session_state.autorizar_salida_consulta = False
-            st.session_state.autorizar_cambio_movil = False
-            st.session_state.pop("inicio_autorizacion_admin", None)
-            if "salir" in st.query_params:
-                del st.query_params["salir"]
-            st.rerun(scope="app")
-
-    pantalla_autorizacion_admin()
-    st.stop()
-
-# La autenticación principal del administrador también autoriza los módulos
-# antiguos que antes pedían una segunda contraseña por separado.
-# Se recalcula en cada ejecución: nunca heredar permisos de otro usuario.
-es_administrador_autenticado = es_admin(user) and not user["must_change_password"]
-st.session_state["admin_authenticated"] = es_administrador_autenticado
-st.session_state["fuentes_admin_ok"] = allowed(user, "fuentes")
-st.session_state["external_admin_ok"] = allowed(user, "fuentes")
-
-# La cuenta exclusiva de consulta no necesita navegación lateral.
-es_solo_consulta = es_kiosko(user)
-# consulta_precios.py lo usa para mostrar la pantalla adaptada al alto del equipo.
-st.session_state["modo_kiosko"] = es_solo_consulta
-if not es_solo_consulta:
-    with st.sidebar:
-        st.caption("Sesión: " + user["username"])
-        # Usuarios normales y administradores salen directamente; solo la
-        # cuenta kiosko (sin barra lateral) exige la clave del administrador.
-        if st.button("🚪 Cerrar sesión", key="sidebar_logout"):
-            _cerrar_sesion()
-
-if user and user["must_change_password"]:
-    st.title("Cambio obligatorio de contraseña")
-    st.warning("Debes cambiar la contraseña inicial antes de entrar a Configuración.")
-    with st.form("cambio_inicial"):
-        a = st.text_input("Nueva contraseña", type="password")
-        b = st.text_input("Repetir contraseña", type="password")
-        guardar = st.form_submit_button("Cambiar contraseña")
-    if guardar:
-        if a != b:
-            st.error("Las contraseñas no coinciden.")
-        elif a.strip().lower() in ("admin", str(user["username"]).strip().lower()):
-            st.error("La contraseña no puede ser 'admin' ni igual a tu usuario.")
-        else:
-            try:
-                cambiar_password(user, a)
-                # La contraseña cambió: la cookie anterior deja de valer; emitir una nueva.
-                st.success("Contraseña cambiada.")
-                st.rerun()
-            except (ValueError, RuntimeError) as exc:
-                st.error(str(exc))
-    st.stop()
-
-# Mostrar el resultado al administrador al terminar de iniciar sesión.
-_oauth_notice = st.session_state.pop("google_oauth_notice", None)
-if _oauth_notice:
-    if _oauth_notice[0] == "success":
-        st.success(_oauth_notice[1])
-    else:
-        st.error(_oauth_notice[1])
-
-pagina_tradicional = st.Page("consulta_precios.py", title="Consulta de Precios", icon="🏷️", default=True)
-pagina_movil = st.Page("pages/8_Escaner_Movil.py", title="Escáner Móvil", icon="📱")
-pages = {"Principal": [pagina_tradicional, pagina_movil]}
-config = [
-    ("cargar_archivo", "pages/10_Inventarios.py", "Inventarios independientes", "📚"),
-    ("consultar_base", "pages/4_Listado_Productos.py", "Consulta de Base de Datos", "📋"),
-    ("fuentes", "pages/2_Fuentes_de_datos.py", "Administración de Fuentes de Datos", "🔌"),
-    ("fuentes", "pages/11_Seleccion_Fuentes.py", "Selección de Fuentes de Datos", "🎯"),
-    ("configurar", "pages/7_Google_Drive.py", "Conexión Google Drive / Sheets", "☁️"),
-    ("configurar", "pages/3_Consulta_Bases_de_Datos.py", "Configurar Consulta", "⚙️"),
-    ("logo", "pages/3_Logo_del_negocio.py", "Logo del Negocio", "🖼️"),
-    ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
-    ("usuarios", "pages/5_Administrador_Usuarios.py", "Administrador de Usuarios", "👥"),
-    ("ubicacion_movil", "pages/9_Ubicacion_Movil.py", "Ubicación Consulta Móvil", "📍"),
-]
-habilitadas = [st.Page(path, title=title, icon=icon)
-                for perm, path, title, icon in config if (es_administrador_autenticado if perm == "ubicacion_movil" else allowed(user, perm))]
-if habilitadas:
-    pages["Configuración"] = habilitadas
-if es_solo_consulta:
-    # Ocultar la barra por completo, incluso si el navegador recuerda que estaba abierta.
-    # No se modifica el lector ni el script de enfoque de consulta_precios.py.
-    st.markdown("""
-    <style>
-      [data-testid="stSidebar"],
-      [data-testid="collapsedControl"],
-      [data-testid="stSidebarCollapsedControl"],
-      [data-testid="stSidebarCollapseButton"] { display: none !important; }
-      [data-testid="stAppViewContainer"] { margin-left: 0 !important; }
-      /* Verificador: sin la barra superior de Streamlit (Fork / GitHub / menú). */
-      header[data-testid="stHeader"], [data-testid="stToolbar"],
-      [data-testid="stDecoration"] { display: none !important; }
-    </style>
-    """, unsafe_allow_html=True)
-    posicion_navegacion = "hidden"
-else:
-    posicion_navegacion = "sidebar"
-
-# Controles discretos, transparentes y anclados abajo a la izquierda.
-st.markdown("""<style>
-.st-key-boton_salida_x_consulta, .st-key-boton_cambio_verificador {
-    position: fixed !important;
-    bottom: max(14px, env(safe-area-inset-bottom)) !important;
-    top: auto !important;
-    z-index: 999999 !important;
-    width: 44px !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
-.st-key-boton_salida_x_consulta { left: 12px !important; }
-.st-key-boton_cambio_verificador { left: 62px !important; }
-.st-key-boton_salida_x_consulta button,
-.st-key-boton_cambio_verificador button {
-    width: 44px !important;
-    min-height: 44px !important;
-    height: 44px !important;
-    padding: 0 !important;
-    /* Fondo claro y redondo: visibles sobre cualquier contenido. */
-    background: rgba(255, 255, 255, .92) !important;
-    border: 1px solid #d5e1f1 !important;
-    border-radius: 50% !important;
-    box-shadow: 0 2px 6px rgba(16, 43, 80, .12) !important;
-    color: #12376b !important;
-    font-size: 24px !important;
-    line-height: 1 !important;
-}
-/* Streamlit dibuja el texto del botón en un <p> con su propio tamaño. */
-.st-key-boton_salida_x_consulta button p,
-.st-key-boton_cambio_verificador button p {
-    font-size: 24px !important;
-    line-height: 1 !important;
-    margin: 0 !important;
-    font-weight: 700 !important;
-}
-.st-key-boton_salida_x_consulta button:hover,
-.st-key-boton_cambio_verificador button:hover,
-.st-key-boton_salida_x_consulta button:focus,
-.st-key-boton_cambio_verificador button:focus {
-    background: #ffffff !important;
-    border: 1px solid #b9cbe6 !important;
-}
-.st-key-boton_salida_x_consulta button:focus-visible,
-.st-key-boton_cambio_verificador button:focus-visible {
-    outline: 2px solid #12376b !important;
-    outline-offset: 2px !important;
-}
-/* No reservar espacio superior para los controles flotantes. */
-.st-key-boton_salida_x_consulta, .st-key-boton_cambio_verificador { flex: 0 0 auto !important; }
-@media(max-width: 700px) {
-    .st-key-boton_salida_x_consulta,
-    .st-key-boton_cambio_verificador {
-        bottom: max(16px, env(safe-area-inset-bottom)) !important;
-    }
-}
-</style>""", unsafe_allow_html=True)
-
-# Ejecutar el navegador exactamente una vez.
-navegacion = st.navigation(pages, position=posicion_navegacion)
-if es_solo_consulta:
-    if st.button("✕", key="boton_salida_x_consulta", help="Cerrar: requiere contraseña de administrador"):
-        st.session_state.autorizar_salida_consulta = True
-        st.rerun()
-# Cambio a Escáner Móvil ya autorizado por un administrador (cuenta kiosko).
-if st.session_state.pop("cambio_movil_autorizado", False):
-    st.switch_page(pagina_movil)
-# Mostrar el botón de cambio en TODAS las sesiones, incluidas admin y consulta.
-en_movil = navegacion.title == "Escáner Móvil"
-if st.button("🏷️" if en_movil else "📱", key="boton_cambio_verificador",
-             help=("Cambiar a Consulta de Precios" if en_movil else
-                   "Cambiar a Escáner Móvil" + (": requiere contraseña de administrador"
-                                                if es_solo_consulta else ""))):
-    if es_solo_consulta and not en_movil:
-        # En el verificador (kiosko) pasar a Escáner Móvil exige clave de administrador.
-        st.session_state.autorizar_cambio_movil = True
-        st.rerun()
-    # Volver a Consulta de Precios, o cualquier cambio de otros usuarios: directo.
-    st.switch_page(pagina_tradicional if en_movil else pagina_movil)
-navegacion.run()
+    verificador()
+except Exception:
+    st.error("No se pudo iniciar la consulta de precios. Revisa la conexión y la fuente seleccionada.")
