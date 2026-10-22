@@ -12,6 +12,15 @@ from mobile_geofence import get_settings, validate_location
 from streamlit_js_eval import get_geolocation
 from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
+# Pantalla compacta: la cámara debe verse sin desplazarse.
+_sin_menu = st.session_state.get('mobile_public_access') or st.session_state.get('modo_kiosko')
+st.markdown('<style>'
+    '[data-testid="stMainBlockContainer"], .block-container {padding-top: 0.6rem !important; padding-bottom: 1rem !important;}'
+    '.movil-titulo {font-size: clamp(22px, 6.5vw, 30px); font-weight: 800; color: #0d2d58; margin: 0; line-height: 1.2;}'
+    + ('header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}'
+       if _sin_menu else '')
+    + '</style>', unsafe_allow_html=True)
+
 try:
     geo_settings = get_settings()
 except Exception:
@@ -156,7 +165,7 @@ def reiniciar():
     st.session_state.movil_camera_version+=1
 
 if not st.session_state.movil_mostrar_resultado:
-    st.title('📱 Consulta Móvil')
+    st.markdown('<div class="movil-titulo">📱 Consulta Móvil</div>', unsafe_allow_html=True)
     tab1,tab2=st.tabs(['📷 Cámara','⌨️ Bluetooth / Manual'])
     def leer_foto(archivo):
         """Lee el código de barras de una foto (cámara del navegador o del teléfono)."""

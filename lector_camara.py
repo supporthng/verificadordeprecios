@@ -19,10 +19,10 @@ LECTOR_COMPATIBLE = "https://cdn.jsdelivr.net/npm/barcode-detector@3.1.3/dist/ii
 
 LECTOR_JS = r"""
 (() => {
-  if (window.__lectorVivoV6) return;        // instalar una sola vez por ventana
+  if (window.__lectorVivoV7) return;        // instalar una sola vez por ventana
   const estado = { stream: null, video: null, elemento: null, abriendo: false,
                    ultimo: '', ultimoT: 0, abiertoEn: 0 };
-  window.__lectorVivoV6 = estado;
+  window.__lectorVivoV7 = estado;
   const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39'];
 
   // ---------- Sonido de lector ("bip") ----------
@@ -128,6 +128,8 @@ LECTOR_JS = r"""
   function detener() {
     if (estado.stream) estado.stream.getTracks().forEach((t) => t.stop());
     if (estado.video) { try { estado.video.srcObject = null; estado.video.remove(); } catch (_) {} }
+    document.querySelectorAll('#lector-vivo .linterna').forEach((b) => b.remove());
+    estado.linterna = false;
     estado.stream = null; estado.video = null; estado.elemento = null; estado.abiertoEn = 0;
     estado.candidato = null; estado.guiaT = 0;
   }
@@ -250,6 +252,22 @@ LECTOR_JS = r"""
         estado.modosEnfoque = cap.focusMode || [];
         if (estado.modosEnfoque.includes('continuous'))
           await pista.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        // Linterna: solo si el teléfono permite controlarla desde el navegador.
+        if (cap.torch) {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'linterna'; b.textContent = '🔦';
+          b.setAttribute('aria-label', 'Encender linterna');
+          b.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            try {
+              estado.linterna = !estado.linterna;
+              await pista.applyConstraints({ advanced: [{ torch: estado.linterna }] });
+              b.classList.toggle('encendida', estado.linterna);
+              b.setAttribute('aria-label', estado.linterna ? 'Apagar linterna' : 'Encender linterna');
+            } catch (_) { estado.linterna = false; b.remove(); }
+          });
+          el.appendChild(b);
+        }
       } catch (_) {}
       await detectorListo;
       estado.abiertoEn = Date.now();
@@ -296,6 +314,10 @@ CSS = """
   border-radius: 16px; overflow: hidden; background: #0b1b33;
   height: clamp(220px, 42vh, 380px); }
 .lector-vivo video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lector-vivo .linterna { position: absolute; top: 10px; right: 10px; z-index: 2;
+  width: 46px; height: 46px; border-radius: 50%; border: 0; font-size: 22px;
+  background: rgba(255,255,255,.85); box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; }
+.lector-vivo .linterna.encendida { background: #ffd43b; box-shadow: 0 0 14px 4px rgba(255,212,59,.8); }
 .lector-vivo .laser { position: absolute; left: 8%; right: 8%; top: 50%; height: 3px;
   margin-top: -1px; border-radius: 3px; background: #ff2d2d;
   box-shadow: 0 0 10px 2px rgba(255, 45, 45, .75); pointer-events: none;

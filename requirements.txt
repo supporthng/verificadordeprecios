@@ -14,3 +14,6 @@ streamlit-js-eval>=0.1.7,<1
 
 # Configuración de la ubicación autorizada (Administración)
 streamlit-geolocation>=0.0.10,<1
+
+# Generar el QR de Consulta Móvil (Python puro, sin dependencias)
+segno>=1.6,<2

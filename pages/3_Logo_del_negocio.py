@@ -38,59 +38,97 @@ try:
 except requests.RequestException:
     st.warning("No se pudo consultar el estado del QR en Supabase.")
 
+def guardar_qr(datos_png):
+    """Guarda el QR en el almacenamiento privado (crea el bucket si hace falta)."""
+    estado = requests.get(f"{url}/storage/v1/bucket/logo-negocio", headers=headers, timeout=15)
+    if estado.status_code == 404:
+        creado = requests.post(
+            f"{url}/storage/v1/bucket",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"id": "logo-negocio", "name": "logo-negocio", "public": False},
+            timeout=15,
+        )
+        if not creado.ok:
+            raise RuntimeError(f"No se pudo crear el almacenamiento (HTTP {creado.status_code}).")
+    elif not estado.ok:
+        raise RuntimeError(f"No se pudo comprobar el almacenamiento (HTTP {estado.status_code}).")
+    guardado = requests.post(
+        f"{url}/storage/v1/object/logo-negocio/qr-movil.png",
+        headers={**headers, "Content-Type": "image/png", "x-upsert": "true"},
+        data=datos_png, timeout=25,
+    )
+    if not guardado.ok:
+        raise RuntimeError(f"No se pudo guardar el QR (HTTP {guardado.status_code}): {guardado.text[:350]}")
+
+
+def generar_qr_png(enlace):
+    """Genera el QR del enlace como PNG nítido (cuadros negros sobre blanco)."""
+    import segno
+    salida = BytesIO()
+    segno.make(enlace, error="m", micro=False).save(
+        salida, kind="png", scale=12, border=3, dark="#000000", light="#ffffff")
+    return salida.getvalue()
+
+
+def enlace_consulta_movil():
+    """Dirección pública de Consulta Móvil, sin el marco de Streamlit (embed=true)."""
+    from urllib.parse import urlsplit
+    try:
+        partes = urlsplit(st.context.url)
+        base = f"{partes.scheme}://{partes.netloc}" if partes.netloc else ""
+    except (AttributeError, TypeError, ValueError):
+        base = ""
+    return (base or "https://TU-APP.streamlit.app") + "/Escaner_Movil?movil=1&embed=true"
+
+
 st.divider()
 st.subheader("📱 Código QR para consulta desde el celular")
-st.caption(
-    "Sube una imagen PNG o JPG de tu código QR. Se mostrará centrada junto "
-    "al logo en la pantalla de Consulta de Precios. "
-    "El QR debe apuntar a la dirección pública de Consulta Móvil."
-)
-archivo_qr = st.file_uploader(
-    "Imagen del código QR (PNG o JPG)",
-    type=["png", "jpg", "jpeg"],
-    key="qr_consulta_movil",
-)
-if archivo_qr is not None:
-    try:
-        with Image.open(archivo_qr) as imagen_original:
-            imagen_qr = imagen_original.convert("RGB")
-            imagen_qr.thumbnail((900, 900))
-            salida_qr = BytesIO()
-            imagen_qr.save(salida_qr, format="PNG", optimize=True)
-            datos_qr = salida_qr.getvalue()
-        st.image(datos_qr, caption="Vista previa del QR", width=210)
-        if st.button("Guardar código QR", type="primary", key="guardar_qr_movil"):
-            # El bucket logo-negocio es privado; reutilizarlo evita migraciones SQL.
-            estado = requests.get(
-                f"{url}/storage/v1/bucket/logo-negocio", headers=headers, timeout=15
-            )
-            if estado.status_code == 404:
-                creado = requests.post(
-                    f"{url}/storage/v1/bucket",
-                    headers={**headers, "Content-Type": "application/json"},
-                    json={"id": "logo-negocio", "name": "logo-negocio", "public": False},
-                    timeout=15,
-                )
-                if not creado.ok:
-                    st.error(f"No se pudo crear el almacenamiento (HTTP {creado.status_code}).")
-                    st.stop()
-            elif not estado.ok:
-                st.error(f"No se pudo comprobar el almacenamiento (HTTP {estado.status_code}).")
-                st.stop()
-            guardado = requests.post(
-                f"{url}/storage/v1/object/logo-negocio/qr-movil.png",
-                headers={**headers, "Content-Type": "image/png", "x-upsert": "true"},
-                data=datos_qr,
-                timeout=25,
-            )
-            if guardado.ok:
+
+# --- Opción recomendada: generar el QR automáticamente ---------------------
+st.markdown("**Opción recomendada: generar el QR automáticamente**")
+st.caption("La app crea el QR con la dirección de Consulta Móvil, sin el marco de "
+           "Streamlit (sin barra ni íconos). Revisa la dirección y pulsa Generar.")
+enlace_qr = st.text_input("Dirección a la que apunta el QR", value=enlace_consulta_movil(),
+                          key="enlace_qr_movil")
+if st.button("Generar y guardar QR", type="primary", key="generar_qr_movil"):
+    enlace_limpio = enlace_qr.strip()
+    if not enlace_limpio.startswith("https://") or " " in enlace_limpio:
+        st.error("La dirección debe empezar con https:// y no tener espacios.")
+    else:
+        try:
+            datos_generados = generar_qr_png(enlace_limpio)
+            guardar_qr(datos_generados)
+            st.image(datos_generados, caption="QR generado y guardado", width=210)
+            st.success("QR guardado. Aparecerá en Consulta de Precios en menos de un minuto.")
+        except ImportError:
+            st.error("Falta instalar la librería segno (requirements.txt).")
+        except (RuntimeError, requests.RequestException) as exc:
+            st.error(str(exc))
+
+# --- Alternativa: subir una imagen propia ----------------------------------
+with st.expander("O subir una imagen de QR propia"):
+    st.caption("PNG o JPG. Debe apuntar a la dirección pública de Consulta Móvil.")
+    archivo_qr = st.file_uploader(
+        "Imagen del código QR (PNG o JPG)",
+        type=["png", "jpg", "jpeg"],
+        key="qr_consulta_movil",
+    )
+    if archivo_qr is not None:
+        try:
+            with Image.open(archivo_qr) as imagen_original:
+                imagen_qr = imagen_original.convert("RGB")
+                imagen_qr.thumbnail((900, 900))
+                salida_qr = BytesIO()
+                imagen_qr.save(salida_qr, format="PNG", optimize=True)
+                datos_qr = salida_qr.getvalue()
+            st.image(datos_qr, caption="Vista previa del QR", width=210)
+            if st.button("Guardar código QR", key="guardar_qr_movil"):
+                guardar_qr(datos_qr)
                 st.success("Código QR guardado. Aparecerá junto al logo en Consulta de Precios.")
-            else:
-                st.error(f"No se pudo guardar el QR (HTTP {guardado.status_code}): {guardado.text[:350]}")
-    except (UnidentifiedImageError, OSError, ValueError):
-        st.error("La imagen del QR no es válida.")
-    except requests.RequestException as exc:
-        st.error(f"No se pudo comunicar con Supabase: {exc}")
+        except (UnidentifiedImageError, OSError, ValueError):
+            st.error("La imagen del QR no es válida.")
+        except (RuntimeError, requests.RequestException) as exc:
+            st.error(str(exc))
 
 
 archivo = st.file_uploader("Selecciona un logo JPG o PNG", type=["jpg", "jpeg", "png"])
