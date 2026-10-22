@@ -391,6 +391,11 @@ CSS += """
 # Se aplica o no según la pestaña Apariencia (ver verificador()).
 CSS_CUADRO_OCULTO = """
 <style>
+/* El contenedor sale del flujo: no ocupa espacio ni separación en pantalla. */
+.st-key-cuadro_codigo {
+    position: absolute !important; width: 0 !important; height: 0 !important;
+    overflow: visible !important; margin: 0 !important;
+}
 /* El input sigue montado y enfocable; solo se oculta visualmente.
    Nunca usar display:none, visibility:hidden ni type=hidden. */
 div[data-testid="stTextInput"] {
@@ -620,6 +625,51 @@ CSS += """<style>
   .resultado-pantalla .resultado-nombre {font-size: clamp(29px,4.2vw,58px) !important;}
   .resultado-pantalla .resultado-precio {font-size: clamp(59px,8.7vw,112px) !important;}
   .resultado-pantalla .resultado-datos {gap: 6px !important;}
+}
+</style>"""
+
+# Diseño final: TODO cabe en una pantalla (p. ej. 2connect 1024x600), sin
+# desplazarse. Va al final para prevalecer sobre las reglas anteriores.
+CSS += """<style>
+/* Elementos que solo llevan estilos o scripts: no ocupan espacio ni separación. */
+[data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"] > :not(style))) {
+  display: none !important;
+}
+/* Logo y QR */
+.verif-imagenes {
+  width: 100%; display: flex; justify-content: center; align-items: center;
+  gap: clamp(18px, 5vw, 64px); margin: 0 auto;
+}
+.verif-logo {
+  display: block; width: auto; height: auto; object-fit: contain;
+  max-width: min(32vw, 300px); max-height: clamp(48px, 22dvh, 190px);
+}
+.verif-qr { display: flex; flex-direction: column; align-items: center; gap: 3px;
+  color: #64748b; font-weight: 600; font-size: clamp(11px, 1.9dvh, 14px); }
+.verif-qr img {
+  display: block; width: auto; height: auto; object-fit: contain;
+  max-height: clamp(48px, 20dvh, 170px); background: #fff; padding: 4px; border-radius: 8px;
+}
+/* Pantallas horizontales bajas (verificadores): repartir la altura con dvh. */
+@media (orientation: landscape) and (max-height: 820px) {
+  [data-testid="stMainBlockContainer"], .block-container {
+    padding-top: 1.2dvh !important; padding-bottom: 0 !important;
+  }
+  [data-testid="stVerticalBlock"] { gap: 2.4dvh !important; }
+  .main-header {
+    min-height: 0 !important; padding: 2.8dvh 40px !important;
+    margin: 0 0 0.5dvh !important; border-radius: 14px !important;
+  }
+  .main-header h1 { font-size: clamp(18px, 6.6dvh, 46px) !important; }
+  .main-header p { font-size: clamp(11px, 3dvh, 20px) !important; margin-top: 0.6dvh !important; }
+  .animated-barcode-card {
+    width: min(560px, 60vw) !important; margin: 0 auto !important;
+    padding: 1.6dvh 18px 1dvh !important;
+  }
+  .animated-bars { height: clamp(40px, 19dvh, 160px) !important; }
+  .animated-barcode-caption { font-size: clamp(11px, 2.3dvh, 16px) !important; margin-top: 0.8dvh !important; }
+  .scan-title { font-size: clamp(17px, 6.2dvh, 42px) !important; margin: 0 !important; }
+  .scan-hint { font-size: clamp(11px, 3dvh, 20px) !important; margin: 0.4dvh auto 0 !important; }
 }
 </style>"""
 
@@ -876,28 +926,20 @@ def verificador():
         # Logo y QR según Apariencia, centrados respecto a TODA la pantalla.
         imagenes = []
         if vista["mostrar_logo"]:
-            logo = imagen_base64("logo.png", 220, 130)
+            logo = imagen_base64("logo.png", 440, 260)
             if logo:
                 imagenes.append(
-                    '<img alt="Logo de la empresa" style="display:block;width:auto;'
-                    'max-width:220px;height:auto;max-height:130px;object-fit:contain;" '
+                    '<img class="verif-logo" alt="Logo de la empresa" '
                     f'src="data:image/png;base64,{logo}">')
         if vista["mostrar_qr"]:
-            qr = imagen_base64("qr-movil.png", 130, 130)
+            qr = imagen_base64("qr-movil.png", 300, 300)
             if qr:
                 imagenes.append(
-                    '<div style="text-align:center;color:#64748b;font-size:13px;font-weight:600">'
-                    '<img alt="Código QR para consultar desde el celular" style="display:block;'
-                    'width:auto;max-width:130px;height:auto;max-height:130px;margin:0 auto 4px;'
-                    f'background:#fff;padding:4px;border-radius:8px" src="data:image/png;base64,{qr}">'
-                    'Consulta desde tu celular</div>')
+                    '<div class="verif-qr"><img alt="Código QR para consultar desde el celular" '
+                    f'src="data:image/png;base64,{qr}"><span>Consulta desde tu celular</span></div>')
         if imagenes:
-            st.markdown(
-                '<div style="width:100%;display:flex;justify-content:center;'
-                'align-items:center;gap:clamp(18px,4vw,48px);flex-wrap:wrap;margin:10px auto 0;">'
-                + "".join(imagenes) + '</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown('<div class="verif-imagenes">' + "".join(imagenes) + '</div>',
+                        unsafe_allow_html=True)
 
 
 
