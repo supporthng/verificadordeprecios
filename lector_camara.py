@@ -19,10 +19,10 @@ LECTOR_COMPATIBLE = "https://cdn.jsdelivr.net/npm/barcode-detector@3.1.3/dist/ii
 
 LECTOR_JS = r"""
 (() => {
-  if (window.__lectorVivoV4) return;        // instalar una sola vez por ventana
+  if (window.__lectorVivoV5) return;        // instalar una sola vez por ventana
   const estado = { stream: null, video: null, elemento: null, abriendo: false,
                    ultimo: '', ultimoT: 0, abiertoEn: 0 };
-  window.__lectorVivoV4 = estado;
+  window.__lectorVivoV5 = estado;
   const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39'];
 
   // ---------- Sonido de lector ("bip") ----------
@@ -77,8 +77,12 @@ LECTOR_JS = r"""
   setInterval(() => {
     if (!estado.stream || !estado.abiertoEn) return;
     const seg = (Date.now() - estado.abiertoEn) / 1000;
-    avisar(seg < 2.5 ? '📏 Distancia ideal: 15–20 cm del código'
-                     : GUIA[Math.floor((seg - 2.5) / 2.2) % GUIA.length]);
+    const reciente = estado.guiaT && Date.now() - estado.guiaT < 700;
+    if (reciente && estado.guia === 'enfocando') avisar('🔎 Enfocando… mantén el teléfono quieto');
+    else if (reciente && estado.guia === 'acercar') avisar('🔍 Acerca el código: se ve muy pequeño');
+    else if (reciente && estado.guia === 'centrar') avisar('🎯 Pon el código sobre la línea roja');
+    else avisar(seg < 2.5 ? '📏 Distancia ideal: 15–20 cm del código'
+                          : GUIA[Math.floor((seg - 2.5) / 2.2) % GUIA.length]);
     mostrarSonido();
   }, 500);
 
@@ -125,6 +129,7 @@ LECTOR_JS = r"""
     if (estado.stream) estado.stream.getTracks().forEach((t) => t.stop());
     if (estado.video) { try { estado.video.srcObject = null; estado.video.remove(); } catch (_) {} }
     estado.stream = null; estado.video = null; estado.elemento = null; estado.abiertoEn = 0;
+    estado.candidato = null; estado.guiaT = 0;
   }
 
   function leido(texto) {
@@ -139,6 +144,30 @@ LECTOR_JS = r"""
     enviar(texto);
   }
 
+  // ---------- Validaciones: solo lecturas seguras ----------
+  const CONFIRMACIONES = 3;        // mismo código en 3 imágenes seguidas
+  const ESPERA_INICIAL = 1000;     // ms: dejar que la cámara enfoque al abrir
+  // Dígito verificador de EAN-13, EAN-8 y UPC-A (detecta lecturas erróneas).
+  function digitoValido(valor, formato) {
+    if (!['ean_13', 'ean_8', 'upc_a'].includes(formato)) return true;
+    if (!/^\d+$/.test(valor) || ![8, 12, 13].includes(valor.length)) return false;
+    const d = valor.split('').map(Number), control = d.pop();
+    let suma = 0;
+    d.reverse().forEach((x, k) => { suma += x * (k % 2 === 0 ? 3 : 1); });
+    return (10 - (suma % 10)) % 10 === control;
+  }
+  // ¿El código está sobre la línea roja (centro de la imagen) y se ve suficientemente grande?
+  function revisarPosicion(c, w, h) {
+    const b = c.boundingBox;
+    if (!b || !b.width) return 'ok';
+    const cy = h / 2, cx = b.x + b.width / 2;
+    if (Math.max(b.width, b.height) < 0.12 * Math.min(w, h)) return 'acercar';
+    const cruzaLaser = b.y <= cy + 0.12 * h && b.y + b.height >= cy - 0.12 * h;
+    if (!cruzaLaser || cx < 0.15 * w || cx > 0.85 * w) return 'centrar';
+    return 'ok';
+  }
+  function guiar(tipo) { estado.guia = tipo; estado.guiaT = Date.now(); }
+
   // Analiza la imagen unas 8 veces por segundo (sin saturar el teléfono).
   const lienzo = document.createElement('canvas');
   async function ciclo(stream) {
@@ -146,15 +175,35 @@ LECTOR_JS = r"""
     const v = estado.video;
     try {
       if (v && v.readyState >= 2 && v.videoWidth) {
-        const escala = Math.min(1, 1280 / v.videoWidth);
-        lienzo.width = Math.round(v.videoWidth * escala);
-        lienzo.height = Math.round(v.videoHeight * escala);
-        lienzo.getContext('2d', { willReadFrequently: true }).drawImage(v, 0, 0, lienzo.width, lienzo.height);
-        const r = await estado.detector.detect(lienzo);
-        if (estado.stream === stream && r && r.length && r[0].rawValue) { leido(String(r[0].rawValue).trim()); return; }
+        const escala = Math.min(1, 1280 / Math.max(v.videoWidth, v.videoHeight));
+        const w = lienzo.width = Math.round(v.videoWidth * escala);
+        const h = lienzo.height = Math.round(v.videoHeight * escala);
+        lienzo.getContext('2d', { willReadFrequently: true }).drawImage(v, 0, 0, w, h);
+        const r = (await estado.detector.detect(lienzo)) || [];
+        if (estado.stream !== stream) return;
+        const ahora = Date.now();
+        // Elegir el código válido que esté sobre la línea roja.
+        let elegido = null, motivo = null;
+        for (const c of r) {
+          const valor = String(c.rawValue || '').trim();
+          if (!valor || !digitoValido(valor, c.format)) continue;
+          const pos = revisarPosicion(c, w, h);
+          if (pos === 'ok') { elegido = valor; break; }
+          motivo = motivo || pos;
+        }
+        if (elegido && ahora - estado.abiertoEn >= ESPERA_INICIAL) {
+          const cand = estado.candidato;
+          if (cand && cand.valor === elegido && ahora - cand.t < 800) { cand.veces++; cand.t = ahora; }
+          else estado.candidato = { valor: elegido, veces: 1, t: ahora };
+          if (estado.candidato.veces >= CONFIRMACIONES) { leido(elegido); return; }
+          guiar('enfocando');
+        } else if (motivo) {
+          guiar(motivo);
+        }
+        if (estado.candidato && ahora - estado.candidato.t > 800) estado.candidato = null;
       }
     } catch (_) {}
-    setTimeout(() => ciclo(stream), 120);
+    setTimeout(() => ciclo(stream), 110);
   }
 
   async function abrir(el) {
