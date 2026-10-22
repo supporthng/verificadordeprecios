@@ -421,9 +421,18 @@ div[data-testid="stTextInput"] input {
 # Cuadro visible: centrado y discreto. Sigue recibiendo el foco igual.
 CSS_CUADRO_VISIBLE = """
 <style>
+/* Flota abajo al centro, encima de la pantalla adaptable. */
+.st-key-cuadro_codigo {
+    position: fixed !important; z-index: 1000 !important;
+    left: 50% !important; transform: translateX(-50%) !important;
+    bottom: clamp(8px, 2dvh, 20px) !important; top: auto !important;
+    width: min(420px, 50vw) !important;
+}
+/* Reservar ese espacio abajo para que no tape el logo ni el QR. */
+.pantalla-espera.pantalla-fija { padding-bottom: calc(clamp(10px, 2.4dvh, 26px) + 58px) !important; }
 div[data-testid="stTextInput"] {
     max-width: 460px !important;
-    margin: 0 auto 6px !important;
+    margin: 0 auto !important;
 }
 div[data-testid="stTextInput"] input {
     text-align: center !important;
@@ -629,65 +638,95 @@ CSS += """<style>
 }
 </style>"""
 
-# Diseño final: TODO cabe en una pantalla (p. ej. 2connect 1024x600), sin
-# desplazarse. Va al final para prevalecer sobre las reglas anteriores.
-CSS += """<style>
-/* Elementos que solo llevan estilos o scripts: no ocupan espacio ni separación. */
+# Diseño adaptable: la pantalla de espera y la del precio se ajustan SOLAS al
+# alto del equipo (2connect, monitor, tableta). Va al final para prevalecer.
+CSS += """
+<style>
+/* Elementos que solo llevan estilos o scripts: no ocupan espacio. */
 [data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"] > :not(style))) {
   display: none !important;
 }
-/* Streamlit pone márgenes negativos (-1rem) a los bloques de texto: subían el
-   bloque siguiente y el código de barras se montaba sobre la franja azul.
-   Se anulan aquí; la separación la da el espacio entre elementos (gap). */
-[data-testid="stElementContainer"]:has(.main-header, .animated-barcode-card, .scan-title, .verif-imagenes),
-[data-testid="stElementContainer"]:has(.main-header, .animated-barcode-card, .scan-title, .verif-imagenes) [data-testid="stMarkdown"],
-[data-testid="stElementContainer"]:has(.main-header, .animated-barcode-card, .scan-title, .verif-imagenes) [data-testid="stMarkdownContainer"] {
-  margin-top: 0 !important;
-  margin-bottom: 0 !important;
+/* Sin los márgenes negativos que Streamlit pone a los bloques de texto. */
+[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla),
+[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla) [data-testid="stMarkdown"],
+[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla) [data-testid="stMarkdownContainer"] {
+  margin-top: 0 !important; margin-bottom: 0 !important;
 }
-.main-header, .animated-barcode-card { position: relative; }
-/* Logo y QR */
-.verif-imagenes {
-  width: 100%; display: flex; justify-content: center; align-items: center;
-  gap: clamp(18px, 5vw, 64px); margin: 0 auto;
+
+/* ---------- Pantalla de espera ---------- */
+.pantalla-espera {
+  display: flex; flex-direction: column; align-items: center;
+  gap: clamp(8px, 2.4dvh, 26px);
+  width: 100%; box-sizing: border-box;
+  height: calc(100dvh - 7rem); min-height: 420px;   /* usuarios con menú */
+}
+/* Verificador (kiosko): ocupa exactamente la pantalla, sin depender de Streamlit. */
+.pantalla-espera.pantalla-fija {
+  position: fixed; inset: 0; z-index: 50;
+  height: auto; min-height: 0; background: #f4f8ff;
+  padding: clamp(8px, 2dvh, 22px) clamp(10px, 2vw, 28px) clamp(10px, 2.4dvh, 26px);
+}
+.pantalla-espera > * { flex: 0 0 auto; }
+.pantalla-espera .main-header {
+  width: 100%; box-sizing: border-box; margin: 0 !important; min-height: 0 !important;
+  padding: clamp(8px, 2.6dvh, 28px) 40px !important; border-radius: 14px !important;
+}
+.pantalla-espera .main-header h1 {
+  font-size: clamp(18px, 6.2dvh, 46px) !important; line-height: 1.15 !important;
+  margin: 0 !important; padding: 0 !important;
+}
+.pantalla-espera .main-header p {
+  font-size: clamp(11px, 2.8dvh, 20px) !important; margin: 0.5dvh 0 0 !important;
+}
+.pantalla-espera .animated-barcode-card {
+  width: min(560px, 60vw) !important; margin: 0 !important; box-sizing: border-box;
+  padding: 1.4dvh 18px 1dvh !important;
+}
+.pantalla-espera .animated-bars { height: clamp(34px, 17dvh, 160px) !important; }
+.pantalla-espera .animated-barcode-caption {
+  font-size: clamp(10px, 2.2dvh, 16px) !important; margin-top: 0.6dvh !important;
+}
+.pantalla-espera .espera-textos { text-align: center; }
+.pantalla-espera .scan-title {
+  font-size: clamp(16px, 5.8dvh, 42px) !important; line-height: 1.1 !important; margin: 0 !important;
+}
+.pantalla-espera .scan-hint {
+  font-size: clamp(11px, 2.8dvh, 20px) !important; margin: 0.4dvh 0 0 !important;
+}
+/* Logo y QR: usan TODO el alto que queda (se encogen o agrandan solos). */
+.pantalla-espera .verif-imagenes {
+  flex: 1 1 0; min-height: 0; width: 100%;
+  display: flex; justify-content: center; align-items: center;
+  gap: clamp(18px, 6vw, 80px);
 }
 .verif-logo {
   display: block; width: auto; height: auto; object-fit: contain;
-  max-width: min(32vw, 300px); max-height: clamp(48px, 22dvh, 190px);
+  max-width: min(34vw, 320px); max-height: min(100%, 260px);
 }
-.verif-qr { display: flex; flex-direction: column; align-items: center; gap: 0.8dvh; }
+.verif-qr {
+  height: 100%; min-height: 0; max-height: 300px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.8dvh;
+}
+.verif-qr img {
+  display: block; flex: 0 1 auto; min-height: 0; width: auto; height: auto;
+  max-height: calc(100% - 2.6em); max-width: min(30vw, 240px); object-fit: contain;
+  background: #fff; padding: 4px; border-radius: 8px; box-sizing: border-box;
+}
 /* Etiqueta destacada bajo el QR. */
 .verif-qr span {
-  display: inline-block; background: #0757d4; color: #ffffff;
+  flex: 0 0 auto; display: inline-block; background: #0757d4; color: #ffffff;
   font-weight: 800; letter-spacing: .02em; white-space: nowrap;
-  font-size: clamp(13px, 2.9dvh, 20px); line-height: 1.15;
+  font-size: clamp(12px, 2.8dvh, 20px); line-height: 1.15;
   padding: 0.6dvh 12px; border-radius: 999px;
   box-shadow: 0 2px 6px rgba(7, 87, 212, .25);
 }
-.verif-qr img {
-  display: block; width: auto; height: auto; object-fit: contain;
-  max-height: clamp(48px, 20dvh, 170px); background: #fff; padding: 4px; border-radius: 8px;
-}
-/* Pantallas horizontales bajas (verificadores): repartir la altura con dvh. */
-@media (orientation: landscape) and (max-height: 820px) {
-  [data-testid="stMainBlockContainer"], .block-container {
-    padding-top: 1.2dvh !important; padding-bottom: 0 !important;
-  }
-  [data-testid="stVerticalBlock"] { gap: 2.4dvh !important; }
-  .main-header {
-    min-height: 0 !important; padding: 2.8dvh 40px !important;
-    margin: 0 0 0.5dvh !important; border-radius: 14px !important;
-  }
-  .main-header h1 { font-size: clamp(18px, 6.6dvh, 46px) !important; }
-  .main-header p { font-size: clamp(11px, 3dvh, 20px) !important; margin-top: 0.6dvh !important; }
-  .animated-barcode-card {
-    width: min(560px, 60vw) !important; margin: 0 auto !important;
-    padding: 1.6dvh 18px 1dvh !important;
-  }
-  .animated-bars { height: clamp(40px, 19dvh, 160px) !important; }
-  .animated-barcode-caption { font-size: clamp(11px, 2.3dvh, 16px) !important; margin-top: 0.8dvh !important; }
-  .scan-title { font-size: clamp(17px, 6.2dvh, 42px) !important; margin: 0 !important; }
-  .scan-hint { font-size: clamp(11px, 3dvh, 20px) !important; margin: 0.4dvh auto 0 !important; }
+
+/* ---------- Pantalla del precio (kiosko): también a pantalla completa ---------- */
+.resultado-pantalla.pantalla-fija {
+  position: fixed !important; z-index: 50;
+  inset: clamp(6px, 1.5dvh, 16px) clamp(8px, 1.5vw, 20px) !important;
+  width: auto !important; height: auto !important; min-height: 0 !important; margin: 0 !important;
 }
 </style>"""
 
@@ -845,6 +884,8 @@ def verificador():
     # Mantener el textbox nativo montado en TODOS los estados, incluso mientras
     # se muestra un producto o un código inexistente. Al desmontarlo, Streamlit
     # pierde el foco y puede descartar la siguiente lectura del escáner.
+    # app.py indica si la sesión es la cuenta del verificador (kiosko).
+    modo_kiosko = bool(st.session_state.get("modo_kiosko", False))
     try:
         from apariencia import obtener as obtener_apariencia
         vista = obtener_apariencia()
@@ -873,7 +914,7 @@ def verificador():
         price = float(product["price"])
 
         st.markdown(
-            '<div class="resultado-pantalla">'
+            f'<div class="resultado-pantalla{" pantalla-fija" if modo_kiosko else ""}">'
             '<div class="resultado-datos">'
             '<div class="resultado-etiqueta">PRODUCTO</div>'
             f'<div class="resultado-nombre">{name}</div>'
@@ -910,41 +951,14 @@ def verificador():
             unsafe_allow_html=True,
         )
     else:
-        st.markdown(
-            '<div class="main-header">'
-            '<h1>🏷️ CONSULTA DE PRECIOS</h1>'
-            '<p>Consulta rápida de productos y precios</p>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        # Pantalla de espera como UN solo bloque. En el verificador (kiosko)
+        # ocupa exactamente el alto de la pantalla y se adapta sola: la franja,
+        # el código de barras y el título toman su tamaño, y el logo y el QR
+        # se agrandan o encogen para llenar el espacio que queda.
+        no_encontrado = st.session_state.not_found
+        clase_error = " barcode-not-found" if no_encontrado else ""
+        titulo_escaneo = "PRODUCTO NO ENCONTRADO" if no_encontrado else "ESCANEA TU CÓDIGO AQUÍ"
 
-        # Codigo de barras animado: solo decorativo, no altera la lectura real.
-        # Estado de error: barras rojas inmóviles, sin línea de escaneo.
-        # Estado normal: conserva la animación original.
-        clase_error = " barcode-not-found" if st.session_state.not_found else ""
-        st.markdown(f"""
-        <div class="animated-barcode-card{clase_error}" aria-label="Código de barras decorativo">
-          <div class="animated-bars"><div class="animated-scan-line"></div></div>
-          <div class="animated-barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Conservar exactamente la misma pantalla de espera si no se encuentra
-        # el producto; solo cambia el mensaje principal durante 3 segundos.
-        titulo_escaneo = (
-            "PRODUCTO NO ENCONTRADO"
-            if st.session_state.not_found
-            else "ESCANEA TU CÓDIGO AQUÍ"
-        )
-        st.markdown(
-            f'<div class="scan-title{" scan-title-not-found" if st.session_state.not_found else ""}">{titulo_escaneo}</div>'
-            + ('' if st.session_state.not_found else
-               '<div class="scan-hint">El precio se mostrará automáticamente</div>'),
-            unsafe_allow_html=True,
-        )
-
-
-        # Logo y QR según Apariencia, centrados respecto a TODA la pantalla.
         imagenes = []
         if vista["mostrar_logo"]:
             logo = imagen_base64("logo.png", 440, 260)
@@ -958,9 +972,24 @@ def verificador():
                 imagenes.append(
                     '<div class="verif-qr"><img alt="Código QR para consultar desde el celular" '
                     f'src="data:image/png;base64,{qr}"><span>📱 Consulta desde tu celular</span></div>')
-        if imagenes:
-            st.markdown('<div class="verif-imagenes">' + "".join(imagenes) + '</div>',
-                        unsafe_allow_html=True)
+
+        clase_pantalla = "pantalla-espera" + (" pantalla-fija" if modo_kiosko else "")
+        st.markdown(
+            f'<div class="{clase_pantalla}">'
+            '<div class="main-header"><h1>🏷️ CONSULTA DE PRECIOS</h1>'
+            '<p>Consulta rápida de productos y precios</p></div>'
+            f'<div class="animated-barcode-card{clase_error}" aria-label="Código de barras decorativo">'
+            '<div class="animated-bars"><div class="animated-scan-line"></div></div>'
+            '<div class="animated-barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div></div>'
+            '<div class="espera-textos">'
+            f'<div class="scan-title{" scan-title-not-found" if no_encontrado else ""}">{titulo_escaneo}</div>'
+            + ('' if no_encontrado else
+               '<div class="scan-hint">El precio se mostrará automáticamente</div>')
+            + '</div>'
+            + ('<div class="verif-imagenes">' + "".join(imagenes) + '</div>' if imagenes else '')
+            + '</div>',
+            unsafe_allow_html=True,
+        )
 
 
 
