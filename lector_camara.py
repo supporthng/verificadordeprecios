@@ -15,9 +15,35 @@ LIBRERIA = "https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrco
 
 LECTOR_JS = r"""
 (() => {
-  if (window.__lectorVivo) return;          // instalar una sola vez por ventana
+  if (window.__lectorVivoV2) return;        // instalar una sola vez por ventana
   const estado = { lector: null, elemento: null, abriendo: false, ultimo: '', ultimoT: 0 };
-  window.__lectorVivo = estado;
+  window.__lectorVivoV2 = estado;
+
+  // ---------- Sonido de lector ("bip") ----------
+  // Los navegadores (sobre todo iPhone) solo permiten sonido después de que la
+  // persona toca la pantalla: el primer toque desbloquea el audio.
+  let audio = null;
+  function prepararAudio() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume();
+    } catch (_) {}
+  }
+  ['pointerdown', 'touchend', 'click', 'keydown'].forEach((ev) =>
+    document.addEventListener(ev, prepararAudio, { capture: true, passive: true }));
+  function pitido() {
+    try {
+      prepararAudio();
+      if (!audio) return;
+      const t = audio.currentTime, osc = audio.createOscillator(), vol = audio.createGain();
+      osc.type = 'square'; osc.frequency.setValueAtTime(2700, t);     // tono típico de lector
+      vol.gain.setValueAtTime(0.0001, t);
+      vol.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
+      vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+      osc.connect(vol); vol.connect(audio.destination);
+      osc.start(t); osc.stop(t + 0.15);
+    } catch (_) {}
+  }
 
   function cargarLibreria() {
     if (window.Html5Qrcode || (window.__Html5QrcodeLibrary__ && window.__Html5QrcodeLibrary__.Html5Qrcode))
@@ -57,26 +83,63 @@ LECTOR_JS = r"""
     if (l) { try { await l.stop(); } catch (_) {} try { l.clear(); } catch (_) {} }
   }
 
+  // ---------- Enfoque ----------
+  // 1) Enfoque continuo. 2) Un poco de zoom (1.6x) si la cámara lo permite: así
+  // el teléfono se aleja del código y entra en su distancia de enfoque (los
+  // iPhone recientes no enfocan bien muy de cerca). 3) Tocar la imagen = enfocar.
+  async function mejorarEnfoque(lector) {
+    try {
+      const cap = (lector.getRunningTrackCapabilities && lector.getRunningTrackCapabilities()) || {};
+      const ajustes = [];
+      if ((cap.focusMode || []).includes('continuous')) ajustes.push({ focusMode: 'continuous' });
+      if (cap.zoom && cap.zoom.max > 1) ajustes.push({ zoom: Math.min(cap.zoom.max, Math.max(cap.zoom.min || 1, 1.6)) });
+      if (ajustes.length) await lector.applyVideoConstraints({ advanced: ajustes });
+      estado.capacidades = cap;
+    } catch (_) {}
+  }
+  document.addEventListener('click', async (e) => {
+    if (!estado.lector || !e.target.closest || !e.target.closest('#lector-vivo')) return;
+    const modos = (estado.capacidades && estado.capacidades.focusMode) || [];
+    try {
+      if (modos.includes('single-shot')) {
+        await estado.lector.applyVideoConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+        setTimeout(() => estado.lector && modos.includes('continuous') &&
+          estado.lector.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {}), 1500);
+      }
+    } catch (_) {}
+  }, true);
+
   async function abrir(el) {
     estado.abriendo = true;
     try {
       await cargarLibreria();
       const L = lib(); const F = L.Html5QrcodeSupportedFormats;
-      const formatos = F ? [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39,
-                            F.CODE_93, F.ITF, F.CODABAR, F.QR_CODE].filter((x) => x !== undefined) : undefined;
+      // Solo los formatos de productos: menos formatos = lectura más rápida.
+      const formatos = F ? [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39]
+                            .filter((x) => x !== undefined) : undefined;
       const lector = new L.Html5Qrcode('lector-vivo', {
         verbose: false, formatsToSupport: formatos,
         experimentalFeatures: { useBarCodeDetectorIfSupported: true },
       });
       estado.lector = lector; estado.elemento = el;
-      avisar('Apunta la cámara al código de barras…');
+      avisar('Apunta al código de barras · toca la imagen para enfocar');
       await lector.start(
         { facingMode: 'environment' },
-        { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * 0.85), height: Math.floor(Math.min(h * 0.5, w * 0.45)) }) },
+        {
+          fps: 15,
+          // Franja horizontal (forma de código de barras): menos imagen que analizar.
+          qrbox: (w, h) => ({ width: Math.floor(w * 0.82), height: Math.floor(Math.min(h * 0.4, w * 0.34)) }),
+          // Resolución HD (el enfoque y el zoom se aplican al abrir: mejorarEnfoque).
+          videoConstraints: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 }, height: { ideal: 720 },
+          },
+        },
         (texto) => {
           const ahora = Date.now();
           if (texto === estado.ultimo && ahora - estado.ultimoT < 3000) return;  // evitar duplicados
           estado.ultimo = texto; estado.ultimoT = ahora;
+          pitido();
           if (navigator.vibrate) navigator.vibrate(80);
           avisar('Código leído: ' + texto + ' · consultando…');
           estado.pausaHasta = ahora + 2500;   // no reabrir mientras se muestra el resultado
@@ -84,6 +147,7 @@ LECTOR_JS = r"""
         },
         () => {}
       );
+      await mejorarEnfoque(lector);
     } catch (e) {
       await detener();
       avisar('No se pudo abrir la cámara. Revisa el permiso o usa la opción de foto de abajo.');
