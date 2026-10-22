@@ -1,4 +1,5 @@
 import html
+import re
 import base64
 from io import BytesIO
 from PIL import Image, ImageOps
@@ -673,6 +674,9 @@ CSS += """<style>
 }
 </style>"""
 
+# Cada <style> debe empezar en SU PROPIA línea: si queda pegado a un </style>
+# anterior, Markdown lo trata como texto y puede mostrar el CSS en pantalla.
+CSS = re.sub(r"</style>\s*<style>", "</style>\n<style>", CSS)
 st.markdown(CSS, unsafe_allow_html=True)
 
 
