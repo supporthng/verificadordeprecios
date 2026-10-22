@@ -439,6 +439,8 @@ st.session_state["external_admin_ok"] = allowed(user, "fuentes")
 
 # La cuenta exclusiva de consulta no necesita navegación lateral.
 es_solo_consulta = es_kiosko(user)
+# consulta_precios.py lo usa para mostrar la pantalla adaptada al alto del equipo.
+st.session_state["modo_kiosko"] = es_solo_consulta
 if not es_solo_consulta:
     with st.sidebar:
         st.caption("Sesión: " + user["username"])
