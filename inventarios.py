@@ -1,14 +1,15 @@
 import requests
 import pandas as pd
 import streamlit as st
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 PAGE_SIZE = 1000
 
 
 def api(method, table, params=None, data=None, admin=True, prefer=None):
     url = str(st.secrets['SUPABASE_URL']).rstrip('/')
-    key = str(st.secrets['SUPABASE_SERVICE_ROLE_KEY' if admin else 'SUPABASE_ANON_KEY'])
-    headers = {'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}
+    key = clave_servidor() if admin else clave_publica()
+    headers = cabeceras(key, {'Content-Type': 'application/json'})
     if prefer:
         headers['Prefer'] = prefer
     r = requests.request(method, f'{url}/rest/v1/{table}', params=params, json=data,

@@ -48,7 +48,7 @@ def load_env():
 
 load_env()
 URL = os.getenv('SUPABASE_URL', '').rstrip('/')
-KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
+KEY = (os.getenv('SUPABASE_SECRET_KEY', '') or os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')).strip()
 PASSWORD = os.getenv('BRIDGE_PASSWORD', '')
 ALLOWED = [ipaddress.ip_network(s.strip(), strict=False)
            for s in os.getenv('ALLOWED_NETWORKS', '192.168.1.0/24').split(',') if s.strip()]
@@ -85,8 +85,13 @@ WIZARD_REQUESTS = {}  # db request id -> discovery request id
 def supabase(method, path, **kwargs):
     if not URL or not KEY:
         raise RuntimeError('Configura SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en .env')
+    # Claves legacy (JWT, 'eyJ...') van también en Authorization; las nuevas
+    # (sb_secret_...) solo en apikey: Supabase retira las legacy a fines de 2026.
+    auth = {'apikey': KEY}
+    if KEY.startswith('eyJ'):
+        auth['Authorization'] = f'Bearer {KEY}'
     response = requests.request(method, f'{URL}/rest/v1/{path}',
-                                headers={'apikey': KEY, 'Authorization': f'Bearer {KEY}',
+                                headers={**auth,
                                          'Content-Type': 'application/json', 'Prefer': 'return=representation'},
                                 timeout=12, **kwargs)
     logger.info('Supabase %s %s: HTTP %s; tipo=%s; bytes=%s',

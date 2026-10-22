@@ -2,17 +2,18 @@
 import math
 import requests
 import streamlit as st
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 TABLE = 'mobile_geo_settings'
 
 def _request(method, params=None, payload=None):
     base = str(st.secrets.get('SUPABASE_URL', '')).rstrip('/')
-    key = str(st.secrets.get('SUPABASE_SERVICE_ROLE_KEY', ''))
+    key = clave_servidor()
     if not base or not key:
-        raise RuntimeError('Configura SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.')
+        raise RuntimeError('Configura SUPABASE_URL y SUPABASE_SECRET_KEY (o SUPABASE_SERVICE_ROLE_KEY).')
     r = requests.request(method, base + '/rest/v1/' + TABLE,
         params=params, json=payload, timeout=12,
-        headers={'apikey': key, 'Authorization': 'Bearer ' + key,
+        headers={**cabeceras(key),
                  'Content-Type': 'application/json',
                  'Prefer': 'resolution=merge-duplicates,return=representation'})
     r.raise_for_status()

@@ -10,6 +10,7 @@ import inspect
 import pandas as pd
 import requests
 import streamlit as st
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 # El enfoque se aplica directamente al textbox nativo de Streamlit.
 # No utiliza declare_component ni iframe: evita el RuntimeError anterior.
@@ -61,16 +62,15 @@ FOCO_JS = r"""
 """
 
 SUPABASE_URL = str(st.secrets.get("SUPABASE_URL", "")).strip().rstrip("/")
-SUPABASE_ANON_KEY = str(st.secrets.get("SUPABASE_ANON_KEY", "")).strip()
+SUPABASE_ANON_KEY = clave_publica()
 
-SUPABASE_SERVICE_ROLE_KEY = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+SUPABASE_SERVICE_ROLE_KEY = clave_servidor()
 
 def admin_api(method, table, params=None, payload=None):
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        raise RuntimeError("Falta SUPABASE_SERVICE_ROLE_KEY en Secrets.")
+        raise RuntimeError("Falta SUPABASE_SECRET_KEY (o SUPABASE_SERVICE_ROLE_KEY) en Secrets.")
     headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+        **cabeceras(SUPABASE_SERVICE_ROLE_KEY),
         "Content-Type": "application/json",
         "Prefer": "return=representation",
     }
@@ -114,8 +114,7 @@ def cargar_imagen(nombre):
         response = requests.get(
             f"{SUPABASE_URL}/storage/v1/object/logo-negocio/{nombre}",
             headers={
-                "apikey": SUPABASE_SERVICE_ROLE_KEY,
-                "Authorization": "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+                **cabeceras(SUPABASE_SERVICE_ROLE_KEY),
             },
             timeout=8,
         )

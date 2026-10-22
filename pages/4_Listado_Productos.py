@@ -4,6 +4,7 @@ import math
 import requests
 import streamlit as st
 from auth_usuarios import current_user, allowed
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 st.title('📋 Consulta de Base de Datos')
 st.caption('Consulta cualquier fuente configurada sin cambiar la fuente activa del lector.')
@@ -13,11 +14,11 @@ if not user or not allowed(user, 'consultar_base'):
     st.stop()
 
 URL = str(st.secrets.get('SUPABASE_URL', '')).strip().rstrip('/')
-KEY = str(st.secrets.get('SUPABASE_SERVICE_ROLE_KEY', '')).strip()
+KEY = clave_servidor()
 if not URL or not KEY:
     st.error('Faltan credenciales de Supabase en Secrets.')
     st.stop()
-HEADERS = {'apikey': KEY, 'Authorization': 'Bearer ' + KEY,
+HEADERS = {**cabeceras(KEY),
            'Content-Type': 'application/json', 'Prefer': 'return=representation'}
 
 def api(method, table, params=None, data=None, extra_headers=None):

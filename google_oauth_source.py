@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from cryptography.fernet import Fernet
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 API_TIMEOUT=30
 SCOPES="https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly"
@@ -37,9 +38,9 @@ def cipher():
 
 def api(method,table,params=None,payload=None):
     url=setting("SUPABASE_URL").rstrip("/")+"/rest/v1/"+table
-    key=setting("SUPABASE_SERVICE_ROLE_KEY")
+    key=clave_servidor()
     response=requests.request(method,url,params=params,json=payload,timeout=API_TIMEOUT,
-        headers={"apikey":key,"Authorization":"Bearer "+key,
+        headers={**cabeceras(key),
                  "Content-Type":"application/json","Prefer":"return=representation"})
     response.raise_for_status()
     return response.json() if response.content else []
@@ -103,14 +104,13 @@ def save_token(data,old=None):
     if not refresh: raise RuntimeError("Google no devolvió permiso de acceso persistente. Desconecta la app en tu cuenta Google y vuelve a autorizar.")
     encrypted=cipher().encrypt(refresh.encode()).decode()
     url = setting("SUPABASE_URL").rstrip("/") + "/rest/v1/google_price_source"
-    key = setting("SUPABASE_SERVICE_ROLE_KEY")
+    key = clave_servidor()
     response = requests.post(
         url,
         params={"on_conflict": "id"},
         json={"id": 1, "refresh_token_encrypted": encrypted},
         headers={
-            "apikey": key,
-            "Authorization": "Bearer " + key,
+            **cabeceras(key),
             "Content-Type": "application/json",
             "Prefer": "resolution=merge-duplicates,return=representation",
         },

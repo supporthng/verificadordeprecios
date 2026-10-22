@@ -53,11 +53,16 @@ Copia `.streamlit-secrets-EJEMPLO.toml` en *App settings > Secrets* y completa:
 | Clave | Obligatoria | Uso |
 |---|---|---|
 | `SUPABASE_URL` | Sí | Dirección del proyecto Supabase |
-| `SUPABASE_ANON_KEY` | Sí | Clave pública (lectura del inventario activo) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Sí | Clave privada del servidor. **Nunca en GitHub** |
+| `SUPABASE_PUBLISHABLE_KEY` (o `SUPABASE_ANON_KEY`) | Sí | Clave pública (lectura del inventario activo) |
+| `SUPABASE_SECRET_KEY` (o `SUPABASE_SERVICE_ROLE_KEY`) | Sí | Clave privada del servidor. **Nunca en GitHub** |
 | `SESSION_COOKIE_KEY` | Sí | Firma de la cookie "Recordar mi acceso" |
 | `ADMIN_INITIAL_PASSWORD` | Primera vez | Crea el usuario `admin` si no hay usuarios |
 | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `GOOGLE_TOKEN_ENCRYPTION_KEY` | Solo para Google | Conexión a Drive / Sheets |
+
+> **Claves de Supabase:** la app acepta las claves nuevas (`sb_publishable_...`,
+> `sb_secret_...`) y las legacy (`anon` / `service_role`, que empiezan con `eyJ`).
+> Supabase retira las legacy a fines de 2026: conviene usar las nuevas. Todo el
+> manejo de claves está en `supabase_cliente.py`.
 
 ### 3. Primer acceso
 Entra con el usuario `admin` y la clave de `ADMIN_INITIAL_PASSWORD`. La app obliga a

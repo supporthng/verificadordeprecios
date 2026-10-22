@@ -8,9 +8,10 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 import streamlit as st
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 URL = str(st.secrets.get("SUPABASE_URL", "")).rstrip("/")
-KEY = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", ""))
+KEY = clave_servidor()
 PERMISOS = {
     "cargar_archivo": "Cargar Archivo Local",
     "consultar_base": "Consulta de Base de Datos",
@@ -28,7 +29,7 @@ _HASH_FICTICIO = None
 
 def diagnostico_secrets():
     """Explica qué falta en Secrets mostrando solo NOMBRES de claves, nunca valores."""
-    faltan = [n for n, v in (("SUPABASE_URL", URL), ("SUPABASE_SERVICE_ROLE_KEY", KEY)) if not v.strip()]
+    faltan = [n for n, v in (("SUPABASE_URL", URL), ("SUPABASE_SECRET_KEY (o SUPABASE_SERVICE_ROLE_KEY)", KEY)) if not v.strip()]
     try:
         nombres = sorted(str(k) for k in st.secrets.keys())
     except Exception:  # sin archivo de Secrets, st.secrets.keys() falla
@@ -49,7 +50,7 @@ def api(method, params=None, data=None):
     if not URL or not KEY:
         raise RuntimeError(diagnostico_secrets())
     r = requests.request(method, URL + "/rest/v1/verificador_usuarios",
-        headers={"apikey": KEY, "Authorization": "Bearer " + KEY,
+        headers={**cabeceras(KEY),
                  "Content-Type": "application/json", "Prefer": "return=representation"},
         params=params, json=data, timeout=15)
     if not r.ok:

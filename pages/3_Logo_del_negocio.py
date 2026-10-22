@@ -3,22 +3,23 @@ from io import BytesIO
 
 import requests
 import streamlit as st
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 from PIL import Image, UnidentifiedImageError
 
 st.title("🖼️ Logo del negocio")
 st.write("Sube el logo que aparecera debajo del lector de codigo en Consulta de precios.")
 
 url = str(st.secrets.get("SUPABASE_URL", "")).strip().rstrip("/")
-key = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+key = clave_servidor()
 # Acceso por permisos del usuario que inició sesión (sin contraseña aparte).
 from auth_usuarios import require
 require("logo")
 
 if not url or not key:
-    st.error("Falta configurar SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY.")
+    st.error("Falta configurar SUPABASE_URL o SUPABASE_SECRET_KEY (o SUPABASE_SERVICE_ROLE_KEY).")
     st.stop()
 
-headers = {"apikey": key, "Authorization": "Bearer " + key}
+headers = cabeceras(key)
 
 # La sección QR se muestra antes del logo para que sea fácil encontrarla.
 st.info("📱 CONFIGURACIÓN DEL CÓDIGO QR: sube aquí la imagen para consultar desde tu celular.")
@@ -179,18 +180,18 @@ if archivo_imagen is not None and codigo_imagen.isdigit() and 8 <= len(codigo_im
         datos_imagen = buffer_producto.getvalue()
         st.image(datos_imagen, caption=f"Imagen para {codigo_imagen}", width=200)
         if st.button("Guardar fotografía del producto", type="primary"):
-            cabeceras = {"apikey": key, "Authorization": "Bearer " + key}
+            cabeceras_img = cabeceras(key)
             try:
-                bucket_check = requests.get(f"{url}/storage/v1/bucket/imagenes-productos", headers=cabeceras, timeout=12)
+                bucket_check = requests.get(f"{url}/storage/v1/bucket/imagenes-productos", headers=cabeceras_img, timeout=12)
                 if bucket_check.status_code == 404:
-                    created = requests.post(f"{url}/storage/v1/bucket", headers={**cabeceras,"Content-Type":"application/json"}, json={"id":"imagenes-productos","name":"imagenes-productos","public":False}, timeout=12)
+                    created = requests.post(f"{url}/storage/v1/bucket", headers={**cabeceras_img,"Content-Type":"application/json"}, json={"id":"imagenes-productos","name":"imagenes-productos","public":False}, timeout=12)
                     if not created.ok:
                         st.error(f"No se pudo crear el almacenamiento (HTTP {created.status_code}).")
                         st.stop()
                 elif not bucket_check.ok:
                     st.error(f"No se pudo comprobar el almacenamiento (HTTP {bucket_check.status_code}).")
                     st.stop()
-                response = requests.post(f"{url}/storage/v1/object/imagenes-productos/{codigo_imagen}.png", headers={**cabeceras,"Content-Type":"image/png","x-upsert":"true"}, data=datos_imagen, timeout=20)
+                response = requests.post(f"{url}/storage/v1/object/imagenes-productos/{codigo_imagen}.png", headers={**cabeceras_img,"Content-Type":"image/png","x-upsert":"true"}, data=datos_imagen, timeout=20)
                 if response.ok:
                     st.success("Fotografía guardada. La imagen aparecerá en las próximas consultas (la caché puede tardar hasta 24 horas en renovarse).")
                 else:

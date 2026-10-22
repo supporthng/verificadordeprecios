@@ -2,6 +2,7 @@
 import requests
 import streamlit as st
 from auth_usuarios import current_user, allowed
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 user = current_user()
 if not user or not allowed(user, 'fuentes'):
@@ -11,11 +12,11 @@ if not user or not allowed(user, 'fuentes'):
 st.title('🎯 Selección de Fuentes de Datos')
 st.caption('Elige la fuente que utilizará Consulta de Precios. No elimina ni mezcla inventarios.')
 url = str(st.secrets.get('SUPABASE_URL', '')).strip().rstrip('/')
-key = str(st.secrets.get('SUPABASE_SERVICE_ROLE_KEY', '')).strip()
+key = clave_servidor()
 if not url or not key:
     st.error('Falta configurar Supabase en Streamlit Secrets.')
     st.stop()
-headers = {'apikey': key, 'Authorization': 'Bearer ' + key,
+headers = {**cabeceras(key),
            'Content-Type': 'application/json', 'Prefer': 'return=representation'}
 
 def api(method, table, params=None, data=None):

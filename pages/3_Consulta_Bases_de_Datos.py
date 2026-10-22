@@ -14,16 +14,17 @@ st.caption('Detecta servidores, bases, tablas y columnas. La consulta de precios
 
 # La sesión principal controla el acceso; no pedir otra contraseña.
 from auth_usuarios import current_user, allowed
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 _usuario_modulo = current_user()
 if not _usuario_modulo or not allowed(_usuario_modulo, "configurar"):
     st.error("No tienes permiso para acceder a esta sección.")
     st.stop()
 
 url = str(st.secrets.get('SUPABASE_URL', '')).rstrip('/')
-key = str(st.secrets.get('SUPABASE_SERVICE_ROLE_KEY', ''))
+key = clave_servidor()
 if not url or not key:
-    st.error('Falta SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY en Secrets.'); st.stop()
-headers = {'apikey': key, 'Authorization': 'Bearer ' + key,
+    st.error('Falta SUPABASE_URL o SUPABASE_SECRET_KEY (o SUPABASE_SERVICE_ROLE_KEY) en Secrets.'); st.stop()
+headers = {**cabeceras(key),
            'Content-Type': 'application/json', 'Prefer': 'return=representation'}
 
 def api(method, table, *, params=None, data=None):

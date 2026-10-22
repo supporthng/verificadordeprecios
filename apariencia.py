@@ -7,6 +7,7 @@ import json
 
 import requests
 import streamlit as st
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 ARCHIVO = "logo-negocio/apariencia.json"
 PREDETERMINADA = {
@@ -18,10 +19,10 @@ PREDETERMINADA = {
 
 def _conexion():
     url = str(st.secrets.get("SUPABASE_URL", "")).strip().rstrip("/")
-    key = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+    key = clave_servidor()
     if not url or not key:
-        raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY en Secrets.")
-    return url, {"apikey": key, "Authorization": "Bearer " + key}
+        raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SECRET_KEY (o SUPABASE_SERVICE_ROLE_KEY) en Secrets.")
+    return url, cabeceras(key)
 
 
 @st.cache_data(ttl=10, show_spinner=False)

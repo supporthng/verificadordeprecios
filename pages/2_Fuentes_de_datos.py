@@ -15,17 +15,17 @@ st.caption('Configura y detecta servidores sin modificar el verificador de Supab
 
 # Acceso por permisos del usuario que inició sesión (sin contraseña aparte).
 from auth_usuarios import require
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 require('fuentes')
 
 URL = str(st.secrets.get('SUPABASE_URL', '')).strip().rstrip('/')
-KEY = str(st.secrets.get('SUPABASE_SERVICE_ROLE_KEY', '')).strip()
+KEY = clave_servidor()
 if not URL or not KEY:
-    st.error('Configura SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en Streamlit Secrets.')
+    st.error('Configura SUPABASE_URL y SUPABASE_SECRET_KEY (o SUPABASE_SERVICE_ROLE_KEY) en Streamlit Secrets.')
     st.stop()
 
 HEADERS = {
-    'apikey': KEY,
-    'Authorization': 'Bearer ' + KEY,
+    **cabeceras(KEY),
     'Content-Type': 'application/json',
     'Prefer': 'return=representation',
 }

@@ -10,6 +10,7 @@ import time
 # Verificación previa: nunca consultar productos sin autorización geográfica.
 from mobile_geofence import get_settings, validate_location
 from streamlit_js_eval import get_geolocation
+from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 try:
     geo_settings = get_settings()
@@ -72,10 +73,10 @@ for key, default in {'movil_codigo':'','movil_ultimo':'','movil_producto':None,'
 
 def api(method,table,params=None,payload=None):
     url=str(st.secrets.get('SUPABASE_URL','')).rstrip('/')
-    key=str(st.secrets.get('SUPABASE_SERVICE_ROLE_KEY',''))
+    key=clave_servidor()
     if not url or not key: raise RuntimeError('Faltan credenciales de Supabase.')
     r=requests.request(method,url+'/rest/v1/'+table,params=params,json=payload,
-        headers={'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'return=representation'},timeout=15)
+        headers={**cabeceras(key),'Content-Type':'application/json','Prefer':'return=representation'},timeout=15)
     r.raise_for_status()
     return r.json()
 
