@@ -141,6 +141,8 @@ st.session_state.setdefault("usuario_id", None)
 # Impide que una cookie antigua reactive la sesión inmediatamente después de salir.
 st.session_state.setdefault("logout_pendiente", False)
 st.session_state.setdefault("autorizar_salida_consulta", False)
+# Cuenta kiosko: pasar a Escáner Móvil también exige clave de administrador.
+st.session_state.setdefault("autorizar_cambio_movil", False)
 st.session_state.setdefault("fallos_login", 0)
 st.session_state.setdefault("bloqueo_hasta", 0.0)
 
@@ -333,6 +335,7 @@ def _cerrar_sesion():
     # Bloquear recuperación desde la cookie durante el cambio a login.
     st.session_state.logout_pendiente = True
     st.session_state.autorizar_salida_consulta = False
+    st.session_state.autorizar_cambio_movil = False
     st.session_state.usuario_id = None
     for permiso_temporal in ("admin_authenticated", "fuentes_admin_ok", "external_admin_ok"):
         st.session_state[permiso_temporal] = False
@@ -341,7 +344,8 @@ def _cerrar_sesion():
 
 # La X de consulta exige la contraseña de la cuenta administradora.
 # No cerrar ni invalidar la sesión hasta validar la clave en el servidor.
-if (solicitar_salida or st.session_state.autorizar_salida_consulta) and es_kiosko(user):
+if (solicitar_salida or st.session_state.autorizar_salida_consulta
+        or st.session_state.autorizar_cambio_movil) and es_kiosko(user):
     # Temporizador en el servidor: no depende de que el navegador ejecute JavaScript.
     if "inicio_autorizacion_admin" not in st.session_state:
         st.session_state.inicio_autorizacion_admin = time.monotonic()
@@ -359,22 +363,32 @@ if (solicitar_salida or st.session_state.autorizar_salida_consulta) and es_kiosk
         # Campo fuera del formulario para detectar si el usuario comienza a escribir.
         nombre_admin = str(st.session_state.get("salida_usuario_admin", "")).strip()
         transcurridos = time.monotonic() - st.session_state.inicio_autorizacion_admin
+        modo_cambio = bool(st.session_state.autorizar_cambio_movil)
         if not nombre_admin and transcurridos >= 10:
             st.session_state.autorizar_salida_consulta = False
+            st.session_state.autorizar_cambio_movil = False
             st.session_state.pop("inicio_autorizacion_admin", None)
             if "salir" in st.query_params:
                 del st.query_params["salir"]
             st.rerun(scope="app")
 
-        st.title("🔐 Autorizar salida")
-        st.info("Para cerrar cualquiera de los verificadores, introduce el usuario y la contraseña del administrador.")
+        if modo_cambio:
+            st.title("🔐 Autorizar cambio a Escáner Móvil")
+            st.info("Para cambiar este verificador a Escáner Móvil, introduce el usuario y la contraseña del administrador.")
+        else:
+            st.title("🔐 Autorizar salida")
+            st.info("Para cerrar cualquiera de los verificadores, introduce el usuario y la contraseña del administrador.")
         st.text_input("Usuario administrador", key="salida_usuario_admin")
         if not nombre_admin:
             st.caption(f"Regreso automático a Consulta de Precios en {max(0, 10 - int(transcurridos))} segundos si no escribe el usuario.")
         with st.form("formulario_credenciales_admin_para_salir", clear_on_submit=False):
             clave_administrador = st.text_input("Contraseña del administrador", type="password", key="salida_clave_admin")
-            confirmar_salida = st.form_submit_button("Confirmar salida", use_container_width=True)
-            iniciar_admin = st.form_submit_button("Iniciar sesión como administrador", use_container_width=True)
+            if modo_cambio:
+                confirmar_salida = st.form_submit_button("Confirmar cambio a Escáner Móvil", use_container_width=True)
+                iniciar_admin = False
+            else:
+                confirmar_salida = st.form_submit_button("Confirmar salida", use_container_width=True)
+                iniciar_admin = st.form_submit_button("Iniciar sesión como administrador", use_container_width=True)
         if confirmar_salida or iniciar_admin:
             try:
                 # Cualquier cuenta con rol administrador; aplica el mismo bloqueo por intentos.
@@ -390,7 +404,12 @@ if (solicitar_salida or st.session_state.autorizar_salida_consulta) and es_kiosk
                 st.session_state.pop("salida_clave_admin", None)
                 if "salir" in st.query_params:
                     del st.query_params["salir"]
-                if iniciar_admin:
+                if modo_cambio:
+                    # El cambio de página se hace después de st.navigation (más abajo).
+                    st.session_state.autorizar_cambio_movil = False
+                    st.session_state.cambio_movil_autorizado = True
+                    st.rerun(scope="app")
+                elif iniciar_admin:
                     # Cambiar la sesión actual por la del administrador.
                     st.session_state.usuario_id = administrador["id"]
                     st.session_state.logout_pendiente = False
@@ -401,6 +420,7 @@ if (solicitar_salida or st.session_state.autorizar_salida_consulta) and es_kiosk
                 st.error("Usuario o contraseña del administrador incorrectos. La sesión no ha cambiado.")
         if st.button("Cancelar y volver al verificador", key="cancelar_salida_consulta"):
             st.session_state.autorizar_salida_consulta = False
+            st.session_state.autorizar_cambio_movil = False
             st.session_state.pop("inicio_autorizacion_admin", None)
             if "salir" in st.query_params:
                 del st.query_params["salir"]
@@ -559,10 +579,19 @@ if es_solo_consulta:
     if st.button("✕", key="boton_salida_x_consulta", help="Cerrar: requiere contraseña de administrador"):
         st.session_state.autorizar_salida_consulta = True
         st.rerun()
+# Cambio a Escáner Móvil ya autorizado por un administrador (cuenta kiosko).
+if st.session_state.pop("cambio_movil_autorizado", False):
+    st.switch_page(pagina_movil)
 # Mostrar el botón de cambio en TODAS las sesiones, incluidas admin y consulta.
-if True:
-    en_movil = navegacion.title == "Escáner Móvil"
-    if st.button("🏷️" if en_movil else "📱", key="boton_cambio_verificador",
-                 help="Cambiar a Consulta de Precios" if en_movil else "Cambiar a Escáner Móvil"):
-        st.switch_page(pagina_tradicional if en_movil else pagina_movil)
+en_movil = navegacion.title == "Escáner Móvil"
+if st.button("🏷️" if en_movil else "📱", key="boton_cambio_verificador",
+             help=("Cambiar a Consulta de Precios" if en_movil else
+                   "Cambiar a Escáner Móvil" + (": requiere contraseña de administrador"
+                                                if es_solo_consulta else ""))):
+    if es_solo_consulta and not en_movil:
+        # En el verificador (kiosko) pasar a Escáner Móvil exige clave de administrador.
+        st.session_state.autorizar_cambio_movil = True
+        st.rerun()
+    # Volver a Consulta de Precios, o cualquier cambio de otros usuarios: directo.
+    st.switch_page(pagina_tradicional if en_movil else pagina_movil)
 navegacion.run()
