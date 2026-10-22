@@ -514,21 +514,29 @@ st.markdown("""<style>
     min-height: 44px !important;
     height: 44px !important;
     padding: 0 !important;
-    background: transparent !important;
-    border: 0 !important;
-    border-radius: 8px !important;
-    box-shadow: none !important;
+    /* Fondo claro y redondo: visibles sobre cualquier contenido. */
+    background: rgba(255, 255, 255, .92) !important;
+    border: 1px solid #d5e1f1 !important;
+    border-radius: 50% !important;
+    box-shadow: 0 2px 6px rgba(16, 43, 80, .12) !important;
     color: #12376b !important;
-    font-size: 25px !important;
+    font-size: 24px !important;
     line-height: 1 !important;
+}
+/* Streamlit dibuja el texto del botón en un <p> con su propio tamaño. */
+.st-key-boton_salida_x_consulta button p,
+.st-key-boton_cambio_verificador button p {
+    font-size: 24px !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    font-weight: 700 !important;
 }
 .st-key-boton_salida_x_consulta button:hover,
 .st-key-boton_cambio_verificador button:hover,
 .st-key-boton_salida_x_consulta button:focus,
 .st-key-boton_cambio_verificador button:focus {
-    background: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
+    background: #ffffff !important;
+    border: 1px solid #b9cbe6 !important;
 }
 .st-key-boton_salida_x_consulta button:focus-visible,
 .st-key-boton_cambio_verificador button:focus-visible {
@@ -554,7 +562,7 @@ if es_solo_consulta:
 # Mostrar el botón de cambio en TODAS las sesiones, incluidas admin y consulta.
 if True:
     en_movil = navegacion.title == "Escáner Móvil"
-    if st.button("▥" if en_movil else "▯", key="boton_cambio_verificador",
+    if st.button("🏷️" if en_movil else "📱", key="boton_cambio_verificador",
                  help="Cambiar a Consulta de Precios" if en_movil else "Cambiar a Escáner Móvil"):
         st.switch_page(pagina_tradicional if en_movil else pagina_movil)
 navegacion.run()
