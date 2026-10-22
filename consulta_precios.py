@@ -693,6 +693,7 @@ CSS += """
 .pantalla-espera .scan-hint {
   font-size: clamp(11px, 2.8dvh, 20px) !important; margin: 0.4dvh 0 0 !important;
 }
+.pantalla-espera .scan-hint-codigo { color: #b91c1c !important; font-weight: 700; }
 /* Logo y QR: usan TODO el alto que queda (se encogen o agrandan solos). */
 .pantalla-espera .verif-imagenes {
   flex: 1 1 0; min-height: 0; width: 100%;
@@ -910,7 +911,8 @@ def verificador():
 
     if product is not None:
         name = html.escape(str(product["name"]))
-        barcode = html.escape(str(product["barcode"]))
+        # Mostrar el código que se escaneó (lo que el cliente consultó).
+        barcode = html.escape(str(st.session_state.get("last_searched_barcode") or product["barcode"]))
         price = float(product["price"])
 
         st.markdown(
@@ -918,7 +920,7 @@ def verificador():
             '<div class="resultado-datos">'
             '<div class="resultado-etiqueta">PRODUCTO</div>'
             f'<div class="resultado-nombre">{name}</div>'
-            f'<div class="resultado-codigo">Código: {barcode}</div>'
+            f'<div class="resultado-codigo">Código consultado: <strong>{barcode}</strong></div>'
             '</div>'
             '<div class="resultado-precio-panel">'
             '<div class="resultado-precio-etiqueta">PRECIO DE VENTA</div>'
@@ -983,7 +985,9 @@ def verificador():
             '<div class="animated-barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div></div>'
             '<div class="espera-textos">'
             f'<div class="scan-title{" scan-title-not-found" if no_encontrado else ""}">{titulo_escaneo}</div>'
-            + ('' if no_encontrado else
+            + ('<div class="scan-hint scan-hint-codigo">Código consultado: <strong>'
+               + html.escape(str(st.session_state.get("last_searched_barcode", ""))) + '</strong></div>'
+               if no_encontrado else
                '<div class="scan-hint">El precio se mostrará automáticamente</div>')
             + '</div>'
             + ('<div class="verif-imagenes">' + "".join(imagenes) + '</div>' if imagenes else '')

@@ -22,42 +22,48 @@ if st.session_state.get('mobile_public_access') and not geo_settings['enabled']:
     st.error('Consulta Móvil pública no disponible: activa y configura la zona autorizada en Administración.')
     st.stop()
 
+GEO_VALIDEZ_SEGUNDOS = 600  # la ubicación autorizada vale 10 minutos
+
 if geo_settings['enabled']:
-    # Un componente distinto al anterior solicita el GPS desde el navegador.
-    # No se autoriza el escáner hasta recibir coordenadas verificables.
-    st.session_state['mobile_geo_allowed'] = False
-    st.caption('📍 Para consultar precios, permite el acceso a tu ubicación precisa.')
-    # Montar el componente GPS desde el primer render. El navegador puede
-    # exigir pulsar su propio control azul para conceder el permiso.
-    st.markdown('**👇 Pulsa el botón azul de ubicación que aparece debajo para activar el GPS.**')
-    st.caption('Si el navegador ya autorizó la ubicación, el escáner se abrirá automáticamente.')
-    try:
-        # get_geolocation usa navigator.geolocation del navegador y entrega
-        # un objeto con coords.latitude, coords.longitude y coords.accuracy.
-        response = get_geolocation()
-    except Exception as exc:
-        st.error('No se pudo iniciar la geolocalización del navegador.')
-        st.caption(f'Detalle técnico: {type(exc).__name__}: {exc}')
-        st.stop()
-    if not response:
-        st.info('Esperando ubicación. Si no aparece el permiso, pulsa el botón azul de GPS situado arriba.')
-        st.stop()
-    if isinstance(response, dict) and response.get('error'):
-        st.error('El navegador no pudo obtener la ubicación: ' + str(response['error']))
-        st.stop()
-    coords = response.get('coords', response) if isinstance(response, dict) else {}
-    if not isinstance(coords, dict):
-        coords = {}
-    current_location = {name: coords.get(name) for name in ('latitude', 'longitude', 'accuracy')}
-    if any(value is None for value in current_location.values()):
-        st.warning('El navegador no devolvió coordenadas completas. Activa la ubicación precisa y vuelve a intentarlo.')
-        st.stop()
-    authorized, geo_message = validate_location(current_location, geo_settings)
-    if not authorized:
-        st.warning(geo_message)
-        st.stop()
-    st.success(geo_message)
-    st.session_state['mobile_geo_allowed'] = True
+    if st.session_state.get('geo_ok_hasta', 0) > time.time():
+        # Ubicación ya verificada: no volver a pedir el GPS (libera la cámara).
+        st.session_state['mobile_geo_allowed'] = True
+        st.caption('📍 ' + st.session_state.get('geo_mensaje', 'Ubicación autorizada.'))
+    else:
+        # Un componente distinto al anterior solicita el GPS desde el navegador.
+        # No se autoriza el escáner hasta recibir coordenadas verificables.
+        st.session_state['mobile_geo_allowed'] = False
+        try:
+            # get_geolocation usa navigator.geolocation del navegador y entrega
+            # un objeto con coords.latitude, coords.longitude y coords.accuracy.
+            response = get_geolocation()
+        except Exception as exc:
+            st.error('No se pudo iniciar la geolocalización del navegador.')
+            st.caption(f'Detalle técnico: {type(exc).__name__}: {exc}')
+            st.stop()
+        if not response:
+            st.info('📍 Verificando tu ubicación… Si el navegador lo pide, toca «Permitir».')
+            st.stop()
+        if isinstance(response, dict) and response.get('error'):
+            st.error('El navegador no pudo obtener la ubicación: ' + str(response['error']))
+            st.stop()
+        coords = response.get('coords', response) if isinstance(response, dict) else {}
+        if not isinstance(coords, dict):
+            coords = {}
+        current_location = {name: coords.get(name) for name in ('latitude', 'longitude', 'accuracy')}
+        if any(value is None for value in current_location.values()):
+            st.warning('El navegador no devolvió coordenadas completas. Activa la ubicación precisa y vuelve a intentarlo.')
+            st.stop()
+        authorized, geo_message = validate_location(current_location, geo_settings)
+        if not authorized:
+            st.warning(geo_message)
+            st.stop()
+        # Autorizada: recordarla y recargar SIN el componente GPS. Ese componente
+        # vuelve a pedir la ubicación en cada recarga (bucle continuo) y esas
+        # solicitudes cancelaban el aviso de permiso de la CÁMARA.
+        st.session_state['geo_ok_hasta'] = time.time() + GEO_VALIDEZ_SEGUNDOS
+        st.session_state['geo_mensaje'] = geo_message
+        st.rerun()
 else:
     st.session_state['mobile_geo_allowed'] = True
 
@@ -119,7 +125,7 @@ st.markdown("""<style>
 .mobile-result {background:#f3f8ff;color:#092851;border-radius:18px;padding:20px 15px;margin:14px 0 22px;box-sizing:border-box}
 .mobile-result .product-label {font-size:14px;font-weight:800;letter-spacing:.07em;color:#436186}
 .mobile-result .product-name {font-size:clamp(27px,7vw,48px);font-weight:900;line-height:1.15;overflow-wrap:anywhere;margin:10px 0}
-.mobile-result .product-code {font-size:15px;color:#526986;margin-bottom:18px;overflow-wrap:anywhere}
+.mobile-result .product-code {font-size:clamp(16px,4.5vw,20px);color:#34507a;margin-bottom:18px;overflow-wrap:anywhere}
 .mobile-result .price-panel {background:linear-gradient(110deg,#0b60df,#0649bc);border-radius:15px;padding:20px 14px;color:white;text-align:center}
 .mobile-result .price-label {font-size:15px;font-weight:800;letter-spacing:.04em;color:white}
 .mobile-result .price-value {font-size:clamp(38px,10vw,70px);font-weight:900;line-height:1.2;color:white;overflow-wrap:anywhere}
@@ -167,12 +173,12 @@ if not st.session_state.movil_mostrar_resultado:
         except Exception: st.error('No se pudo procesar la fotografía.')
 
     with tab1:
-        st.caption('Fotografía el código de barras para consultar el precio.')
-        photo=st.camera_input('Tomar foto del código de barras',key=f"movil_camara_{st.session_state.movil_camera_version}")
-        if photo:
-            leer_foto(photo)
-        # Alternativa sin permiso de cámara del navegador: abre la cámara del teléfono.
-        st.markdown('**¿No se activa la cámara?** Usa la cámara del teléfono:')
+        # Lectura EN VIVO: al detectar el código consulta sola, sin tomar foto.
+        from lector_camara import mostrar_lector
+        clave_camara=f"camara_codigo_{st.session_state.movil_camera_version}"
+        mostrar_lector(clave_camara, lambda: consultar(st.session_state.get(clave_camara,'')))
+        # Alternativa: foto con la cámara del teléfono (no depende del permiso del navegador).
+        st.markdown('**¿No se activa la cámara?** Toma una foto con la cámara del teléfono:')
         archivo=st.file_uploader('📸 Tomar foto con la cámara del teléfono',type=['jpg','jpeg','png'],
                                  key=f"movil_archivo_{st.session_state.movil_camera_version}",
                                  help='En iPhone/Android elige «Tomar foto» o «Cámara».')
@@ -229,11 +235,12 @@ def resultado():
         product=st.session_state.movil_producto
         if product:
             name=html.escape(str(product.get('name') or 'Sin descripción'))
-            barcode=html.escape(str(product.get('barcode') or st.session_state.movil_ultimo))
+            # Siempre el código que se escaneó/escribió (lo que el cliente consultó).
+            barcode=html.escape(str(st.session_state.movil_ultimo or product.get('barcode') or ''))
             try: price=f"RD$ {float(product.get('price')):,.2f}"
             except (ValueError,TypeError): price=html.escape(str(product.get('price') or 'No disponible'))
             st.markdown('<div class="mobile-result"><div class="product-label">PRODUCTO</div>'
-                        f'<div class="product-name">{name}</div><div class="product-code">Código: {barcode}</div>'
+                        f'<div class="product-name">{name}</div><div class="product-code">Código consultado: <strong>{barcode}</strong></div>'
                         '<div class="price-panel"><div class="price-label">PRECIO DE VENTA</div>'
                         f'<div class="price-value">{price}</div></div></div>',unsafe_allow_html=True)
         elif not st.session_state.movil_job:
@@ -243,7 +250,7 @@ def resultado():
                 '<div class="barcode-card"><div class="barcode-bars"></div>'
                 '<div class="barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div></div>'
                 '<div class="scan-title">PRODUCTO NO ENCONTRADO</div>'
-                '<div class="scan-hint">El precio se mostrará automáticamente</div>'
+                f'<div class="scan-hint">Código consultado: <strong>{barcode}</strong></div>'
                 '</div>', unsafe_allow_html=True)
 resultado()
 if st.session_state.movil_mostrar_resultado:
