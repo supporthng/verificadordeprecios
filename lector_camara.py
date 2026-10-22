@@ -15,35 +15,74 @@ LIBRERIA = "https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrco
 
 LECTOR_JS = r"""
 (() => {
-  if (window.__lectorVivoV2) return;        // instalar una sola vez por ventana
+  if (window.__lectorVivoV3) return;        // instalar una sola vez por ventana
   const estado = { lector: null, elemento: null, abriendo: false, ultimo: '', ultimoT: 0 };
-  window.__lectorVivoV2 = estado;
+  window.__lectorVivoV3 = estado;
 
   // ---------- Sonido de lector ("bip") ----------
-  // Los navegadores (sobre todo iPhone) solo permiten sonido después de que la
-  // persona toca la pantalla: el primer toque desbloquea el audio.
-  let audio = null;
-  function prepararAudio() {
-    try {
-      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-      if (audio.state === 'suspended') audio.resume();
-    } catch (_) {}
+  // Se reproduce como ARCHIVO de audio (<audio>): en iPhone suena aunque el
+  // teléfono esté en modo silencio (Web Audio queda mudo con el interruptor).
+  // Los navegadores exigen un primer toque en la pantalla para permitir sonido.
+  function crearBip() {
+    const sr = 22050, n = Math.floor(sr * 0.12), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const txt = (o, t) => { for (let k = 0; k < t.length; k++) v.setUint8(o + k, t.charCodeAt(k)); };
+    txt(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); txt(8, 'WAVE'); txt(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    txt(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let k = 0; k < n; k++) {
+      const env = Math.min(1, k / 150, (n - k) / 300);                 // sin chasquidos
+      const onda = Math.sin(2 * Math.PI * 2700 * k / sr) >= 0 ? 1 : -1;  // tono de lector
+      v.setInt16(44 + k * 2, Math.round(onda * env * 0.55 * 32767), true);
+    }
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  const bip = new Audio(crearBip()); bip.preload = 'auto';
+  estado.sonidoListo = false;
+  function activarSonido() {
+    if (estado.sonidoListo) return;
+    bip.muted = true;                       // reproducción muda dentro del toque = permiso
+    bip.play().then(() => {
+      bip.pause(); bip.currentTime = 0; bip.muted = false;
+      estado.sonidoListo = true; mostrarSonido();
+    }).catch(() => { bip.muted = false; });
   }
   ['pointerdown', 'touchend', 'click', 'keydown'].forEach((ev) =>
-    document.addEventListener(ev, prepararAudio, { capture: true, passive: true }));
+    document.addEventListener(ev, activarSonido, { capture: true, passive: true }));
   function pitido() {
-    try {
-      prepararAudio();
-      if (!audio) return;
-      const t = audio.currentTime, osc = audio.createOscillator(), vol = audio.createGain();
-      osc.type = 'square'; osc.frequency.setValueAtTime(2700, t);     // tono típico de lector
-      vol.gain.setValueAtTime(0.0001, t);
-      vol.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
-      vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
-      osc.connect(vol); vol.connect(audio.destination);
-      osc.start(t); osc.stop(t + 0.15);
-    } catch (_) {}
+    try { bip.currentTime = 0; } catch (_) {}
+    bip.play().catch(() => {
+      // Respaldo: Web Audio (si el navegador no dejó usar el archivo).
+      try {
+        const A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+        const ctx = estado.ctx || (estado.ctx = new A()); const t = ctx.currentTime;
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'square'; o.frequency.setValueAtTime(2700, t);
+        g.gain.setValueAtTime(0.22, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+        o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.14);
+      } catch (_) {}
+    });
   }
+  function mostrarSonido() {
+    const s = document.querySelector('#lector-vivo-sonido');
+    if (s) s.textContent = estado.sonidoListo ? '' : '🔈 Toca la imagen para activar el sonido';
+  }
+
+  // ---------- Guía de distancia ----------
+  // Mientras no lee, alterna indicaciones para acercar o alejar el teléfono.
+  const GUIA = [
+    '🎯 Centra el código dentro de la franja',
+    '🔍 Acerca un poco el teléfono',
+    '↔️ Aleja un poco el teléfono',
+    '✋ Mantén el teléfono quieto un momento',
+  ];
+  setInterval(() => {
+    if (!estado.lector || !estado.abiertoEn) return;
+    const seg = (Date.now() - estado.abiertoEn) / 1000;
+    if (seg < 2.5) { avisar('📏 Distancia ideal: 15–20 cm del código'); }
+    else avisar(GUIA[Math.floor((seg - 2.5) / 2.2) % GUIA.length]);
+    mostrarSonido();
+  }, 500);
 
   function cargarLibreria() {
     if (window.Html5Qrcode || (window.__Html5QrcodeLibrary__ && window.__Html5QrcodeLibrary__.Html5Qrcode))
@@ -79,7 +118,7 @@ LECTOR_JS = r"""
   }
 
   async function detener() {
-    const l = estado.lector; estado.lector = null; estado.elemento = null;
+    const l = estado.lector; estado.lector = null; estado.elemento = null; estado.abiertoEn = 0;
     if (l) { try { await l.stop(); } catch (_) {} try { l.clear(); } catch (_) {} }
   }
 
@@ -121,8 +160,8 @@ LECTOR_JS = r"""
         verbose: false, formatsToSupport: formatos,
         experimentalFeatures: { useBarCodeDetectorIfSupported: true },
       });
-      estado.lector = lector; estado.elemento = el;
-      avisar('Apunta al código de barras · toca la imagen para enfocar');
+      estado.lector = lector; estado.elemento = el; estado.abiertoEn = 0;
+      avisar('Abriendo la cámara…');
       await lector.start(
         { facingMode: 'environment' },
         {
@@ -147,6 +186,7 @@ LECTOR_JS = r"""
         },
         () => {}
       );
+      estado.abiertoEn = Date.now();
       await mejorarEnfoque(lector);
     } catch (e) {
       await detener();
@@ -173,7 +213,9 @@ CSS = """
 .lector-vivo { width: 100%; max-width: 520px; margin: 0 auto; border-radius: 14px;
   overflow: hidden; background: #0b1b33; min-height: 220px; }
 .lector-vivo video { width: 100% !important; height: auto !important; display: block; }
-.lector-vivo-aviso { text-align: center; color: #0b315f; font-weight: 700; margin-top: 6px; }
+.lector-vivo-aviso { text-align: center; color: #0b315f; font-weight: 800; margin-top: 8px;
+  font-size: clamp(16px, 4.6vw, 21px); min-height: 1.4em; }
+.lector-vivo-sonido { text-align: center; color: #b45309; font-weight: 700; font-size: 15px; min-height: 1.2em; }
 /* Cuadro que recibe el código: montado y funcional, pero fuera de la vista. */
 .st-key-camara_codigo { position: absolute !important; left: -10000px !important;
   width: 1px !important; height: 1px !important; overflow: hidden !important; }
@@ -186,7 +228,8 @@ def mostrar_lector(clave_cuadro, al_leer):
     from shared import ejecutar_js_en_pagina
     st.markdown(CSS, unsafe_allow_html=True)
     st.markdown('<div id="lector-vivo" class="lector-vivo"></div>'
-                '<div id="lector-vivo-aviso" class="lector-vivo-aviso">Abriendo la cámara…</div>',
+                '<div id="lector-vivo-aviso" class="lector-vivo-aviso">Abriendo la cámara…</div>'
+                '<div id="lector-vivo-sonido" class="lector-vivo-sonido"></div>',
                 unsafe_allow_html=True)
     with st.container(key="camara_codigo"):
         st.text_input("Código leído por la cámara", key=clave_cuadro,
