@@ -486,6 +486,9 @@ if es_solo_consulta:
       [data-testid="stSidebarCollapsedControl"],
       [data-testid="stSidebarCollapseButton"] { display: none !important; }
       [data-testid="stAppViewContainer"] { margin-left: 0 !important; }
+      /* Verificador: sin la barra superior de Streamlit (Fork / GitHub / menú). */
+      header[data-testid="stHeader"], [data-testid="stToolbar"],
+      [data-testid="stDecoration"] { display: none !important; }
     </style>
     """, unsafe_allow_html=True)
     posicion_navegacion = "hidden"
