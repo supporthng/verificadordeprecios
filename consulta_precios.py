@@ -636,6 +636,16 @@ CSS += """<style>
 [data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"] > :not(style))) {
   display: none !important;
 }
+/* Streamlit pone márgenes negativos (-1rem) a los bloques de texto: subían el
+   bloque siguiente y el código de barras se montaba sobre la franja azul.
+   Se anulan aquí; la separación la da el espacio entre elementos (gap). */
+[data-testid="stElementContainer"]:has(.main-header, .animated-barcode-card, .scan-title, .verif-imagenes),
+[data-testid="stElementContainer"]:has(.main-header, .animated-barcode-card, .scan-title, .verif-imagenes) [data-testid="stMarkdown"],
+[data-testid="stElementContainer"]:has(.main-header, .animated-barcode-card, .scan-title, .verif-imagenes) [data-testid="stMarkdownContainer"] {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+.main-header, .animated-barcode-card { position: relative; }
 /* Logo y QR */
 .verif-imagenes {
   width: 100%; display: flex; justify-content: center; align-items: center;
@@ -645,8 +655,15 @@ CSS += """<style>
   display: block; width: auto; height: auto; object-fit: contain;
   max-width: min(32vw, 300px); max-height: clamp(48px, 22dvh, 190px);
 }
-.verif-qr { display: flex; flex-direction: column; align-items: center; gap: 3px;
-  color: #64748b; font-weight: 600; font-size: clamp(11px, 1.9dvh, 14px); }
+.verif-qr { display: flex; flex-direction: column; align-items: center; gap: 0.8dvh; }
+/* Etiqueta destacada bajo el QR. */
+.verif-qr span {
+  display: inline-block; background: #0757d4; color: #ffffff;
+  font-weight: 800; letter-spacing: .02em; white-space: nowrap;
+  font-size: clamp(13px, 2.9dvh, 20px); line-height: 1.15;
+  padding: 0.6dvh 12px; border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(7, 87, 212, .25);
+}
 .verif-qr img {
   display: block; width: auto; height: auto; object-fit: contain;
   max-height: clamp(48px, 20dvh, 170px); background: #fff; padding: 4px; border-radius: 8px;
@@ -940,7 +957,7 @@ def verificador():
             if qr:
                 imagenes.append(
                     '<div class="verif-qr"><img alt="Código QR para consultar desde el celular" '
-                    f'src="data:image/png;base64,{qr}"><span>Consulta desde tu celular</span></div>')
+                    f'src="data:image/png;base64,{qr}"><span>📱 Consulta desde tu celular</span></div>')
         if imagenes:
             st.markdown('<div class="verif-imagenes">' + "".join(imagenes) + '</div>',
                         unsafe_allow_html=True)
