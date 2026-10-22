@@ -115,7 +115,11 @@ def consultar(code):
             st.session_state.movil_job={'id':jobs[0]['id'],'started':time.monotonic()}
             return
         else: raise RuntimeError('Fuente desconocida.')
-        st.session_state.movil_producto=next((r for r in rows if str(r.get('barcode','')).strip()==code),None)
+        from shared import variantes_codigo
+        formas=variantes_codigo(code)
+        coincidencias=[r for r in rows if str(r.get('barcode','')).strip() in formas]
+        coincidencias.sort(key=lambda r: formas.index(str(r.get('barcode','')).strip()))
+        st.session_state.movil_producto=coincidencias[0] if coincidencias else None
         st.session_state.movil_resultado_desde=time.monotonic()
     except Exception as exc:
         st.session_state.movil_error='No se pudo consultar la fuente seleccionada: '+str(exc)

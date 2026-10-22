@@ -784,7 +784,12 @@ def buscar_producto(clave):
                 raise RuntimeError("Configura el archivo de Google desde Administración.")
             df = google_catalog(cfg["kind"], cfg["file_id"], cfg["sheet_name"] or "",
                                 cfg["code_column"], cfg["name_column"], cfg["price_column"])
-            hits = df[df["barcode"].astype(str).str.strip() == query].head(1)
+            from shared import variantes_codigo
+            formas = variantes_codigo(query)
+            codigos = df["barcode"].astype(str).str.strip()
+            hits = df[codigos.isin(formas)]
+            if not hits.empty:   # la forma más parecida a la leída primero
+                hits = hits.assign(_orden=codigos[hits.index].map(formas.index)).sort_values("_orden").head(1)
             if hits.empty:
                 st.session_state.not_found = True
             else:

@@ -36,14 +36,21 @@ def find_barcode(code):
     Devuelve dict {barcode, name, price} o None si no existe.
     Lanza RuntimeError si no hay inventario activo.
     """
-    code = str(code).strip()
+    from shared import variantes_codigo
+    formas = variantes_codigo(code)
     inventory_id = active_inventory_id()
     if inventory_id is None:
         raise RuntimeError('No hay un inventario activo seleccionado.')
+    # Una sola consulta con todas las formas equivalentes (UPC-E, UPC-A, EAN-13,
+    # sin ceros iniciales). Gana la forma más parecida a la leída.
+    lista = ','.join('"' + f.replace('"', '') + '"' for f in formas)
     rows = api('GET', 'price_inventory_items',
                {'select': 'barcode,name,price', 'inventory_id': f'eq.{inventory_id}',
-                'barcode': f'eq.{code}', 'limit': 1}, admin=False)
-    return rows[0] if rows else None
+                'barcode': f'in.({lista})', 'limit': len(formas)}, admin=False)
+    if not rows:
+        return None
+    rows.sort(key=lambda r: formas.index(r['barcode']) if r['barcode'] in formas else len(formas))
+    return rows[0]
 
 
 def active_catalog():
