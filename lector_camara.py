@@ -19,10 +19,10 @@ LECTOR_COMPATIBLE = "https://cdn.jsdelivr.net/npm/barcode-detector@3.1.3/dist/ii
 
 LECTOR_JS = r"""
 (() => {
-  if (window.__lectorVivoV5) return;        // instalar una sola vez por ventana
+  if (window.__lectorVivoV6) return;        // instalar una sola vez por ventana
   const estado = { stream: null, video: null, elemento: null, abriendo: false,
                    ultimo: '', ultimoT: 0, abiertoEn: 0 };
-  window.__lectorVivoV5 = estado;
+  window.__lectorVivoV6 = estado;
   const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39'];
 
   // ---------- Sonido de lector ("bip") ----------
@@ -140,7 +140,7 @@ LECTOR_JS = r"""
     if (navigator.vibrate) navigator.vibrate(80);
     estado.pausaHasta = ahora + 2500;      // no reabrir mientras se muestra el resultado
     detener();
-    avisar('✅ Código leído: ' + texto + ' · consultando…');
+    avisar('✅ Código leído: ' + texto + (estado.formatoLeido ? ' (' + estado.formatoLeido + ')' : '') + ' · consultando…');
     enviar(texto);
   }
 
@@ -168,6 +168,26 @@ LECTOR_JS = r"""
   }
   function guiar(tipo) { estado.guia = tipo; estado.guiaT = Date.now(); }
 
+  // Los códigos UPC-E (envases pequeños, 8 dígitos: "0 878053 8") a veces
+  // llegan "expandidos" a 12 o 13 dígitos (0087800000058). Se devuelven tal
+  // como están IMPRESOS en el producto: 08780538.
+  function upceImpreso(valor, formato) {
+    if (formato !== 'upc_e' || !/^\d+$/.test(valor)) return valor;
+    if (valor.length === 8) return valor;
+    let a = valor;
+    if (a.length === 13 && a[0] === '0') a = a.slice(1);
+    if (a.length !== 12 || !'01'.includes(a[0])) return valor;
+    const ns = a[0], f = a.slice(1, 6), p = a.slice(6, 11), c = a[11];
+    let d = null;
+    if ('012'.includes(f[2]) && f.slice(3) === '00' && p.slice(0, 2) === '00') d = f.slice(0, 2) + p.slice(2, 5) + f[2];
+    else if (f.slice(3) === '00' && p.slice(0, 3) === '000') d = f.slice(0, 3) + p.slice(3, 5) + '3';
+    else if (f[4] === '0' && p.slice(0, 4) === '0000') d = f.slice(0, 4) + p[4] + '4';
+    else if (p.slice(0, 4) === '0000' && '56789'.includes(p[4])) d = f + p[4];
+    return d ? ns + d + c : valor;
+  }
+  const NOMBRE_FORMATO = { ean_13: 'EAN-13', ean_8: 'EAN-8', upc_a: 'UPC-A', upc_e: 'UPC-E',
+                           code_128: 'Code 128', code_39: 'Code 39' };
+
   // Analiza la imagen unas 8 veces por segundo (sin saturar el teléfono).
   const lienzo = document.createElement('canvas');
   async function ciclo(stream) {
@@ -185,10 +205,10 @@ LECTOR_JS = r"""
         // Elegir el código válido que esté sobre la línea roja.
         let elegido = null, motivo = null;
         for (const c of r) {
-          const valor = String(c.rawValue || '').trim();
+          const valor = upceImpreso(String(c.rawValue || '').trim(), c.format);
           if (!valor || !digitoValido(valor, c.format)) continue;
           const pos = revisarPosicion(c, w, h);
-          if (pos === 'ok') { elegido = valor; break; }
+          if (pos === 'ok') { elegido = valor; estado.formatoLeido = NOMBRE_FORMATO[c.format] || c.format || ''; break; }
           motivo = motivo || pos;
         }
         if (elegido && ahora - estado.abiertoEn >= ESPERA_INICIAL) {
