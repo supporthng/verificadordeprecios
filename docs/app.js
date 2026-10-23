@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.0.2";
+  const APP_VERSION = "1.0.3";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 5 * 60 * 1000;      // revisar si hay precios nuevos
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -347,6 +347,14 @@
     $("clave-error").textContent = "Verificando…";
     let ok = false;
     try { ok = await claveCorrecta($("clave").value, estado.salida); } catch (err) { ok = false; }
+    if (!ok) {
+      // ¿Cambiaron la clave en la app en línea? Con internet, traer la vigente y comprobar otra vez.
+      const antes = JSON.stringify(estado.salida);
+      await revisar(false);
+      if (estado.salida && JSON.stringify(estado.salida) !== antes) {
+        try { ok = await claveCorrecta($("clave").value, estado.salida); } catch (err) { ok = false; }
+      }
+    }
     $("clave-entrar").disabled = false;
     if (ok) {
       local("intentos_clave", null);
