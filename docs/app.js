@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.0.1";
+  const APP_VERSION = "1.0.2";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 5 * 60 * 1000;      // revisar si hay precios nuevos
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -390,7 +390,8 @@
   /* ------------------------------------------------------------ vincular */
   $("form-vincular").addEventListener("submit", function (e) {
     e.preventDefault();
-    const o = validarOrigen($("enlace").value);
+    // Sirve el enlace largo, o la dirección corta de la app (usa la dirección incluida en config.js).
+    const o = validarOrigen($("enlace").value) || validarOrigen((self.CONFIG_EQUIPOS || {}).estado);
     if (!o) { $("enlace-error").textContent = "Ese no es el enlace de instalación. Cópialo desde Equipos sin internet."; return; }
     vincular(o);
   });
@@ -421,7 +422,8 @@
     navigator.serviceWorker.addEventListener("controllerchange", function () {
       if (primera) { primera = false; return; }
       recargarAlVolver = true;   // se aplica al volver a la pantalla de espera
-      if (!$("espera").hidden && !dialogoAbierto()) location.reload();
+      // Recargar ya, salvo que un cliente esté viendo un precio o haya un diálogo abierto.
+      if ($("resultado").hidden && !dialogoAbierto()) location.reload();
     });
   }
   window.addEventListener("online", function () { revisar(false); });
