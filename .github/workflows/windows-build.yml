@@ -1,1 +1,42 @@
-
+name: Construir conector Windows
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "windows_bridge/**"
+      - "codigos_barras.py"
+      - "installer/**"
+      - ".github/workflows/windows-build.yml"
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - name: Crear ejecutable
+        shell: pwsh
+        run: ./windows_bridge/build_windows.ps1
+      - name: Empaquetar portátil
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item windows_bridge/dist/ConectorConsultaPrecios.exe portable/
+          Copy-Item installer/bridge.env.example portable/
+          Compress-Archive -Path portable/* -DestinationPath Conector_Portatil_Windows.zip -Force
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+      - name: Construir instalador
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "installer\ConectorConsultaPrecios.iss"
+      - name: Publicar artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: Conector-Windows-Portatil-e-Instalador
+          path: |
+            Conector_Portatil_Windows.zip
+            dist_instalador/*.exe
