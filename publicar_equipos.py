@@ -312,6 +312,13 @@ def publicar(apariencia_actual=None):
     salida = _leer_privado(base, headers, CLAVE_SALIDA)
     salida = {k: v for k, v in json.loads(salida).items() if k != "fecha"} if salida else None
 
+    # Fotos de productos (subidas a mano o encontradas en internet): los equipos las descargan.
+    try:
+        import fotos_productos
+        fotos_ref, fotos_n = fotos_productos.publicar_para_equipos(base, headers, anterior.get("fotos"))
+    except Exception:   # las fotos son opcionales: nunca impiden publicar los precios
+        fotos_ref, fotos_n = anterior.get("fotos"), anterior.get("fotos_cantidad")
+
     publicado = {
         "formato": FORMATO,
         "version": version,
@@ -324,6 +331,8 @@ def publicar(apariencia_actual=None):
         "apariencia": dict(apariencia_actual),
         "logo": imagenes["logo"],
         "qr": imagenes["qr"],
+        "fotos": fotos_ref,
+        "fotos_cantidad": fotos_n,
         "salida": salida,
         "app_en_linea": _app_en_linea() or anterior.get("app_en_linea"),
         # Para que los equipos suban su registro de consultas hechas sin internet.

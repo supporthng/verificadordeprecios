@@ -21,6 +21,19 @@ RESOLUCIONES = {
 }
 PANTALLAS = {"espera": "Esperando", "producto": "Precio", "no": "No encontrado"}
 PRODUCTO_DEMO = ["7460000000017", "Café molido tradicional 1 lb", 289.95]
+# Foto de ejemplo (un paquete de café dibujado) para ver dónde va la foto del producto.
+_SVG_DEMO = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>
+<rect width='200' height='200' fill='#fff'/>
+<ellipse cx='100' cy='184' rx='58' ry='7' fill='#000' opacity='.08'/>
+<path d='M52 40 L148 40 L156 180 L44 180 Z' fill='#6b3f22'/>
+<path d='M52 40 L148 40 L146 56 L54 56 Z' fill='#4e2c16'/>
+<path d='M60 30 L140 30 L148 40 L52 40 Z' fill='#8a5530'/>
+<rect x='62' y='86' width='76' height='58' rx='8' fill='#f4e6cf'/>
+<ellipse cx='100' cy='106' rx='13' ry='17' fill='#6b3f22'/>
+<path d='M100 90 C94 100 106 112 100 122' stroke='#f4e6cf' stroke-width='3' fill='none'/>
+<rect x='74' y='128' width='52' height='6' rx='3' fill='#6b3f22' opacity='.6'/>
+</svg>"""
+FOTO_DEMO = "data:image/svg+xml;base64," + base64.b64encode(_SVG_DEMO.encode()).decode("ascii")
 
 
 @lru_cache(maxsize=1)
@@ -40,7 +53,7 @@ def _plantilla():
   if (!D) return;
   document.body.classList.add("vista-previa");
   Pantalla.aplicar(D.apariencia, { logo: D.logo, qr: D.qr });
-  if (D.pantalla === "producto") Pantalla.producto(D.producto, D.producto[0], 10);
+  if (D.pantalla === "producto") Pantalla.producto(D.producto, D.producto[0], 10, D.foto);
   else Pantalla.espera(D.pantalla === "no", D.producto[0]);
   document.getElementById("estado-red").textContent = "En línea";
 })();
@@ -61,7 +74,7 @@ def _data_url(datos):
     return ("data:image/png;base64," + base64.b64encode(datos).decode("ascii")) if datos else None
 
 
-def componente(vistas, logo=None, qr=None, columnas=1, alto_max=420, producto=None):
+def componente(vistas, logo=None, qr=None, columnas=1, alto_max=420, producto=None, foto=FOTO_DEMO):
     """HTML para st.components.v1.html con una o varias pantallas a escala.
 
     vistas: lista de dicts {apariencia, pantalla, ancho, alto, titulo?}.
@@ -72,6 +85,7 @@ def componente(vistas, logo=None, qr=None, columnas=1, alto_max=420, producto=No
         "logo": _data_url(logo),
         "qr": _data_url(qr),
         "producto": list(producto or PRODUCTO_DEMO),
+        "foto": foto,
         "vistas": vistas,
         "columnas": max(1, int(columnas)),
         "altoMax": int(alto_max),
@@ -106,7 +120,7 @@ def componente(vistas, logo=None, qr=None, columnas=1, alto_max=420, producto=No
     var m = document.createElement("div"); m.className = "marco";
     var f = document.createElement("iframe");
     f.width = v.ancho; f.height = v.alto; f.title = v.titulo || "Vista previa";
-    f.__vista = {apariencia: v.apariencia, pantalla: v.pantalla, logo: D.logo, qr: D.qr, producto: D.producto};
+    f.__vista = {apariencia: v.apariencia, pantalla: v.pantalla, logo: D.logo, qr: D.qr, producto: D.producto, foto: D.foto};
     f.srcdoc = doc;
     m.appendChild(f); c.appendChild(m);
     if (v.titulo) { var t = document.createElement("div"); t.className = "titulo"; t.textContent = v.titulo; c.appendChild(t); }

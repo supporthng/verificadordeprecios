@@ -46,6 +46,10 @@ def registrar(codigo, encontrado, producto=None, fuente=None, canal=None):
                 pass
 
         threading.Thread(target=_enviar, name="registro-consulta", daemon=True).start()
+        if encontrado:
+            # Primera consulta de un producto sin foto: buscarla en internet, en segundo plano.
+            import fotos_productos
+            fotos_productos.asegurar_en_segundo_plano(codigo)
     except Exception:
         pass
 

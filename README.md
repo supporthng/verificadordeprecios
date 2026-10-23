@@ -33,6 +33,7 @@ resultado. Las credenciales SQL quedan cifradas en el equipo Windows (DPAPI).
 | `mobile_geofence.py` | Zona autorizada (GPS) de Consulta Móvil |
 | `apariencia.py` | Apariencia de la pantalla lectora: nombre del negocio, estilo, color, textos, logo, QR, cuadro |
 | `imagenes_negocio.py` | Logo, código QR y fotos de productos (almacenamiento privado de Supabase) |
+| `fotos_productos.py` | Fotos de productos que se alimentan solas: al primer consulta se buscan por código de barras en Open Food Facts, se guardan y se publican para los equipos |
 | `vista_previa.py` | Vista previa de la pantalla lectora a la resolución de cada equipo (usa los archivos de `docs/`) |
 | `sql/` | Instalación y migraciones de Supabase |
 | `windows_bridge/` | Código del Conector Windows |
@@ -200,3 +201,18 @@ Solo cuando cambia el código de `apps/` (las funciones del verificador viven en
 2. Ejecuta los workflows *Construir app Android* / *Construir app Windows* y espera a que publiquen.
 3. **Después**, sube la misma versión en `docs/apps.json`: los equipos verán en el menú ✕
    "⬇️ Actualizar la app" (Windows se instala solo; Android pide tocar Instalar, salvo con bloqueo total).
+
+## Fotos de productos automáticas
+
+1. Cuando un producto **encontrado** se consulta y no tiene foto, se busca por su código de barras en las bases
+   abiertas de Open Food Facts (alimentos, belleza, mascotas y otros productos). Se prueban sus formas
+   equivalentes (UPC-E, UPC-A, EAN-13, sin ceros iniciales).
+2. Si aparece, se guarda una copia reducida (máx. 480 px) en `imagenes-productos/internet/`. Si no, se anota y se
+   vuelve a intentar a los 30 días.
+3. **Cuándo se busca:** al instante en la Consulta en línea (en segundo plano, sin demorar al cliente) y cada
+   30 minutos con GitHub Actions para lo consultado en los equipos sin internet. También con el botón
+   «Buscar fotos ahora» en Apariencia › Fotos de productos.
+4. La foto subida a mano siempre gana. Desde Apariencia se puede quitar una foto equivocada (no se vuelve a buscar)
+   o pedir que se busque otra vez.
+5. Los equipos sin internet descargan las fotos nuevas solos (`equipos/fotos.json`) y las guardan en el equipo:
+   se ven aunque no haya conexión. «Foto del producto junto al precio» se enciende o apaga en Apariencia.

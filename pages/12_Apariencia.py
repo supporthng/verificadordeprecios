@@ -87,6 +87,8 @@ with pestana_pantalla:
         st.markdown("**Qué se muestra**")
         st.toggle("Logo del negocio", key="ap_mostrar_logo")
         st.toggle("Código QR de Consulta Móvil", key="ap_mostrar_qr")
+        st.toggle("Foto del producto junto al precio", key="ap_mostrar_foto",
+                  help="Si el producto tiene foto (subida a mano o encontrada en internet).")
         st.toggle("Cuadro donde se escribe el código", key="ap_mostrar_cuadro",
                   help="Visible u oculto, el cuadro siempre está activo y con el cursor: el escáner "
                        "lee igual. Mostrarlo sirve para escribir el código a mano con un teclado.")
@@ -248,22 +250,117 @@ with pestana_qr:
                     st.error(str(exc))
 
 # ====================================================================== FOTOS
+import fotos_productos as fp
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _resumen_fotos(marca=0):
+    fotos, indice = fp.resumen()
+    return fotos, indice
+
+
 with pestana_fotos:
-    st.caption("Sube una imagen para un código de barras. Tendrá prioridad sobre las imágenes "
-               "encontradas automáticamente en la Consulta de Precios en línea.")
-    codigo_imagen = st.text_input("Código de barras del producto", key="codigo_imagen_producto").strip()
-    archivo_imagen = st.file_uploader("Fotografía JPG o PNG", type=["jpg", "jpeg", "png"],
-                                      key="foto_producto_manual")
-    if archivo_imagen is not None and codigo_imagen.isdigit() and 8 <= len(codigo_imagen) <= 14:
-        if st.button("Guardar fotografía del producto", type="primary"):
+    st.markdown("Cuando un producto se consulta por **primera vez** y no tiene foto, el sistema la busca "
+                "sola en internet por su código de barras y guarda una copia. Desde ahí se usa siempre, "
+                "también en los equipos sin internet.")
+    try:
+        fotos, indice = _resumen_fotos(st.session_state.ap_marca_img)
+    except Exception as exc:
+        st.error(f"No se pudieron leer las fotos: {exc}")
+        fotos, indice = {}, {"sin_foto": {}, "pendientes": [], "origen": {}}
+    de_internet = {c: v for c, v in fotos.items() if v[2] == "internet"}
+    a_mano = {c: v for c, v in fotos.items() if v[2] == "manual"}
+    sin_foto = {c: v for c, v in indice["sin_foto"].items() if c not in fotos}
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("De internet", f"{len(de_internet):,}")
+    m2.metric("Subidas a mano", f"{len(a_mano):,}")
+    m3.metric("Sin foto en internet", f"{len(sin_foto):,}")
+    m4.metric("Por buscar", f"{len(indice['pendientes']):,}")
+
+    if st.button("🔎 Buscar fotos ahora", type="primary", key="buscar_fotos",
+                 help="Busca las fotos de los productos consultados que todavía no tienen. "
+                      "Igual se hace sola cada 30 minutos."):
+        with st.spinner("Buscando fotos en internet… (unos segundos por producto)"):
             try:
-                datos = img.guardar_foto_producto(codigo_imagen, archivo_imagen)
-                st.image(datos, caption=f"Imagen para {codigo_imagen}", width=200)
-                st.success("Fotografía guardada. Aparecerá en las próximas consultas "
-                           "(la caché puede tardar hasta 24 horas en renovarse).")
-            except (UnidentifiedImageError, OSError, ValueError):
-                st.error("El archivo de imagen no es válido.")
-            except (RuntimeError, requests.RequestException) as exc:
-                st.error(str(exc))
-    elif archivo_imagen is not None:
-        st.warning("Introduce un código de barras numérico de 8 a 14 dígitos.")
+                r = fp.procesar_pendientes(maximo=25, registro=lambda *_: None)
+                _imagenes_cambiaron()
+                import publicar_equipos
+                publicar_equipos.actualizar_si_publicado()
+                st.session_state.aviso_logo = (f"Fotos: {r['halladas']} encontradas, {r['sin_foto']} sin foto en "
+                                               f"internet, {r['pendientes']} quedan por buscar.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"No se pudo buscar: {exc}")
+    st.caption("Se buscan solas: al consultar en la Consulta en línea (al instante) y cada 30 minutos para "
+               "lo consultado en los equipos sin internet. Los equipos descargan las fotos nuevas solos. "
+               "Fuente: bases abiertas de Open Food Facts (licencia libre CC BY-SA). Muchos productos locales "
+               "no aparecen en internet: súbeles la foto a mano.")
+
+    st.markdown("#### Fotos guardadas")
+    filtro = st.text_input("Buscar por código", key="filtro_fotos", placeholder="Ej.: 7501055363063").strip()
+    orden = sorted(fotos.items(), key=lambda kv: (indice["origen"].get(kv[0], {}).get("fecha", ""), kv[0]),
+                   reverse=True)
+    if filtro:
+        orden = [kv for kv in orden if filtro in kv[0]]
+    visibles = orden[:30]
+    if not fotos:
+        st.info("Todavía no hay fotos. Aparecerán solas a medida que se consulten productos.")
+    elif not visibles:
+        st.info("Ningún código coincide.")
+    else:
+        enlaces = fp.enlaces_firmados([v[0] for _, v in visibles])
+        for inicio in range(0, len(visibles), 5):
+            columnas = st.columns(5)
+            for col, (codigo, (ruta, _, origen)) in zip(columnas, visibles[inicio:inicio + 5]):
+                with col:
+                    if enlaces.get(ruta):
+                        st.image(enlaces[ruta], use_container_width=True)
+                    fuente = indice["origen"].get(codigo, {}).get("fuente", "internet")
+                    st.caption(f"**{codigo}**  \n{'✋ Subida a mano' if origen == 'manual' else '🌐 ' + fuente}")
+                    if origen == "internet":
+                        c1, c2 = st.columns(2)
+                        if c1.button("🗑️", key=f"quitar_{codigo}", help="Quitar esta foto y no volver a buscarla"):
+                            fp.quitar(codigo)
+                            _imagenes_cambiaron()
+                            import publicar_equipos
+                            publicar_equipos.actualizar_si_publicado()
+                            st.rerun()
+                        if c2.button("🔄", key=f"otra_{codigo}", help="Volver a buscarla en internet"):
+                            fp.volver_a_buscar(codigo)
+                            _imagenes_cambiaron()
+                            st.rerun()
+                    elif st.button("🗑️", key=f"quitarm_{codigo}", help="Quitar la foto subida a mano"):
+                        fp.quitar_manual(codigo)
+                        _imagenes_cambiaron()
+                        import publicar_equipos
+                        publicar_equipos.actualizar_si_publicado()
+                        st.rerun()
+        if len(orden) > len(visibles):
+            st.caption(f"Se muestran 30 de {len(orden):,}. Busca por código para ver otra.")
+
+    with st.expander("✋ Subir una foto a mano (tiene prioridad sobre la de internet)"):
+        codigo_imagen = st.text_input("Código de barras del producto", key="codigo_imagen_producto").strip()
+        archivo_imagen = st.file_uploader("Fotografía JPG o PNG", type=["jpg", "jpeg", "png"],
+                                          key="foto_producto_manual")
+        if archivo_imagen is not None and codigo_imagen.isdigit() and 6 <= len(codigo_imagen) <= 14:
+            if st.button("Guardar fotografía del producto", type="primary"):
+                try:
+                    datos = img.guardar_foto_producto(codigo_imagen, archivo_imagen)
+                    _imagenes_cambiaron()
+                    import publicar_equipos
+                    publicar_equipos.actualizar_si_publicado()
+                    st.image(datos, caption=f"Imagen para {codigo_imagen}", width=200)
+                    st.success("Fotografía guardada. Los equipos la descargan solos.")
+                except (UnidentifiedImageError, OSError, ValueError):
+                    st.error("El archivo de imagen no es válido.")
+                except (RuntimeError, requests.RequestException) as exc:
+                    st.error(str(exc))
+        elif archivo_imagen is not None:
+            st.warning("Introduce un código de barras numérico de 6 a 14 dígitos.")
+
+    if sin_foto:
+        with st.expander(f"🚫 Códigos sin foto en internet ({len(sin_foto):,})"):
+            st.caption("Se vuelven a buscar solos a los 30 días. Los marcados como quitados no se buscan más.")
+            st.dataframe([{"Código": c, "Revisado": v.get("fecha", "")[:10],
+                           "Estado": "Quitada por ti" if v.get("rechazada") else "No está en internet"}
+                          for c, v in sorted(sin_foto.items())], hide_index=True, use_container_width=True)

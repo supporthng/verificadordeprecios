@@ -19,11 +19,19 @@ def main():
     if antes is None:
         print("Todavía no se publicó nada para los equipos: no hay nada que mantener al día.")
         return 0
+    # Fotos de los productos consultados que todavía no tienen (se buscan en internet).
+    try:
+        import fotos_productos
+        r = fotos_productos.procesar_pendientes()
+        print(f"Fotos: {r['halladas']} encontradas, {r['sin_foto']} sin foto en internet, "
+              f"{r['pendientes']} quedan para la próxima vuelta.")
+    except Exception as exc:   # las fotos nunca impiden mantener los precios al día
+        print(f"::warning::No se pudieron buscar fotos: {exc}")
     nuevo = pe.publicar()
     if nuevo.get("version") != antes.get("version"):
         print(f"Precios nuevos publicados: {nuevo['productos']:,} productos ({nuevo['inventario']}).")
     elif nuevo != antes:
-        print("Configuración actualizada (apariencia, logo, QR o clave); los precios no cambiaron.")
+        print("Configuración actualizada (apariencia, logo, QR, fotos o clave); los precios no cambiaron.")
     else:
         print(f"Sin cambios: {nuevo['productos']:,} productos ({nuevo['inventario']}).")
     return 0

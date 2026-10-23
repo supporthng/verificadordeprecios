@@ -8,11 +8,12 @@
   function abrir() {
     if (abierta) return abierta;
     abierta = new Promise(function (ok, mal) {
-      const r = indexedDB.open(NOMBRE, 1);
+      const r = indexedDB.open(NOMBRE, 2);   // 2: almacén de fotos de productos
       r.onupgradeneeded = function () {
         const db = r.result;
         if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
         if (!db.objectStoreNames.contains("registro")) db.createObjectStore("registro", { autoIncrement: true });
+        if (!db.objectStoreNames.contains("fotos")) db.createObjectStore("fotos");
       };
       r.onsuccess = function () { ok(r.result); };
       r.onerror = function () { abierta = null; mal(r.error); };
@@ -53,9 +54,10 @@
   }
 
   function borrarTodo() {
-    return hacer(["kv", "registro"], "readwrite", function (t) {
+    return hacer(["kv", "registro", "fotos"], "readwrite", function (t) {
       t.objectStore("kv").clear();
       t.objectStore("registro").clear();
+      t.objectStore("fotos").clear();
     });
   }
 
@@ -102,6 +104,28 @@
     });
   }
 
+  /* ---- Fotos de productos (archivo -> Blob) ---- */
+  function fotoGuardar(archivo, blob) {
+    return hacer(["fotos"], "readwrite", function (t) { t.objectStore("fotos").put(blob, archivo); });
+  }
+  function fotoLeer(archivo) {
+    return hacer(["fotos"], "readonly", function (t, fin) {
+      t.objectStore("fotos").get(archivo).onsuccess = function (e) { fin(e.target.result || null); };
+    });
+  }
+  function fotoClaves() {
+    return hacer(["fotos"], "readonly", function (t, fin) {
+      t.objectStore("fotos").getAllKeys().onsuccess = function (e) { fin(e.target.result || []); };
+    });
+  }
+  function fotoBorrar(archivos) {
+    return hacer(["fotos"], "readwrite", function (t) {
+      const f = t.objectStore("fotos");
+      archivos.forEach(function (a) { f.delete(a); });
+    });
+  }
+
   global.BD = { leer: leer, guardar: guardar, borrarTodo: borrarTodo, anotar: anotar,
-                pendientes: pendientes, quitar: quitar, contar: contar, recortar: recortar };
+                pendientes: pendientes, quitar: quitar, contar: contar, recortar: recortar,
+                fotoGuardar: fotoGuardar, fotoLeer: fotoLeer, fotoClaves: fotoClaves, fotoBorrar: fotoBorrar };
 })(self);

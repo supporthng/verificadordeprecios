@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.7.0";
+  const APP_VERSION = "1.8.0";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -22,6 +22,8 @@
   let revisando = false, ultimaRevisionOk = 0, ultimoError = "";
   let temporizador = null, recargarAlVolver = false;
   const imagenes = { logo: null, qr: null };   // URLs locales (blob:)
+  let fotosMapa = {}, fotosRef = null, sincronizandoFotos = false;   // fotos de productos
+  let fotoActual = null, consultaN = 0;
 
   /* ------------------------------------------------------------ utilidades */
   function conTiempo(url, opciones, ms) {
@@ -85,7 +87,57 @@
 
   function mostrarProducto(p, codigo) {
     $("aviso").hidden = true;
-    Pantalla.producto(p, codigo, SEG_ENCONTRADO);
+    Pantalla.producto(p, codigo, SEG_ENCONTRADO, null);
+    // La foto llega un instante después (se lee del equipo; con internet, si aún no se descargó, de la red).
+    const n = ++consultaN;
+    fotoPara(p, codigo).then(function (direccion) {
+      if (n === consultaN && !$("resultado").hidden) Pantalla.foto(direccion);
+    }).catch(function () {});
+  }
+
+  /* ------------------------------------------------------------ fotos de productos */
+  function archivoFoto(p, codigo) {
+    if (fotosMapa[String(p[0])]) return fotosMapa[String(p[0])];
+    const formas = Codigos.variantes(codigo);
+    for (let i = 0; i < formas.length; i++) if (fotosMapa[formas[i]]) return fotosMapa[formas[i]];
+    return null;
+  }
+  async function fotoPara(p, codigo) {
+    const archivo = archivoFoto(p, codigo);
+    if (!archivo) return null;
+    const blob = await BD.fotoLeer(archivo).catch(function () { return null; });
+    if (fotoActual) { URL.revokeObjectURL(fotoActual); fotoActual = null; }
+    if (blob) { fotoActual = URL.createObjectURL(blob); return fotoActual; }
+    return navigator.onLine && origen ? base() + archivo : null;
+  }
+  /* Descarga en segundo plano las fotos nuevas y borra las que ya no se usan. */
+  async function sincronizarFotos() {
+    if (sincronizandoFotos || !estado || !estado.fotos || !origen) return;
+    sincronizandoFotos = true;
+    try {
+      if (estado.fotos !== fotosRef) {
+        const r = await conTiempo(base() + estado.fotos, { cache: "no-store" }, 30000);
+        if (!r.ok) throw new Error("fotos HTTP " + r.status);
+        const mapa = await r.json();
+        if (!mapa || typeof mapa !== "object") throw new Error("fotos inválidas");
+        await BD.guardar({ fotos_mapa: mapa, fotos_ref: estado.fotos });
+        fotosMapa = mapa; fotosRef = estado.fotos;
+      }
+      const quiero = new Set(Object.values(fotosMapa));
+      const tengo = new Set(await BD.fotoClaves());
+      for (const archivo of quiero) {
+        if (tengo.has(archivo)) continue;
+        const r = await conTiempo(base() + archivo, {}, 30000);
+        if (!r.ok) continue;
+        await BD.fotoGuardar(archivo, await r.blob());
+      }
+      const sobran = Array.from(tengo).filter(function (a) { return !quiero.has(a); });
+      if (sobran.length) await BD.fotoBorrar(sobran);
+    } catch (e) {
+      /* sin internet o sin espacio: se reintenta en la próxima revisión */
+    } finally {
+      sincronizandoFotos = false;
+    }
   }
 
   function aplicarApariencia() {
@@ -242,6 +294,7 @@
       aplicarApariencia();
       if (!$("aviso").hidden) mostrarEspera(false);
       subirRegistro();
+      sincronizarFotos();
       revisarApp(false, reconectado || despertado);
       revisarMarco();
       despertado = false;
@@ -633,7 +686,7 @@
     const desdeEnlace = validarOrigen(params.get("estado") ? location.href : "");
     let guardado = {};
     try { guardado = await BD.leer(["origen", "estado", "catalogo", "img_logo", "img_qr", "revisado",
-                                    "equipo_id", "equipo_nombre"]); }
+                                    "equipo_id", "equipo_nombre", "fotos_mapa", "fotos_ref"]); }
     catch (e) { guardado = {}; }
     await cargarEquipo(guardado);
     origen = desdeEnlace || guardado.origen || validarOrigen(local("origen")) ||
@@ -654,6 +707,7 @@
       productos = new Map(guardado.catalogo.map(function (p) { return [String(p[0]), p]; }));
       ponerImagen("logo", guardado.img_logo || null);
       ponerImagen("qr", guardado.img_qr || null);
+      fotosMapa = guardado.fotos_mapa || {}; fotosRef = guardado.fotos_ref || null;
       aplicarApariencia();
       mostrarEspera(false);
       indicador();

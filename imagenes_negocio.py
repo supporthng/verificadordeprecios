@@ -64,8 +64,8 @@ def leer(ruta):
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def imagenes_actuales(_marca=0):
-    """(logo, qr) en bytes para la vista previa. _marca cambia al guardar, para releer."""
+def imagenes_actuales(marca=0):
+    """(logo, qr) en bytes para la vista previa. marca cambia al guardar, para releer."""
     return leer(LOGO), leer(QR)
 
 

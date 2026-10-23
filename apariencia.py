@@ -37,6 +37,7 @@ PREDETERMINADA = {
     "mostrar_logo": True,     # logo del negocio
     "mostrar_qr": True,       # QR de Consulta Móvil (si se subió uno)
     "mostrar_cuadro": False,  # cuadro donde escribe el escáner (siempre activo)
+    "mostrar_foto": True,     # foto del producto junto al precio (si hay)
 }
 LARGOS = {"nombre_negocio": 60, "titulo_espera": 60, "mensaje_espera": 90, "texto_qr": 60, "moneda": 6}
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")

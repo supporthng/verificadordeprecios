@@ -8,7 +8,7 @@
     posicion_logo: "esquina", titulo_espera: "Escanea tu producto",
     mensaje_espera: "Pasa el código de barras por el lector",
     texto_qr: "Consulta también desde tu celular", moneda: "RD$",
-    mostrar_logo: true, mostrar_qr: true, mostrar_cuadro: false,
+    mostrar_logo: true, mostrar_qr: true, mostrar_cuadro: false, mostrar_foto: true,
   };
   const ESTILOS = ["claro", "noche", "marca", "etiqueta", "panel"];
   const FONDO = { claro: "#ffffff", noche: "#10213d", etiqueta: "#ffffff" };
@@ -163,7 +163,9 @@
   }
 
   const formatoPrecio = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  function producto(p, codigo, segundos) {
+  /* foto: dirección de la foto del producto (o null). */
+  function producto(p, codigo, segundos, foto) {
+    ponerFoto(foto);
     $("nombre").textContent = p[1];
     $("codigo").textContent = codigo;
     // Como en la etiqueta de la góndola: entero grande y centavos pequeños arriba.
@@ -183,13 +185,29 @@
     barra.classList.add("corriendo");
   }
 
+  /* Foto del producto: al lado del nombre (horizontal) o encima (vertical). */
+  function ponerFoto(foto) {
+    const el = $("foto"), r = $("resultado");
+    const mostrar = !!(foto && actual.mostrar_foto);
+    el.onerror = function () { if (el.getAttribute("src") === foto) ponerFoto(null); };   // sin internet o borrada
+    if (mostrar && el.getAttribute("src") !== foto) el.src = foto;
+    if (!mostrar) el.removeAttribute("src");
+    $("foto-caja").hidden = !mostrar;
+    r.classList.toggle("con-foto", mostrar);
+    if (!r.hidden) ajustarPrecio();
+  }
+
   /* El precio siempre cabe a lo ancho, sea cual sea la pantalla o la cantidad de cifras. */
   function ajustarPrecio() {
     const r = $("resultado"), et = document.querySelector(".etiqueta");
     if (r.hidden || !et) return;
     et.style.setProperty("--escala", "1");
     const estilo = getComputedStyle(r);
-    const disponible = r.clientWidth - parseFloat(estilo.paddingLeft) - parseFloat(estilo.paddingRight);
+    let disponible = r.clientWidth - parseFloat(estilo.paddingLeft) - parseFloat(estilo.paddingRight);
+    const caja = $("foto-caja");
+    if (!caja.hidden && innerWidth > innerHeight) {   // foto al lado: queda menos ancho
+      disponible -= caja.getBoundingClientRect().width + (parseFloat(estilo.columnGap) || 0);
+    }
     const ancho = et.getBoundingClientRect().width;
     if (ancho > disponible && disponible > 0) {
       et.style.setProperty("--escala", String(Math.max(0.35, (disponible / ancho) * 0.97)));
@@ -204,6 +222,6 @@
   }
 
   window.Pantalla = { PREDETERMINADA: PREDETERMINADA, ESTILOS: ESTILOS, normalizar: normalizar,
-                      aplicar: aplicar, espera: espera, producto: producto, ocultar: ocultar,
+                      aplicar: aplicar, espera: espera, producto: producto, foto: ponerFoto, ocultar: ocultar,
                       contraste: contraste, legible: legible };
 })();
