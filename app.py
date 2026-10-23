@@ -537,6 +537,22 @@ if es_solo_consulta:
     posicion_navegacion = "hidden"
 else:
     posicion_navegacion = "sidebar"
+    # Páginas del personal: sin el espacio vacío que Streamlit deja arriba del contenido
+    # y del menú. La barra superior (menú ☰, Share) se mantiene, pero más baja.
+    st.markdown("""
+    <style>
+      header[data-testid="stHeader"] { height: 2.75rem !important; min-height: 2.75rem !important; }
+      [data-testid="stMainBlockContainer"], .block-container {
+          padding-top: 3rem !important; padding-bottom: 2rem !important;
+      }
+      [data-testid="stSidebarHeader"] {
+          height: 2.75rem !important; min-height: 0 !important; padding-top: .4rem !important;
+          padding-bottom: 0 !important; margin-bottom: 0 !important;
+      }
+      [data-testid="stSidebarUserContent"] { padding-top: .5rem !important; }
+      [data-testid="stSidebarNav"] { padding-top: 0 !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # Controles discretos, transparentes y anclados abajo a la izquierda.
 st.markdown("""<style>

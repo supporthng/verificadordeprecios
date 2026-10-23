@@ -251,13 +251,13 @@ if ve_registro:
                 color=alt.Color("resultado:N", title=None,
                                 scale=alt.Scale(domain=["Encontrados", "No encontrados"], range=[AZUL, NARANJA]),
                                 legend=alt.Legend(orient="top", direction="horizontal", labelColor="#102b50",
-                                                  symbolType="square")),
+                                                  symbolType="square", offset=4, padding=0)),
                 order=alt.Order("resultado:N", sort="ascending"),
                 tooltip=[alt.Tooltip("fecha:N", title="Día"), alt.Tooltip("resultado:N", title="Resultado"),
                          alt.Tooltip("consultas:Q", title="Consultas", format=","),
                          alt.Tooltip("total:Q", title="Total del día", format=",")],
             )
-            .properties(height=230)
+            .properties(height=210, padding={"top": 0, "left": 4, "right": 4, "bottom": 4})
             .configure_view(strokeWidth=0)
         )
         st.altair_chart(grafico, use_container_width=True)
