@@ -193,7 +193,7 @@ def _descargar_imagen(direccion):
     return datos or None
 
 
-def buscar_en_internet(codigo):
+def buscar_en_internet(codigo, informe=None):
     """(bytes JPEG, nombre de la fuente, alguna base respondió).
     Si ninguna base respondió (sin internet), no se debe anotar el código como "sin foto"."""
     respondio = False
@@ -206,8 +206,12 @@ def buscar_en_internet(codigo):
                 r = requests.get(f"{sitio}/api/v2/product/{forma}.json",
                                  params={"fields": ",".join(("code",) + CAMPOS_IMAGEN)},
                                  headers={"User-Agent": AGENTE}, timeout=12)
-            except requests.RequestException:
+            except requests.RequestException as exc:
+                if informe is not None:
+                    informe.append((nombre, forma, f"sin respuesta ({type(exc).__name__})"))
                 continue
+            if informe is not None:
+                informe.append((nombre, forma, {200: "tiene el producto", 404: "no lo tiene"}.get(r.status_code, f"HTTP {r.status_code}")))
             if r.status_code == 429:
                 time.sleep(3)
                 continue
@@ -455,3 +459,26 @@ def enlaces_firmados(rutas, segundos=3600, base=None, headers=None):
             if fila.get("signedURL") and fila.get("path"):
                 salida[f"{bucket}/{fila['path']}"] = f"{base}/storage/v1{fila['signedURL']}"
     return salida
+
+
+def probar(codigo):
+    """Diagnóstico para la página: busca YA la foto de un código y explica qué pasó."""
+    codigo = _codigo_valido(codigo)
+    if not codigo:
+        return {"error": "Escribe un código de barras numérico de 6 a 14 dígitos."}
+    base, headers = _conexion()
+    for ruta, origen in ((f"{BUCKET}/{codigo}.png", "manual"), (f"{BUCKET}/{CARPETA_INTERNET}/{codigo}.jpg", "internet")):
+        if _leer_existe(base, headers, ruta):
+            return {"ya": origen, "ruta": ruta}
+    informe = []
+    datos, fuente, respondio = buscar_en_internet(codigo, informe)
+    resultado = {"informe": informe, "respondio": respondio, "fuente": fuente}
+    if datos:
+        _asegurar_bucket(base, headers)
+        _subir(base, headers, f"{BUCKET}/{CARPETA_INTERNET}/{codigo}.jpg", datos, "image/jpeg")
+        indice = leer_indice(base, headers)
+        indice["sin_foto"].pop(codigo, None)
+        indice["origen"][codigo] = {"fuente": fuente, "fecha": _ahora().isoformat(timespec="seconds")}
+        guardar_indice(indice, base, headers)
+        resultado["ruta"] = f"{BUCKET}/{CARPETA_INTERNET}/{codigo}.jpg"
+    return resultado

@@ -407,7 +407,14 @@ def verificador():
     comun = {"logo": logo, "qr": qr, "codigo": codigo, "fija": modo_kiosko}
 
     if product is not None:
-        foto = foto_producto(codigo, str(product.get("barcode") or "")) if a.get("mostrar_foto", True) else None
+        # La foto se decide UNA vez, al aparecer el precio: si no había, esta consulta sigue sin foto
+        # (no aparece a mitad de camino). La que se encuentre en segundo plano sale en la próxima.
+        consulta = (st.session_state.result_time, codigo)
+        if st.session_state.get("foto_consulta") != consulta:
+            st.session_state.foto_consulta = consulta
+            st.session_state.foto_actual = (foto_producto(codigo, str(product.get("barcode") or ""))
+                                            if a.get("mostrar_foto", True) else None)
+        foto = st.session_state.foto_actual
         html_pantalla = pantalla_en_linea.pantalla(a, "producto", producto=product, foto=foto, **comun)
     elif st.session_state.consult_error:
         html_pantalla = pantalla_en_linea.pantalla(a, "error", **comun)
@@ -432,9 +439,26 @@ def _apariencia_predeterminada():
                 "mostrar_logo": True, "mostrar_qr": True, "mostrar_cuadro": False, "mostrar_foto": True}
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+_FOTOS = {}   # (códigos) -> (hora, foto): solo las que existen
+
+
 def foto_producto(*codigos):
-    """Foto del producto (a mano o encontrada en internet) como data: URL, o None."""
+    """Foto YA guardada del producto (a mano o de internet) como data: URL, o None.
+    Si no hay, no se espera ni se avisa nada: la búsqueda en internet corre aparte
+    (registro_consultas) y la foto aparecerá desde la siguiente consulta."""
+    clave = tuple(codigos)
+    guardada = _FOTOS.get(clave)
+    if guardada and time.monotonic() - guardada[0] < 600:
+        return guardada[1]
+    foto = _buscar_foto(*codigos)
+    if foto:
+        if len(_FOTOS) > 300:
+            _FOTOS.clear()
+        _FOTOS[clave] = (time.monotonic(), foto)
+    return foto
+
+
+def _buscar_foto(*codigos):
     try:
         import fotos_productos as fp
         from codigos_barras import variantes_codigo

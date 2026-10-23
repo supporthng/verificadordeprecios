@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.9.0";
+  const APP_VERSION = "1.9.1";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -90,7 +90,7 @@
   function mostrarProducto(p, codigo) {
     $("aviso").hidden = true;
     Pantalla.producto(p, codigo, SEG_ENCONTRADO, null);
-    // La foto llega un instante después (se lee del equipo; con internet, si aún no se descargó, de la red).
+    // La foto se lee del equipo (milisegundos). Si todavía no está, el precio sale sin foto y sin avisos.
     const n = ++consultaN;
     fotoPara(p, codigo).then(function (direccion) {
       if (n === consultaN && !$("resultado").hidden) Pantalla.foto(direccion);
@@ -110,7 +110,7 @@
     const blob = await BD.fotoLeer(archivo).catch(function () { return null; });
     if (fotoActual) { URL.revokeObjectURL(fotoActual); fotoActual = null; }
     if (blob) { fotoActual = URL.createObjectURL(blob); return fotoActual; }
-    return navigator.onLine && origen ? base() + archivo : null;
+    return null;   // aún no está en el equipo: se descarga aparte y saldrá en la próxima consulta
   }
   /* Descarga en segundo plano las fotos nuevas y borra las que ya no se usan. */
   async function sincronizarFotos() {

@@ -305,6 +305,40 @@ with pestana_fotos:
                "Fuente: bases abiertas de Open Food Facts (licencia libre CC BY-SA). Muchos productos locales "
                "no aparecen en internet: súbeles la foto a mano.")
 
+    with st.expander("🧪 Probar con un código", expanded=not fotos):
+        st.caption("Busca ahora mismo la foto de un código en internet y muestra qué respondió cada base.")
+        cp1, cp2 = st.columns([2, 1])
+        codigo_prueba = cp1.text_input("Código de barras", key="codigo_prueba_foto",
+                                       label_visibility="collapsed", placeholder="Ej.: 7501055363063").strip()
+        if cp2.button("Buscar foto", key="probar_foto", use_container_width=True) and codigo_prueba:
+            with st.spinner("Buscando…"):
+                try:
+                    r = fp.probar(codigo_prueba)
+                except Exception as exc:
+                    r = {"error": str(exc)}
+            if r.get("error"):
+                st.error(r["error"])
+            elif r.get("ya"):
+                st.success("Este código ya tiene foto " + ("subida a mano." if r["ya"] == "manual" else "de internet."))
+                enlace = fp.enlaces_firmados([r["ruta"]]).get(r["ruta"])
+                if enlace:
+                    st.image(enlace, width=200)
+            else:
+                if r.get("ruta"):
+                    _imagenes_cambiaron()
+                    st.success(f"Foto encontrada en {r['fuente']} y guardada.")
+                    enlace = fp.enlaces_firmados([r["ruta"]]).get(r["ruta"])
+                    if enlace:
+                        st.image(enlace, width=200)
+                    import publicar_equipos
+                    publicar_equipos.actualizar_si_publicado()
+                elif not r.get("respondio"):
+                    st.error("Las bases de fotos no respondieron desde el servidor. Vuelve a intentar en unos minutos.")
+                else:
+                    st.warning("Ninguna base de internet tiene foto de este código. Súbela a mano abajo.")
+                st.dataframe([{"Base": b, "Código probado": c, "Respuesta": t} for b, c, t in r.get("informe", [])],
+                             hide_index=True, use_container_width=True)
+
     st.markdown("#### Fotos guardadas")
     filtro = st.text_input("Buscar por código", key="filtro_fotos", placeholder="Ej.: 7501055363063").strip()
     orden = sorted(fotos.items(), key=lambda kv: (indice["origen"].get(kv[0], {}).get("fecha", ""), kv[0]),
