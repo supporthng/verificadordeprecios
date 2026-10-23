@@ -479,9 +479,15 @@ if _oauth_notice:
     else:
         st.error(_oauth_notice[1])
 
-pagina_tradicional = st.Page("consulta_precios.py", title="Consulta de precios", icon="🏷️", default=True)
+# El verificador (kiosko) entra directo a la consulta; el personal, al Inicio con el resumen.
+pagina_tradicional = st.Page("consulta_precios.py", title="Consulta de precios", icon="🏷️",
+                             default=es_solo_consulta)
 pagina_movil = st.Page("pages/8_Escaner_Movil.py", title="Escáner móvil", icon="📱")
-pages = {"Principal": [pagina_tradicional, pagina_movil]}
+if es_solo_consulta:
+    pages = {"Principal": [pagina_tradicional, pagina_movil]}
+else:
+    pagina_inicio = st.Page("pages/0_Inicio.py", title="Inicio", icon="🏠", default=True)
+    pages = {"Principal": [pagina_inicio, pagina_tradicional, pagina_movil]}
 # Menú agrupado por tarea, con nombres cortos (caben sin cortarse en la barra lateral).
 # "admin" = solo administradores. Las direcciones de las páginas no cambian (salen del archivo).
 MENU = {
@@ -602,9 +608,10 @@ if es_solo_consulta:
 # Cambio a Escáner Móvil ya autorizado por un administrador (cuenta kiosko).
 if st.session_state.pop("cambio_movil_autorizado", False):
     st.switch_page(pagina_movil)
-# Mostrar el botón de cambio en TODAS las sesiones, incluidas admin y consulta.
-en_movil = navegacion.title == "Escáner Móvil"
-if st.button("🏷️" if en_movil else "📱", key="boton_cambio_verificador",
+# Botón de cambio verificador ⇄ móvil: solo en esas dos pantallas (no en las de administración).
+en_movil = navegacion.title == pagina_movil.title
+en_consulta = en_movil or navegacion.title == pagina_tradicional.title
+if en_consulta and st.button("🏷️" if en_movil else "📱", key="boton_cambio_verificador",
              help=("Cambiar a Consulta de Precios" if en_movil else
                    "Cambiar a Escáner Móvil" + (": requiere contraseña de administrador"
                                                 if es_solo_consulta else ""))):
