@@ -21,8 +21,9 @@ PAISES = {
     "Todos los países": (None, None),
 }
 
-st.title("📍 Ubicación autorizada · Consulta Móvil")
-st.caption("Define dónde está el establecimiento y a qué distancia se permite consultar desde el celular.")
+st.title("📍 Ubicación y acceso")
+st.caption("Define dónde está el establecimiento y a qué distancia se permite consultar desde el celular "
+           "y, si lo eliges, entrar a la Consulta de Precios sin usuario.")
 try:
     cfg = get_settings()
 except Exception:
@@ -319,3 +320,37 @@ if st.button("💾 Guardar ubicación", type="primary", use_container_width=True
     except Exception as exc:
         st.error("No se pudo guardar la ubicación en Supabase.")
         st.code(str(exc))
+
+
+# ---------------- Acceso a la pantalla de Consulta de Precios ----------------
+st.divider()
+st.subheader("🔐 Acceso a la Consulta de Precios")
+st.caption("Cómo entra el verificador a la app en línea. La zona es la misma de arriba.")
+import acceso_verificador as _acceso
+_actual = _acceso.modo()
+_elegido = st.radio("Los verificadores entran…", list(_acceso.MODOS), index=list(_acceso.MODOS).index(_actual),
+                    format_func=_acceso.MODOS.get, key="modo_acceso_verificador")
+st.markdown(
+    "- **Con usuario y contraseña:** como hasta ahora, con la cuenta del verificador.\n"
+    "- **Por ubicación del local:** el equipo abre la app y, si está dentro de la zona autorizada, entra "
+    "directo a la Consulta de Precios, **sin usuario**. Para salir sigue haciendo falta la clave de un administrador (✕).\n"
+    "- **Cualquiera de los dos:** la pantalla de inicio de sesión muestra además el botón "
+    "*📍 Entrar como verificador*.")
+if _elegido != "usuario":
+    _zona_activa = bool(st.session_state.get("geo_form_enabled"))
+    if not _zona_activa:
+        st.warning("Activa **Exigir ubicación** y guarda la ubicación de arriba: sin zona autorizada no se puede "
+                   "entrar por ubicación (el verificador tendría que usar su usuario).")
+    st.info("📌 **Personal de la tienda:** dentro del local, la app entrará como verificador. Para iniciar sesión "
+            "con tu usuario usa la dirección **`/?personal=1`** (por ejemplo "
+            "`https://verificadordeprecios.streamlit.app/?personal=1`), o el botón ✕ del verificador con la "
+            "clave de administrador.")
+    st.caption("⚠️ El equipo necesita ubicación activada. Muchos verificadores fijos (como el 2connect) no tienen GPS "
+               "y ubican por Wi-Fi, con poca precisión: si no logra entrar, aumenta el radio o usa el acceso con "
+               "usuario. La app sin internet (GitHub Pages) no pide usuario de todos modos.")
+if st.button("💾 Guardar forma de acceso", use_container_width=True, disabled=_elegido == _actual):
+    try:
+        _acceso.guardar(_elegido)
+        st.success("Forma de acceso guardada: " + _acceso.MODOS[_elegido] + ".")
+    except Exception as exc:
+        st.error("No se pudo guardar: " + str(exc))

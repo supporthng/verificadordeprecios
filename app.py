@@ -244,7 +244,15 @@ except (RuntimeError, requests.RequestException):
     time.sleep(3)
     st.rerun()
 
-if user:
+# Verificador que entró por la ubicación del local (sin usuario): se comporta como la
+# cuenta del verificador (kiosko) mientras la ubicación siga vigente.
+import acceso_verificador as acceso
+if str(st.query_params.get("personal", "")) == "1":
+    st.session_state["acceso_personal"] = True     # el personal entra con su usuario
+if not user and acceso.sesion_vigente() and acceso.modo() != "usuario":
+    user = dict(acceso.USUARIO_UBICACION)
+
+if user and not user.get("por_ubicacion"):
     # Sesión abierta: (re)escribir la cookie en cada carga. Así se guarda aunque
     # una carga anterior se haya interrumpido, y su vencimiento se renueva.
     _escribir_cookie(_token(user), COOKIE_SECONDS)
@@ -262,6 +270,13 @@ if not user:
             st.success(_oauth_login_notice[1])
         else:
             st.error(_oauth_login_notice[1])
+    # Acceso por ubicación: el verificador entra sin usuario si está en el local.
+    _modo_acceso = acceso.modo()
+    if (_modo_acceso != "usuario" and not st.session_state.get("acceso_personal")
+            and (_modo_acceso == "ubicacion" or st.session_state.get("geo_verificador_pedido"))):
+        if acceso.verificar_ubicacion():
+            st.rerun()
+        st.session_state["geo_verificador_pedido"] = False   # falló: queda el inicio de sesión
     st.markdown("""
     <style>
       .stApp { background: radial-gradient(ellipse at 4% 92%, #dce8ff 0%, transparent 46%),
@@ -322,6 +337,13 @@ if not user:
     """, unsafe_allow_html=True)
     _, centro, _ = st.columns([1, 1.05, 1], gap="small")
     with centro:
+        if _modo_acceso in ("ambos", "ubicacion"):
+            if st.button("📍 Entrar como verificador (ubicación del local)", use_container_width=True,
+                         key="entrar_por_ubicacion"):
+                st.session_state["geo_verificador_pedido"] = True
+                st.session_state["acceso_personal"] = False
+                st.rerun()
+            st.caption("O inicia sesión con tu usuario:")
         with st.form("inicio_sesion"):
             nombre = st.text_input("👤 Usuario", placeholder="Ingresa tu usuario")
             clave = st.text_input("🔒 Contraseña", type="password", placeholder="Ingresa tu contraseña")
@@ -363,6 +385,10 @@ if not user:
 def _cerrar_sesion():
     # Bloquear recuperación desde la cookie durante el cambio a login.
     st.session_state.logout_pendiente = True
+    if user and user.get("por_ubicacion"):
+        # Salida autorizada del verificador por ubicación: mostrar el inicio de sesión del personal.
+        acceso.terminar()
+        st.session_state["acceso_personal"] = True
     st.session_state.autorizar_salida_consulta = False
     st.session_state.autorizar_cambio_movil = False
     st.session_state.usuario_id = None
@@ -542,7 +568,7 @@ MENU = {
         ("admin", "pages/14_Equipos_sin_internet.py", "Equipos sin internet", "📴"),
         ("logo", "pages/3_Logo_del_negocio.py", "Logo y QR", "🖼️"),
         ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
-        ("admin", "pages/9_Ubicacion_Movil.py", "Ubicación del móvil", "📍"),
+        ("admin", "pages/9_Ubicacion_Movil.py", "Ubicación y acceso", "📍"),
     ],
     "Informes": [
         ("consultar_base", "pages/13_Registro_Consultas.py", "Registro de consultas", "📊"),

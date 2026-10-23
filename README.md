@@ -169,3 +169,10 @@ La carpeta `pwa_offline/` es el prototipo anterior y ya no se usa: puedes borrar
   lee la tabla completa y la publica para los **equipos sin internet**, solo si cambió.
 - Actualizar: GitHub > **Actions** > *Construir conector Windows* > descargar el artefacto e instalarlo
   en la PC de la tienda (reemplaza al anterior). Estado: `http://localhost:8765/health`.
+
+## Acceso a la Consulta de Precios por ubicación
+
+En **Equipos y pantallas > Ubicación y acceso** se elige cómo entran los verificadores a la app en línea:
+con usuario, por la ubicación del local (sin usuario, dentro de la zona autorizada) o cualquiera de los dos.
+Con acceso por ubicación, el personal entra con su usuario en `/?personal=1`. Salir del verificador sigue
+pidiendo la clave de un administrador.
