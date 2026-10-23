@@ -119,6 +119,34 @@ elif lista:
             return f"hace {minutos // 60} h", luz
         return f"hace {minutos // 1440} días", luz
 
+    def _dispositivo(ua):
+        """Navegador y sistema del equipo, en palabras (a partir del 'user agent')."""
+        import re as _re
+        ua = str(ua or "")
+        if not ua:
+            return "—"
+        sistema = "Windows" if "Windows" in ua else ("iPhone/iPad" if _re.search(r"iPhone|iPad", ua) else
+                  ("Mac" if "Macintosh" in ua else ""))
+        m = _re.search(r"Android (\d+(?:\.\d+)?)", ua)
+        if m:
+            sistema = "Android " + m.group(1)
+            modelo = _re.search(r"Android [^;)]*; ([^;)]+?)(?: Build|\))", ua)
+            if modelo and modelo.group(1).strip() not in ("K", "wv"):
+                sistema += " · " + modelo.group(1).strip()
+        if "; wv)" in ua or " wv)" in ua or "Version/4.0 Chrome" in ua:
+            navegador = "App de quiosco (WebView)"
+        elif "Edg/" in ua:
+            navegador = "Edge"
+        elif "Chrome/" in ua:
+            navegador = "Chrome"
+        elif "Firefox/" in ua:
+            navegador = "Firefox"
+        elif "Safari/" in ua:
+            navegador = "Safari"
+        else:
+            navegador = "Navegador"
+        return navegador + (" · " + sistema if sistema else "")
+
     filas = []
     for e in lista:
         texto, luz = _hace(e.get("ultima_vez"))
@@ -128,13 +156,16 @@ elif lista:
             "Precios": "✅ al día" if al_dia else "⚠️ versión anterior",
             "Productos": e.get("productos"), "Consultas por subir": e.get("pendientes"),
             "App": e.get("app_version"),
+            "Navegador / sistema": _dispositivo(e.get("navegador")),
+            "Desde": _fecha(e.get("primera_vez")),
         })
     st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
     st.caption("🟢 conectado en los últimos 15 min · 🟡 hoy · 🔴 más de un día sin conexión (apagado o sin "
                "internet: sigue funcionando con los precios que tiene). Ponle nombre a cada equipo desde su "
                "menú ✕.")
     with st.expander("Quitar un equipo de la lista"):
-        nombres = {e["device_id"]: f"{e.get('nombre')} · {_hace(e.get('ultima_vez'))[0]}" for e in lista}
+        nombres = {e["device_id"]: f"{e.get('nombre')} · {_dispositivo(e.get('navegador'))} · {_hace(e.get('ultima_vez'))[0]}"
+                   for e in lista}
         quitar = st.selectbox("Equipo", list(nombres), format_func=nombres.get)
         st.caption("Solo lo quita de esta lista (por ejemplo, un equipo que ya no usas). "
                    "Si sigue encendido, volverá a aparecer.")
