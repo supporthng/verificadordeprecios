@@ -417,6 +417,34 @@ with pestana_fotos:
         elif archivo_imagen is not None:
             st.warning("Introduce un código de barras numérico de 6 a 14 dígitos.")
 
+        st.markdown("**O desde internet, sin descargarla:**")
+        if codigo_imagen:
+            from urllib.parse import quote_plus
+            st.link_button("🔍 Buscar en Google Imágenes",
+                           "https://www.google.com/search?tbm=isch&q=" + quote_plus(codigo_imagen))
+        st.caption("En Google, abre la foto, mantén el dedo encima (o clic derecho) → **Copiar dirección de "
+                   "la imagen**, y pégala aquí. Se recorta y se deja sobre fondo blanco.")
+        enlace_foto = st.text_input("Enlace de la imagen", key="enlace_foto_producto",
+                                    placeholder="https://…/foto.jpg").strip()
+        if enlace_foto and codigo_imagen.isdigit() and 6 <= len(codigo_imagen) <= 14:
+            if st.button("Guardar foto del enlace", type="primary", key="guardar_enlace_foto"):
+                try:
+                    from io import BytesIO
+                    jpeg, puntaje = fp.importar_desde_enlace(enlace_foto)
+                    datos = img.guardar_foto_producto(codigo_imagen, BytesIO(jpeg))
+                    _imagenes_cambiaron()
+                    import publicar_equipos
+                    publicar_equipos.actualizar_si_publicado()
+                    st.image(datos, caption=f"Foto para {codigo_imagen}", width=200)
+                    st.success("Foto guardada. Los equipos la descargan solos.")
+                    if puntaje < fp.FONDO_MINIMO:
+                        st.warning("Ojo: esa foto no parece de catálogo (el fondo no es blanco). "
+                                   "Si no te gusta, quítala en la galería y elige otra.")
+                except (RuntimeError, requests.RequestException, OSError, ValueError) as exc:
+                    st.error(str(exc))
+        elif enlace_foto:
+            st.warning("Escribe arriba el código de barras del producto.")
+
     if sin_foto:
         with st.expander(f"🚫 Códigos sin foto en internet ({len(sin_foto):,})"):
             st.caption("Se vuelven a buscar solos a los 30 días. Los marcados como quitados no se buscan más.")
