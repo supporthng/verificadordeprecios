@@ -196,7 +196,10 @@ def _descargar_imagen(direccion, motivo=None):
     ultimo = "sin respuesta"
     for u in opciones:
         try:
-            r = requests.get(u, headers={"User-Agent": NAVEGADOR, "Accept": "image/*,*/*;q=0.8"},
+            from urllib.parse import urlsplit
+            partes = urlsplit(u)
+            r = requests.get(u, headers={"User-Agent": NAVEGADOR, "Accept": "image/*,*/*;q=0.8",
+                                         "Referer": f"{partes.scheme}://{partes.netloc}/"},
                              timeout=20, stream=True, allow_redirects=True)
         except requests.RequestException as exc:
             ultimo = f"sin respuesta ({type(exc).__name__})"
@@ -224,7 +227,7 @@ def _descargar_imagen(direccion, motivo=None):
 
 UPCITEMDB = "https://api.upcitemdb.com/prod/trial/lookup"   # gratis: 100 consultas al día
 FONDO_MINIMO = 0.55     # parte del borde que debe ser fondo blanco/claro (foto de catálogo)
-MAX_CANDIDATAS = 6
+MAX_CANDIDATAS = 12
 
 
 def _abrir_rgb(datos):
@@ -317,7 +320,7 @@ def _candidatas(codigo, informe, estado):
         for forma in formas[:3]:
             try:
                 r = requests.get(f"{sitio}/api/v2/product/{forma}.json",
-                                 params={"fields": ",".join(("code",) + CAMPOS_IMAGEN)},
+                                 params={"fields": ",".join(("code", "images", "selected_images") + CAMPOS_IMAGEN)},
                                  headers={"User-Agent": AGENTE}, timeout=12)
             except requests.RequestException as exc:
                 anotar(nombre, forma, f"sin respuesta ({type(exc).__name__})")
@@ -333,12 +336,36 @@ def _candidatas(codigo, informe, estado):
                     producto = (r.json() or {}).get("product") or {}
                 except ValueError:
                     producto = {}
-            urls = list(dict.fromkeys(producto.get(c) for c in CAMPOS_IMAGEN[:2] if producto.get(c)))
+            urls = list(dict.fromkeys(_fotos_open_facts(producto, sitio)))
             anotar(nombre, forma, f"{len(urls)} foto(s)" if urls else "no lo tiene")
             for u in urls:
                 yield nombre, u, False
             if urls:
                 break
+
+
+def _carpeta_open_facts(codigo):
+    """Carpeta de las fotos en Open Food Facts: 0049000005226 -> 004/900/000/5226."""
+    codigo = str(codigo or "")
+    if len(codigo) <= 8:
+        return codigo
+    codigo = codigo.zfill(13)
+    return f"{codigo[:3]}/{codigo[3:6]}/{codigo[6:9]}/{codigo[9:]}"
+
+
+def _fotos_open_facts(producto, sitio):
+    """La foto principal y TODAS las demás fotos subidas del producto (en alguna suele haber una
+    de catálogo aunque la principal sea de la tienda). Primero las de frente, luego las demás."""
+    urls = []
+    seleccion = (producto.get("selected_images") or {}).get("front", {}).get("display", {})
+    urls += [u for u in seleccion.values() if isinstance(u, str)]
+    urls += [producto.get(c) for c in CAMPOS_IMAGEN[:2] if producto.get(c)]
+    imagenes = producto.get("images") or {}
+    servidor = sitio.replace("://world.", "://images.")
+    carpeta = _carpeta_open_facts(producto.get("code"))
+    numeros = sorted((k for k in imagenes if str(k).isdigit()), key=int)
+    urls += [f"{servidor}/images/products/{carpeta}/{n}.400.jpg" for n in numeros]
+    return [u for u in urls if u]
 
 
 def buscar_en_internet(codigo, informe=None):
@@ -668,3 +695,17 @@ def revisar_guardadas(base=None, headers=None):
         _borrar(base, headers, BUCKET, [f"{CARPETA_INTERNET}/{n}" for n in quitadas])
         guardar_indice(indice, base, headers)
     return len(quitadas)
+
+
+def importar_desde_enlace(enlace):
+    """Para la página: descarga la imagen de un enlace, la deja como foto de catálogo
+    (recorte y fondo blanco parejo) y devuelve (jpeg, puntaje de fondo limpio)."""
+    motivo = []
+    datos = _descargar_imagen(enlace, motivo)
+    if not datos:
+        raise RuntimeError("No se pudo descargar la imagen: " + (motivo[0] if motivo else "enlace inválido"))
+    try:
+        im = _abrir_rgb(datos)
+    except (OSError, ValueError):
+        raise RuntimeError("El enlace no es de una imagen (copia la dirección de la imagen, no de la página).")
+    return _foto_catalogo(im), calidad_fondo(im)
