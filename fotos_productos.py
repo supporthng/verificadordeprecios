@@ -179,18 +179,47 @@ def _reducir(datos):
         return None, None
 
 
-def _descargar_imagen(direccion):
-    if not str(direccion).startswith("https://"):
+NAVEGADOR = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+             "Chrome/124.0 Safari/537.36")
+
+
+def _descargar_imagen(direccion, motivo=None):
+    """Bytes de la imagen o None. Las fotos de tiendas en línea suelen venir por http, con tipo
+    "application/octet-stream" o bloquear agentes desconocidos: se prueba https y http, con
+    un agente de navegador, y se acepta cualquier tipo (luego Pillow comprueba que sea imagen)."""
+    direccion = str(direccion or "").strip()
+    if not direccion.startswith(("https://", "http://")):
         return None
-    r = requests.get(direccion, headers={"User-Agent": AGENTE}, timeout=20, stream=True)
-    if not r.ok or not r.headers.get("Content-Type", "").startswith("image/"):
-        return None
-    datos = b""
-    for bloque in r.iter_content(65536):
-        datos += bloque
-        if len(datos) > MAX_BYTES:
-            return None
-    return datos or None
+    opciones = [direccion]
+    if direccion.startswith("http://"):
+        opciones.insert(0, "https://" + direccion[len("http://"):])
+    ultimo = "sin respuesta"
+    for u in opciones:
+        try:
+            r = requests.get(u, headers={"User-Agent": NAVEGADOR, "Accept": "image/*,*/*;q=0.8"},
+                             timeout=20, stream=True, allow_redirects=True)
+        except requests.RequestException as exc:
+            ultimo = f"sin respuesta ({type(exc).__name__})"
+            continue
+        if not r.ok:
+            ultimo = f"HTTP {r.status_code}"
+            continue
+        tipo = r.headers.get("Content-Type", "").lower()
+        if tipo.startswith(("text/", "application/json")):
+            ultimo = f"no es una imagen ({tipo.split(';')[0]})"
+            continue
+        datos = b""
+        for bloque in r.iter_content(65536):
+            datos += bloque
+            if len(datos) > MAX_BYTES:
+                datos = b""
+                ultimo = "imagen demasiado grande"
+                break
+        if datos:
+            return datos
+    if motivo is not None:
+        motivo.append(ultimo)
+    return None
 
 
 UPCITEMDB = "https://api.upcitemdb.com/prod/trial/lookup"   # gratis: 100 consultas al día
@@ -281,7 +310,7 @@ def _candidatas(codigo, informe, estado):
         fotos = [u for it in items for u in (it.get("images") or []) if str(u).startswith("http")]
         anotar("UPCitemdb", forma, f"{len(fotos)} foto(s)" if fotos else "no lo tiene")
         for u in fotos:
-            yield "UPCitemdb", u.replace("http://", "https://", 1), True
+            yield "UPCitemdb", u, True
         if fotos:
             break
     for nombre, sitio in FUENTES:
@@ -339,20 +368,24 @@ def buscar_en_internet(codigo, informe=None):
                 return datos, fuente, True
             continue
         probadas += 1
+        motivo = []
+        datos = _descargar_imagen(direccion, motivo)
         try:
-            datos = _descargar_imagen(direccion)
             im = _abrir_rgb(datos) if datos else None
-        except (requests.RequestException, OSError, ValueError):
+        except (OSError, ValueError):
             im = None
+            motivo.append("el archivo no es una imagen")
         if im is None:
+            if informe is not None:
+                informe.append((fuente, "", f"foto {probadas}: no se pudo abrir ({motivo[0] if motivo else '?'})"))
             continue
         puntaje = calidad_fondo(im)
         if puntaje >= FONDO_MINIMO:
             if informe is not None:
-                informe.append((fuente, "", f"foto aceptada (fondo limpio {puntaje:.0%})"))
+                informe.append((fuente, "", f"foto {probadas}: aceptada (fondo limpio {puntaje:.0%})"))
             return _foto_catalogo(im), fuente, True
         if informe is not None:
-            informe.append((fuente, "", f"foto descartada: no es de catálogo (fondo limpio {puntaje:.0%})"))
+            informe.append((fuente, "", f"foto {probadas}: descartada, no es de catálogo (fondo limpio {puntaje:.0%})"))
     return None, None, estado["respondio"]
 
 
