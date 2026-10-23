@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.0.3";
+  const APP_VERSION = "1.0.4";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 5 * 60 * 1000;      // revisar si hay precios nuevos
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -379,9 +379,11 @@
     rellenarMenu();
   });
   $("m-completa").addEventListener("click", function () {
+    // Cerrar el menú ANTES: si queda abierto, la pantalla completa lo tapa y bloquea todo.
+    cerrarMenu();
     const el = document.documentElement;
     const pedir = el.requestFullscreen || el.webkitRequestFullscreen;
-    if (pedir) Promise.resolve(pedir.call(el)).catch(function () {});
+    if (pedir) Promise.resolve(pedir.call(el)).catch(function () {}).then(enfocar);
   });
   $("m-desvincular").addEventListener("click", async function () {
     const b = $("m-desvincular");

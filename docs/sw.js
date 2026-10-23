@@ -1,6 +1,6 @@
 /* Guarda la app en el equipo para que abra SIN internet.
    Al cambiar cualquier archivo de la app, sube VERSION: los equipos la renuevan solos. */
-const VERSION = "verificador-1.0.3";
+const VERSION = "verificador-1.0.4";
 const ARCHIVOS = ["./", "index.html", "estilos.css", "app.js", "config.js", "codigos.js", "datos.js",
                   "manifest.webmanifest", "icono.svg", "icono-192.png", "icono-512.png"];
 
