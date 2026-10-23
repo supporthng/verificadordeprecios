@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.3.2";
+  const APP_VERSION = "1.3.3";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -168,7 +168,7 @@
   setInterval(enfocar, 700);
   lector.addEventListener("blur", function () { setTimeout(enfocar, 30); });
   document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) { enfocar(); mantenerEncendida(); revisar(false); }
+    if (!document.hidden) { enfocar(); mantenerEncendida(); despertado = true; revisar(false); }
   });
   /* Si una tecla llega fuera del cuadro, se redirige a él sin perderla. */
   document.addEventListener("keydown", function (e) {
@@ -260,13 +260,15 @@
       ultimaRevisionOk = Date.now();
       // Reportar YA si llegaron precios nuevos o si acaba de volver la conexión;
       // si no, basta un reporte cada 5 minutos.
-      reportar(!!nuevoCatalogo || !!ultimoError || !reportadoAlguna);
+      const reconectado = !!ultimoError || !reportadoAlguna;   // volvió internet, o recién abrió
+      reportar(!!nuevoCatalogo || reconectado);
       reportadoAlguna = true;
       ultimoError = "";
       aplicarApariencia();
       if (!$("aviso").hidden) mostrarEspera(false);
       subirRegistro();
-      revisarApp(false);
+      revisarApp(false, reconectado || despertado);
+      despertado = false;
     } catch (e) {
       ultimoError = e && e.name === "AbortError" ? "Sin respuesta (¿hay internet?)." : String(e && e.message || e);
       if (!productos.size) {
@@ -445,7 +447,7 @@
      version.txt (en GitHub Pages) dice cuál es la versión vigente. Si el equipo tiene otra,
      se pide la nueva; si a los 2 minutos sigue sin instalarse, se reinstala desde cero
      (los precios guardados NO se borran: están en IndexedDB, no en la caché de la app). */
-  let versionNueva = "", nuevaDesde = 0;
+  let versionNueva = "", nuevaDesde = 0, despertado = false;
   async function reinstalarApp() {
     try {
       const regs = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations() : [];
@@ -454,7 +456,7 @@
     } catch (e) { /* se recarga igual */ }
     location.reload();
   }
-  async function revisarApp(ahora) {
+  async function revisarApp(ahora, rapido) {
     try {
       const r = await conTiempo("version.txt?t=" + Date.now(), { cache: "no-store" }, 8000);
       if (!r.ok) return false;
@@ -465,7 +467,17 @@
       const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
       if (reg) await reg.update().catch(function () {});
       const libre = $("resultado").hidden && !dialogoAbierto();
-      if (ahora || (libre && Date.now() - nuevaDesde > 2 * 60 * 1000)) await reinstalarApp();
+      if (ahora) { await reinstalarApp(); return true; }
+      // Al volver internet / despertar: dar 15 s a la actualización normal y, si no se aplicó,
+      // reinstalar (sin interrumpir a un cliente que mira un precio). En los demás casos, 2 min.
+      const espera = rapido ? 15000 : 2 * 60 * 1000;
+      if (rapido) {
+        setTimeout(function () { revisarApp(false, false).then(function () {
+          if (versionNueva && $("resultado").hidden && !dialogoAbierto()) reinstalarApp();
+        }); }, espera);
+      } else if (libre && Date.now() - nuevaDesde > espera) {
+        await reinstalarApp();
+      }
       return true;
     } catch (e) { return false; }
   }
