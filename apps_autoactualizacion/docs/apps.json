@@ -1,0 +1,10 @@
+{
+  "android": {
+    "version": "1.0.0",
+    "url": "https://github.com/supporthng/verificadordeprecios/releases/download/android/ConsultaPrecios.apk"
+  },
+  "windows": {
+    "version": "1.0.0",
+    "url": "https://github.com/supporthng/verificadordeprecios/releases/download/windows/Instalador_Consulta_de_Precios.exe"
+  }
+}
