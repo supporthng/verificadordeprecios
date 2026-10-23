@@ -216,9 +216,36 @@ Si la revisión falla (por ejemplo, si Google pide reconectar la cuenta), GitHub
 """)
 
 # ---------------- Guía Fully Kiosk ----------------
-with st.expander("🔒 Guía: dejar el verificador fijo con Fully Kiosk"):
+with st.expander("🔒 Guía: dejar el verificador fijo como quiosco"):
     direccion_app = guardada or "https://tuusuario.github.io/verificadordeprecios/"
-    st.markdown(f"""
+    tab_free, tab_fully = st.tabs(["FreeKiosk (gratis, recomendado)", "Fully Kiosk"])
+    with tab_free:
+        st.markdown(f"""
+**FreeKiosk** es gratis y de código abierto. Requiere **Android 8 o más nuevo**.
+Se instala con el APK de [GitHub](https://github.com/RushB-fr/freekiosk/releases).
+
+**1. Configuración** (los nombres pueden variar un poco según la versión)
+- Modo **página web** (*WebView / URL*), no el de abrir otra app.
+- Dirección: `{direccion_app}`
+- **PIN** de salida: para salir de FreeKiosk a Android (distinto de la clave de salida del verificador).
+- Activar, si aparecen: **arrancar al encender**, **pantalla siempre encendida**, **pantalla completa**,
+  orientación **horizontal**.
+- **Nunca** activar opciones de *borrar caché* o *borrar datos* al iniciar o recargar: se borrarían los precios.
+
+**2. Probar**
+- Con internet: menú ✕ → debe decir la versión más nueva y **Reporte al panel: ✅**. Ponle **nombre** al equipo.
+- **Sin internet**: apaga el Wi-Fi, reinicia el equipo y escanea: debe dar el precio.
+- Vuelve el Wi-Fi: abajo a la derecha debe decir **Precios al día**, y en **Inicio** el equipo aparece en 🟢.
+
+**3. Bloqueo completo (opcional)**
+- Para que nadie pueda salir, FreeKiosk usa el modo *Device Owner*. Se activa una vez desde una PC con
+  **ADB** y cable USB, con el equipo **sin cuentas de Google**:
+  `adb shell dpm set-device-owner com.freekiosk/.DeviceAdminReceiver`
+
+**Botón "Cerrar aplicación"** del menú ✕: con FreeKiosk no puede cerrar la app; se sale con el **PIN** de FreeKiosk.
+""")
+    with tab_fully:
+        st.markdown(f"""
 Abre **Fully Kiosk Browser** en el 2connect y entra a su **Configuración** (*Settings*).
 Los nombres pueden variar un poco según la versión y el idioma.
 
@@ -255,6 +282,7 @@ Los nombres pueden variar un poco según la versión y el idioma.
 - **Clave de salida del verificador** (botón ✕): menú de la app (actualizar, nombre del equipo).
 - **PIN de Fully**: salir de Fully a Android (configurar Wi-Fi, etc.).
 """)
+
 
 # ---------------- Direcciones ----------------
 with st.expander("Detalles técnicos"):

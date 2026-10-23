@@ -154,7 +154,7 @@ La app del verificador sin internet está en la carpeta `docs/` y se publica con
 7. Si cambias precios directamente en Google, crea el secreto `STREAMLIT_SECRETS` en GitHub
    (Settings > Secrets and variables > Actions) con el contenido de los Secrets de Streamlit:
    `.github/workflows/publicar-equipos.yml` revisa cada 30 minutos y publica solo si cambió.
-8. Para dejarlo fijo como quiosco con Fully Kiosk Browser, sigue la guía de la misma página.
+8. Para dejarlo fijo como quiosco con FreeKiosk (gratis) o Fully Kiosk, sigue la guía de la misma página.
 
 Al cambiar cualquier archivo de `docs/`, sube la versión en los TRES lugares: `APP_VERSION` en `docs/app.js`,
 `VERSION` en `docs/sw.js` y `docs/version.txt`. Los equipos ven `version.txt` y se actualizan solos
