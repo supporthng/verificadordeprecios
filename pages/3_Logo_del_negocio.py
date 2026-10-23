@@ -21,25 +21,31 @@ if not url or not key:
 
 headers = cabeceras(key)
 
-# La sección QR se muestra antes del logo para que sea fácil encontrarla.
-st.info("📱 CONFIGURACIÓN DEL CÓDIGO QR: sube aquí la imagen para consultar desde tu celular.")
-try:
-    qr_actual = requests.get(
-        f"{url}/storage/v1/object/logo-negocio/qr-movil.png",
-        headers=headers, timeout=12,
-    )
-    if qr_actual.ok and qr_actual.headers.get("Content-Type", "").startswith("image/"):
-        st.success("Código QR guardado actualmente en Supabase.")
-        st.image(qr_actual.content, caption="QR que se mostrará en Consulta de Precios", width=180)
-    elif qr_actual.status_code in (400, 404):
-        st.warning("Aún no hay un código QR guardado. Sube la imagen debajo.")
-    else:
-        st.warning(f"No se pudo comprobar el QR guardado (HTTP {qr_actual.status_code}).")
-except requests.RequestException:
-    st.warning("No se pudo consultar el estado del QR en Supabase.")
+INFO_QR = "logo-negocio/qr-movil.json"   # de dónde vino el QR actual y cuándo
 
-def guardar_qr(datos_png):
-    """Guarda el QR en el almacenamiento privado (crea el bucket si hace falta)."""
+
+def leer_enlace_qr(datos_imagen):
+    """Lee el QR de una imagen y devuelve el texto/dirección que contiene (o None)."""
+    try:
+        import zxingcpp
+        with Image.open(BytesIO(datos_imagen)) as im:
+            encontrados = zxingcpp.read_barcodes(im.convert("RGB"))
+        return encontrados[0].text if encontrados else None
+    except Exception:
+        return None
+
+
+def leer_info_qr():
+    try:
+        r = requests.get(f"{url}/storage/v1/object/{INFO_QR}", headers=headers, timeout=10)
+        return r.json() if r.ok else {}
+    except (requests.RequestException, ValueError):
+        return {}
+
+
+def guardar_qr(datos_png, origen, enlace=None):
+    """Guarda el QR en el almacenamiento privado (crea el bucket si hace falta)
+    y registra su origen ("generado" o "subido"), la dirección y la fecha."""
     estado = requests.get(f"{url}/storage/v1/bucket/logo-negocio", headers=headers, timeout=15)
     if estado.status_code == 404:
         creado = requests.post(
@@ -59,6 +65,61 @@ def guardar_qr(datos_png):
     )
     if not guardado.ok:
         raise RuntimeError(f"No se pudo guardar el QR (HTTP {guardado.status_code}): {guardado.text[:350]}")
+    from datetime import datetime, timezone
+    import json
+    info = {"origen": origen, "enlace": enlace,
+            "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    try:   # el registro es informativo: si falla, el QR igual quedó guardado
+        requests.post(f"{url}/storage/v1/object/{INFO_QR}",
+                      headers={**headers, "Content-Type": "application/json", "x-upsert": "true"},
+                      data=json.dumps(info).encode("utf-8"), timeout=15)
+    except requests.RequestException:
+        pass
+
+
+def mostrar_qr_actual():
+    """Muestra qué QR está puesto: imagen, origen, fecha y a dónde lleva."""
+    st.markdown("**QR que se muestra ahora en la pantalla de consulta**")
+    try:
+        r = requests.get(f"{url}/storage/v1/object/logo-negocio/qr-movil.png", headers=headers, timeout=12)
+    except requests.RequestException:
+        st.warning("No se pudo consultar el QR guardado en Supabase.")
+        return
+    if r.status_code in (400, 404):
+        st.warning("Todavía no hay un QR guardado. Genéralo con el botón de abajo.")
+        return
+    if not (r.ok and r.headers.get("Content-Type", "").startswith("image/")):
+        st.warning(f"No se pudo comprobar el QR guardado (HTTP {r.status_code}).")
+        return
+    info = leer_info_qr()
+    enlace = leer_enlace_qr(r.content) or info.get("enlace")
+    col_img, col_txt = st.columns([1, 2])
+    col_img.image(r.content, width=170)
+    with col_txt:
+        origen = {"generado": "⚙️ Generado automáticamente",
+                  "subido": "🖼️ Imagen subida manualmente"}.get(info.get("origen"),
+                  "❔ Origen desconocido (guardado antes de que existiera este registro)")
+        st.markdown(f"**Origen:** {origen}")
+        if info.get("fecha"):
+            try:
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+                # Hora de República Dominicana (el servidor de Streamlit Cloud usa UTC).
+                fecha = datetime.fromisoformat(info["fecha"]).astimezone(ZoneInfo("America/Santo_Domingo"))
+                st.markdown(f"**Guardado:** {fecha:%d/%m/%Y %H:%M}")
+            except ValueError:
+                pass
+        if enlace:
+            st.markdown(f"**Lleva a:** [{enlace}]({enlace})")
+            if "escaner_movil" not in enlace.lower() and "movil=1" not in enlace:
+                st.warning("Este QR **no** lleva a Consulta Móvil. Genera uno nuevo abajo.")
+            elif "embed=true" not in enlace:
+                st.info("Lleva a Consulta Móvil, pero con la barra y los íconos de Streamlit. "
+                        "Si generas uno nuevo, se abrirá sin ellos.")
+            else:
+                st.success("Correcto: lleva a Consulta Móvil sin el marco de Streamlit.")
+        else:
+            st.warning("No se pudo leer el contenido de este QR (imagen borrosa o no es un QR).")
 
 
 def generar_qr_png(enlace):
@@ -83,6 +144,10 @@ def enlace_consulta_movil():
 
 st.divider()
 st.subheader("📱 Código QR para consulta desde el celular")
+if st.session_state.get("aviso_qr"):
+    st.success(st.session_state.pop("aviso_qr"))
+mostrar_qr_actual()
+st.markdown("---")
 
 # --- Opción recomendada: generar el QR automáticamente ---------------------
 st.markdown("**Opción recomendada: generar el QR automáticamente**")
@@ -97,9 +162,9 @@ if st.button("Generar y guardar QR", type="primary", key="generar_qr_movil"):
     else:
         try:
             datos_generados = generar_qr_png(enlace_limpio)
-            guardar_qr(datos_generados)
-            st.image(datos_generados, caption="QR generado y guardado", width=210)
-            st.success("QR guardado. Aparecerá en Consulta de Precios en menos de un minuto.")
+            guardar_qr(datos_generados, "generado", enlace_limpio)
+            st.session_state.aviso_qr = "QR generado y guardado. Aparecerá en Consulta de Precios en menos de un minuto."
+            st.rerun()
         except ImportError:
             st.error("Falta instalar la librería segno (requirements.txt).")
         except (RuntimeError, requests.RequestException) as exc:
@@ -123,8 +188,9 @@ with st.expander("O subir una imagen de QR propia"):
                 datos_qr = salida_qr.getvalue()
             st.image(datos_qr, caption="Vista previa del QR", width=210)
             if st.button("Guardar código QR", key="guardar_qr_movil"):
-                guardar_qr(datos_qr)
-                st.success("Código QR guardado. Aparecerá junto al logo en Consulta de Precios.")
+                guardar_qr(datos_qr, "subido", leer_enlace_qr(datos_qr))
+                st.session_state.aviso_qr = "Imagen de QR guardada. Aparecerá en Consulta de Precios en menos de un minuto."
+                st.rerun()
         except (UnidentifiedImageError, OSError, ValueError):
             st.error("La imagen del QR no es válida.")
         except (RuntimeError, requests.RequestException) as exc:
