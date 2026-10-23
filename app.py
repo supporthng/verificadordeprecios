@@ -485,6 +485,7 @@ pages = {"Principal": [pagina_tradicional, pagina_movil]}
 config = [
     ("cargar_archivo", "pages/10_Inventarios.py", "Inventarios independientes", "📚"),
     ("consultar_base", "pages/4_Listado_Productos.py", "Consulta de Base de Datos", "📋"),
+    ("consultar_base", "pages/13_Registro_Consultas.py", "Registro de consultas", "📊"),
     ("fuentes", "pages/2_Fuentes_de_datos.py", "Administración de Fuentes de Datos", "🔌"),
     ("fuentes", "pages/11_Seleccion_Fuentes.py", "Selección de Fuentes de Datos", "🎯"),
     ("configurar", "pages/7_Google_Drive.py", "Conexión Google Drive / Sheets", "☁️"),

@@ -6,6 +6,7 @@ import streamlit as st
 import requests
 from datetime import datetime, timedelta, timezone
 import time
+from registro_consultas import registrar
 
 # Verificación previa: nunca consultar productos sin autorización geográfica.
 from mobile_geofence import get_settings, validate_location
@@ -94,7 +95,7 @@ def api(method,table,params=None,payload=None):
     r.raise_for_status()
     return r.json()
 
-def consultar(code):
+def consultar(code, canal='movil'):
     if not st.session_state.get('mobile_geo_allowed', False):
         st.error('Consulta bloqueada: ubicación no autorizada.')
         return
@@ -115,6 +116,7 @@ def consultar(code):
             from inventarios import find_barcode
             st.session_state.movil_producto=find_barcode(code)
             st.session_state.movil_resultado_desde=time.monotonic()
+            registrar(code, st.session_state.movil_producto is not None, st.session_state.movil_producto, 'local', canal)
             return
         elif mode=='google':
             from google_oauth_source import config,catalog
@@ -127,7 +129,7 @@ def consultar(code):
             if len(sources)!=1: raise RuntimeError('Debe existir exactamente una fuente externa habilitada.')
             jobs=api('POST','external_price_jobs',payload={'configuration_id':sources[0]['id'],'barcode':code,'status':'pending','expires_at':(datetime.now(timezone.utc)+timedelta(minutes=2)).isoformat()})
             if not jobs or not jobs[0].get('id'): raise RuntimeError('No se pudo registrar la consulta.')
-            st.session_state.movil_job={'id':jobs[0]['id'],'started':time.monotonic()}
+            st.session_state.movil_job={'id':jobs[0]['id'],'started':time.monotonic(),'canal':canal}
             return
         else: raise RuntimeError('Fuente desconocida.')
         from shared import variantes_codigo
@@ -136,6 +138,7 @@ def consultar(code):
         coincidencias.sort(key=lambda r: formas.index(str(r.get('barcode','')).strip()))
         st.session_state.movil_producto=coincidencias[0] if coincidencias else None
         st.session_state.movil_resultado_desde=time.monotonic()
+        registrar(code, bool(coincidencias), st.session_state.movil_producto, mode, canal)
     except Exception as exc:
         st.session_state.movil_error='No se pudo consultar la fuente seleccionada: '+str(exc)
 
@@ -185,7 +188,7 @@ if not st.session_state.movil_mostrar_resultado:
             img.thumbnail((2000,2000))  # fotos de 12 MP: más rápido y lee igual
             found=zxingcpp.read_barcodes(img)
             if found:
-                consultar(found[0].text)
+                consultar(found[0].text, 'movil-foto')
                 st.rerun()
             else: st.warning('No se reconoció el código. Acerca la cámara, enfoca bien y repite la foto.')
         except ImportError: st.error('Falta instalar zxing-cpp (requirements.txt).')
@@ -195,7 +198,7 @@ if not st.session_state.movil_mostrar_resultado:
         # Lectura EN VIVO: al detectar el código consulta sola, sin tomar foto.
         from lector_camara import mostrar_lector
         clave_camara=f"camara_codigo_{st.session_state.movil_camera_version}"
-        mostrar_lector(clave_camara, lambda: consultar(st.session_state.get(clave_camara,'')))
+        mostrar_lector(clave_camara, lambda: consultar(st.session_state.get(clave_camara,''), 'movil-camara'))
         # Alternativa: foto con la cámara del teléfono (no depende del permiso del navegador).
         st.markdown('**¿No se activa la cámara?** Toma una foto con la cámara del teléfono:')
         archivo=st.file_uploader('📸 Tomar foto con la cámara del teléfono',type=['jpg','jpeg','png'],
@@ -209,7 +212,7 @@ if not st.session_state.movil_mostrar_resultado:
         # para que una lectura no se pegue detrás de la anterior.
         clave_codigo=f"movil_codigo_{st.session_state.movil_camera_version}"
         def _consultar_cuadro():
-            consultar(st.session_state.get(clave_codigo,''))
+            consultar(st.session_state.get(clave_codigo,''), 'movil-manual')
         st.text_input('Código de barras',key=clave_codigo,placeholder='Escanea o escribe el código',on_change=_consultar_cuadro)
         # Si Enter ya consultó, el botón no repite la consulta.
         if st.button('Consultar',use_container_width=True) and not st.session_state.movil_mostrar_resultado:
@@ -232,6 +235,8 @@ def resultado():
                     st.session_state.movil_producto=item.get('result')
                     st.session_state.movil_job=None
                     st.session_state.movil_resultado_desde=time.monotonic()
+                    registrar(st.session_state.movil_ultimo, bool(item.get('result')), item.get('result'),
+                              'external', job.get('canal','movil'))
                 elif item['status']=='error':
                     st.session_state.movil_error='Error de consulta en la base externa.'
                     st.session_state.movil_job=None

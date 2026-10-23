@@ -230,6 +230,23 @@ alter table public.mobile_geo_settings enable row level security;
 revoke all on public.mobile_geo_settings from anon, authenticated;
 -- 0,0 no es la ubicación del negocio: configúrala desde la app.
 
+-- 6b. Registro de consultas (códigos buscados y no encontrados) -----
+create table if not exists public.price_lookup_log (
+    id bigint generated always as identity primary key,
+    created_at timestamptz not null default now(),
+    barcode text not null,
+    found boolean not null,
+    product_name text,
+    price numeric(14,2),
+    source text,     -- local (Excel) | google | external (SQL Server)
+    channel text     -- verificador | movil-camara | movil-manual | movil-foto
+);
+create index if not exists price_lookup_log_fecha_idx on public.price_lookup_log (created_at desc);
+create index if not exists price_lookup_log_no_encontrados_idx
+    on public.price_lookup_log (barcode, created_at desc) where not found;
+alter table public.price_lookup_log enable row level security;
+revoke all on public.price_lookup_log from anon, authenticated;
+
 -- 7. Almacenamiento privado del logo y el QR ----------------------------
 insert into storage.buckets (id, name, public)
 values ('logo-negocio', 'logo-negocio', false)

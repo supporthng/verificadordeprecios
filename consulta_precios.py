@@ -10,6 +10,7 @@ import inspect
 import pandas as pd
 import requests
 import streamlit as st
+from registro_consultas import registrar
 from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 # El enfoque se aplica directamente al textbox nativo de Streamlit.
@@ -776,6 +777,7 @@ def buscar_producto(clave):
             else:
                 st.session_state.current_product = product
             st.session_state.result_time = time.monotonic()
+            registrar(query, product is not None, product, "local", "verificador")
         elif mode == "google":
             from google_oauth_source import config as google_config, catalog as google_catalog
             cfg = google_config()
@@ -794,6 +796,7 @@ def buscar_producto(clave):
             else:
                 st.session_state.current_product = hits.iloc[0].to_dict()
             st.session_state.result_time = time.monotonic()
+            registrar(query, not hits.empty, st.session_state.current_product, "google", "verificador")
         else:
             rows = admin_api("POST", "external_price_jobs", payload={
                 "configuration_id": source_id,
@@ -841,6 +844,8 @@ def check_external_result():
                 st.session_state.not_found = True
             st.session_state.external_job = None
             st.session_state.result_time = time.monotonic()
+            registrar(st.session_state.get("last_searched_barcode", ""), bool(result),
+                      st.session_state.current_product, "external", "verificador")
         elif job["status"] == "error":
             st.session_state.external_job = None
             st.session_state.consult_error = (
