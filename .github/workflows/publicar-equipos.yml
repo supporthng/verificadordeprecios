@@ -1,1 +1,37 @@
 
+name: Mantener al día los equipos sin internet
+# Cada 30 minutos revisa la fuente de precios (Excel o Google) y, SOLO si cambió,
+# publica la versión nueva para los verificadores. Necesita el secreto STREAMLIT_SECRETS
+# (Settings > Secrets and variables > Actions) con el mismo contenido de los Secrets de Streamlit.
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publicar-equipos
+  cancel-in-progress: false
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secretos
+        env:
+          STREAMLIT_SECRETS: ${{ secrets.STREAMLIT_SECRETS }}
+        run: |
+          if [ -n "$STREAMLIT_SECRETS" ]; then
+            mkdir -p .streamlit
+            printf '%s\n' "$STREAMLIT_SECRETS" > .streamlit/secrets.toml
+          fi
+      - uses: actions/setup-python@v5
+        if: hashFiles('.streamlit/secrets.toml') != ''
+        with:
+          python-version: "3.12"
+      - name: Instalar
+        if: hashFiles('.streamlit/secrets.toml') != ''
+        run: pip install --quiet "streamlit>=1.47,<2" "pandas>=2.1,<3" "requests>=2.31,<3" "openpyxl>=3.1,<4" "cryptography>=42,<48"
+      - name: Revisar y publicar
+        run: python publicar_automatico.py
