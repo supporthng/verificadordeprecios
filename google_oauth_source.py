@@ -70,7 +70,7 @@ def auth_url(state):
     params={"client_id":setting("GOOGLE_OAUTH_CLIENT_ID"),
             "redirect_uri":setting("GOOGLE_OAUTH_REDIRECT_URI"),
             "response_type":"code","scope":SCOPES,"access_type":"offline",
-            "prompt":"consent","state":state,"include_granted_scopes":"true"}
+            "prompt":"select_account consent","state":state,"include_granted_scopes":"true"}
     return "https://accounts.google.com/o/oauth2/v2/auth?"+urlencode(params)
 
 def exchange_code(code):

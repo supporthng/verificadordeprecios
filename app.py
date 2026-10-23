@@ -114,6 +114,13 @@ if "code" in st.query_params or "error" in st.query_params:
     _oauth_error = str(st.query_params.get("error", ""))
     try:
         from google_oauth_source import verify_state, exchange_code, connect
+        if _oauth_error == "access_denied":
+            raise RuntimeError(
+                "Google no dio acceso (access_denied). Pasa por una de estas dos razones: "
+                "1) se pulsó Cancelar o no se marcaron los permisos de Drive y Sheets; o "
+                "2) la app de Google Cloud está en modo Prueba y esa cuenta no es usuario de prueba: "
+                "agrega el correo en Google Cloud > Google Auth Platform > Público (Usuarios de prueba) "
+                "o pulsa Publicar app. Luego vuelve a Conectar con Google.")
         if _oauth_error:
             raise RuntimeError("Google rechazó la autorización: " + _oauth_error)
         if not _oauth_code or not verify_state(_oauth_state):
