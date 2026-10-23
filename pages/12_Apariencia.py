@@ -13,6 +13,15 @@ import apariencia
 import imagenes_negocio as img
 import vista_previa
 
+# Si la app siguió corriendo mientras se subieron archivos nuevos a GitHub, Streamlit puede
+# tener en memoria la versión vieja de estos módulos: recargarlos para no fallar.
+import importlib
+if not hasattr(apariencia, "ESTILOS") or "mostrar_foto" not in apariencia.PREDETERMINADA:
+    apariencia = importlib.reload(apariencia)
+if not hasattr(vista_previa, "FOTO_DEMO"):
+    vista_previa = importlib.reload(vista_previa)
+vista_previa._plantilla.cache_clear() if hasattr(vista_previa, "_plantilla") else None
+
 require("logo")
 st.title("🎨 Apariencia de la pantalla lectora")
 st.caption("Todo lo que ve el cliente en el verificador se administra aquí. Los cambios llegan a las "
