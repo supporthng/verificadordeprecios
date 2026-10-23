@@ -543,7 +543,7 @@ else:
     <style>
       header[data-testid="stHeader"] { height: 2.75rem !important; min-height: 2.75rem !important; }
       [data-testid="stMainBlockContainer"], .block-container {
-          padding-top: 3rem !important; padding-bottom: 2rem !important;
+          padding-top: 2.9rem !important; padding-bottom: 2rem !important;
       }
       [data-testid="stSidebarHeader"] {
           height: 2.75rem !important; min-height: 0 !important; padding-top: .4rem !important;
@@ -551,6 +551,16 @@ else:
       }
       [data-testid="stSidebarUserContent"] { padding-top: .5rem !important; }
       [data-testid="stSidebarNav"] { padding-top: 0 !important; }
+      /* Elementos invisibles (estilos, guardado de sesión, scripts): Streamlit les deja
+         16 px de separación a cada uno. Se sacan del flujo, pero siguen funcionando. */
+      [data-testid="stMain"] [data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"] > :not(style))) {
+          display: none !important;
+      }
+      [data-testid="stMain"] [data-testid="stElementContainer"]:has(iframe[height="0"]),
+      [data-testid="stMain"] [data-testid="stElementContainer"]:has(iframe[style*="height: 0"]) {
+          position: absolute !important; width: 0 !important; height: 0 !important;
+          overflow: hidden !important; margin: 0 !important;
+      }
     </style>
     """, unsafe_allow_html=True)
 
