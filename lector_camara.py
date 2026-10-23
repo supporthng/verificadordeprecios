@@ -358,9 +358,13 @@ CSS = """
   animation: laser-pulso 1.2s ease-in-out infinite; }
 @keyframes laser-pulso { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .lector-vivo .laser { animation: none; } }
-.lector-vivo-aviso { text-align: center; color: #0b315f; font-weight: 800; margin-top: 8px;
+/* Con fondo propio: se leen bien con el tema claro y con el oscuro del teléfono. */
+.lector-vivo-aviso { text-align: center; color: #0b315f; background: #eef4ff; font-weight: 800;
+  margin: 8px auto 0; max-width: 560px; padding: 6px 10px; border-radius: 10px; box-sizing: border-box;
   font-size: clamp(16px, 4.6vw, 21px); min-height: 1.4em; }
-.lector-vivo-sonido { text-align: center; color: #b45309; font-weight: 700; font-size: 15px; min-height: 1.2em; }
+.lector-vivo-sonido { text-align: center; color: #9a3412; background: #fff7ed; font-weight: 700;
+  font-size: 15px; margin: 6px auto 0; max-width: 560px; border-radius: 10px; box-sizing: border-box; }
+.lector-vivo-sonido:not(:empty) { padding: 5px 10px; }
 /* Cuadro que recibe el código: montado y funcional, pero fuera de la vista. */
 .st-key-camara_codigo { position: absolute !important; left: -10000px !important;
   width: 1px !important; height: 1px !important; overflow: hidden !important; }
