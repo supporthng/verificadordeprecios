@@ -289,9 +289,9 @@ with pestana_fotos:
     if st.button("🔎 Buscar fotos ahora", type="primary", key="buscar_fotos",
                  help="Busca las fotos de los productos consultados que todavía no tienen. "
                       "Igual se hace sola cada 30 minutos."):
-        with st.spinner("Buscando fotos en internet… (unos segundos por producto)"):
+        with st.spinner("Buscando fotos en internet… (hasta 5 productos, cerca de un minuto)"):
             try:
-                r = fp.procesar_pendientes(maximo=25, registro=lambda *_: None)
+                r = fp.procesar_pendientes(maximo=5, registro=lambda *_: None)
                 _imagenes_cambiaron()
                 import publicar_equipos
                 publicar_equipos.actualizar_si_publicado()
@@ -300,9 +300,25 @@ with pestana_fotos:
                 st.rerun()
             except Exception as exc:
                 st.error(f"No se pudo buscar: {exc}")
+    if de_internet and st.button("🧹 Quitar las fotos que no son de catálogo", key="revisar_fotos",
+                                 help="Revisa las fotos de internet ya guardadas y quita las tomadas en la "
+                                      "tienda o con la mano; esos productos se vuelven a buscar."):
+        with st.spinner("Revisando fotos…"):
+            try:
+                n = fp.revisar_guardadas()
+                _imagenes_cambiaron()
+                import publicar_equipos
+                publicar_equipos.actualizar_si_publicado()
+                st.session_state.aviso_logo = f"Se quitaron {n} foto(s) que no eran de catálogo."
+                st.rerun()
+            except Exception as exc:
+                st.error(f"No se pudo revisar: {exc}")
+    st.caption("Solo se guardan fotos **de catálogo**: el producto solo, sobre fondo blanco. Las fotos tomadas "
+               "en la tienda o con la mano se descartan solas.")
     st.caption("Se buscan solas: al consultar en la Consulta en línea (al instante) y cada 30 minutos para "
                "lo consultado en los equipos sin internet. Los equipos descargan las fotos nuevas solos. "
-               "Fuente: bases abiertas de Open Food Facts (licencia libre CC BY-SA). Muchos productos locales "
+               "Fuentes: UPCitemdb (fotos de tiendas en línea, 100 búsquedas gratis al día) y Open Food Facts "
+               "(licencia libre CC BY-SA). Muchos productos locales "
                "no aparecen en internet: súbeles la foto a mano.")
 
     with st.expander("🧪 Probar con un código", expanded=not fotos):

@@ -35,7 +35,7 @@ INDICE = "logo-negocio/fotos-indice.json"
 PUBLICO = "equipos"
 MAPA_PUBLICO = "fotos.json"
 REINTENTAR_DIAS = 30
-MAX_POR_VUELTA = 40          # búsquedas por ejecución (las bases abiertas piden moderación)
+MAX_POR_VUELTA = 25          # búsquedas por ejecución (UPCitemdb gratis: 100 al día)
 MAX_BYTES = 4 * 1024 * 1024
 LADO_MAXIMO = 480            # px: suficiente para la pantalla, liviano para los equipos
 AGENTE = "ConsultaPrecios/1.0 (verificador de precios; github.com/supporthng/verificadordeprecios)"
@@ -193,46 +193,167 @@ def _descargar_imagen(direccion):
     return datos or None
 
 
-def buscar_en_internet(codigo, informe=None):
-    """(bytes JPEG, nombre de la fuente, alguna base respondió).
-    Si ninguna base respondió (sin internet), no se debe anotar el código como "sin foto"."""
-    respondio = False
+UPCITEMDB = "https://api.upcitemdb.com/prod/trial/lookup"   # gratis: 100 consultas al día
+FONDO_MINIMO = 0.55     # parte del borde que debe ser fondo blanco/claro (foto de catálogo)
+MAX_CANDIDATAS = 6
+
+
+def _abrir_rgb(datos):
+    from PIL import Image
+    im = Image.open(BytesIO(datos))
+    im.load()
+    if im.mode in ("RGBA", "LA", "P"):
+        im = im.convert("RGBA")
+        fondo = Image.new("RGB", im.size, "white")
+        fondo.paste(im, mask=im.split()[-1])   # lo transparente cuenta como fondo blanco
+        return fondo
+    return im.convert("RGB")
+
+
+def calidad_fondo(im):
+    """Parte (0 a 1) del borde de la imagen que es fondo blanco o claro y parejo.
+    Las fotos de catálogo (producto solo, fondo blanco) dan cerca de 1;
+    las fotos tomadas en la tienda o con la mano, mucho menos."""
+    chica = im.copy()
+    chica.thumbnail((120, 120))
+    ancho, alto = chica.size
+    if ancho < 20 or alto < 20:
+        return 0.0
+    px = chica.load()
+    banda = max(2, round(min(ancho, alto) * 0.06))
+    claros = total = 0
+    for y in range(alto):
+        for x in range(ancho):
+            if banda <= x < ancho - banda and banda <= y < alto - banda:
+                continue
+            r, g, b = px[x, y]
+            total += 1
+            if min(r, g, b) >= 222 and max(r, g, b) - min(r, g, b) <= 28:
+                claros += 1
+    return claros / total if total else 0.0
+
+
+def _foto_catalogo(im):
+    """Recorta el fondo sobrante y centra el producto en un cuadro blanco (máx. 480 px)."""
+    from PIL import Image, ImageChops
+    diferencia = ImageChops.difference(im, Image.new("RGB", im.size, (255, 255, 255)))
+    caja = diferencia.convert("L").point(lambda v: 255 if v > 24 else 0).getbbox()
+    if caja:
+        im = im.crop(caja)
+    lado = round(max(im.size) * 1.08)
+    cuadro = Image.new("RGB", (lado, lado), "white")
+    cuadro.paste(im, ((lado - im.width) // 2, (lado - im.height) // 2))
+    cuadro.thumbnail((LADO_MAXIMO, LADO_MAXIMO))
+    salida = BytesIO()
+    cuadro.save(salida, format="JPEG", quality=85, optimize=True)
+    return salida.getvalue()
+
+
+def _candidatas(codigo, informe, estado):
+    """Fotos posibles del producto, de la más probable de ser de catálogo a la menos:
+    1) UPCitemdb (fotos de tiendas en línea: producto solo, fondo blanco),
+    2) Open Food Facts y sus bases hermanas (fotos de usuarios, muchas en la tienda)."""
     formas = [f for f in variantes_codigo(codigo) if f.isdigit()]
-    # Las bases guardan casi siempre EAN-13 / UPC-A: probar primero los más largos.
-    formas.sort(key=len, reverse=True)
+    formas.sort(key=len, reverse=True)   # las bases guardan casi siempre EAN-13 / UPC-A
+
+    def anotar(base, forma, texto):
+        if informe is not None:
+            informe.append((base, forma, texto))
+
+    for forma in formas[:2]:
+        try:
+            r = requests.get(UPCITEMDB, params={"upc": forma}, timeout=12,
+                             headers={"User-Agent": AGENTE, "Accept": "application/json"})
+        except requests.RequestException as exc:
+            anotar("UPCitemdb", forma, f"sin respuesta ({type(exc).__name__})")
+            continue
+        if r.status_code == 429:
+            anotar("UPCitemdb", forma, "límite diario alcanzado (se reintenta otro día)")
+            break
+        if r.status_code in (200, 400, 404):
+            estado["respondio"] = True
+        items = []
+        if r.ok:
+            try:
+                items = (r.json() or {}).get("items") or []
+            except ValueError:
+                items = []
+        fotos = [u for it in items for u in (it.get("images") or []) if str(u).startswith("http")]
+        anotar("UPCitemdb", forma, f"{len(fotos)} foto(s)" if fotos else "no lo tiene")
+        for u in fotos:
+            yield "UPCitemdb", u.replace("http://", "https://", 1), True
+        if fotos:
+            break
     for nombre, sitio in FUENTES:
-        for forma in formas[:4]:
+        for forma in formas[:3]:
             try:
                 r = requests.get(f"{sitio}/api/v2/product/{forma}.json",
                                  params={"fields": ",".join(("code",) + CAMPOS_IMAGEN)},
                                  headers={"User-Agent": AGENTE}, timeout=12)
             except requests.RequestException as exc:
-                if informe is not None:
-                    informe.append((nombre, forma, f"sin respuesta ({type(exc).__name__})"))
+                anotar(nombre, forma, f"sin respuesta ({type(exc).__name__})")
                 continue
-            if informe is not None:
-                informe.append((nombre, forma, {200: "tiene el producto", 404: "no lo tiene"}.get(r.status_code, f"HTTP {r.status_code}")))
             if r.status_code == 429:
                 time.sleep(3)
                 continue
             if r.status_code in (200, 404):
-                respondio = True
-            if not r.ok:
+                estado["respondio"] = True
+            producto = {}
+            if r.ok:
+                try:
+                    producto = (r.json() or {}).get("product") or {}
+                except ValueError:
+                    producto = {}
+            urls = list(dict.fromkeys(producto.get(c) for c in CAMPOS_IMAGEN[:2] if producto.get(c)))
+            anotar(nombre, forma, f"{len(urls)} foto(s)" if urls else "no lo tiene")
+            for u in urls:
+                yield nombre, u, False
+            if urls:
+                break
+
+
+def buscar_en_internet(codigo, informe=None):
+    """(bytes JPEG, nombre de la fuente, alguna base respondió).
+    Solo acepta fotos DE CATÁLOGO (producto solo sobre fondo blanco); las fotos tomadas en la
+    tienda o con la mano se descartan. Si ninguna base respondió (sin internet), el código no
+    debe anotarse como "sin foto"."""
+    try:
+        import PIL  # noqa: F401
+        con_pillow = True
+    except ImportError:
+        con_pillow = False
+    estado = {"respondio": False}
+    probadas = 0
+    for fuente, direccion, de_tienda in _candidatas(codigo, informe, estado):
+        if probadas >= MAX_CANDIDATAS:
+            break
+        if not con_pillow:
+            # Sin Pillow (GitHub Actions) no se puede revisar el fondo: solo fotos de tiendas en línea.
+            if not de_tienda:
                 continue
             try:
-                producto = (r.json() or {}).get("product") or {}
-            except ValueError:
-                continue
-            for campo in CAMPOS_IMAGEN:
-                try:
-                    datos = _descargar_imagen(producto.get(campo) or "")
-                except requests.RequestException:
-                    datos = None
-                if datos:
-                    reducida, _ = _reducir(datos)
-                    if reducida:
-                        return reducida, nombre, True
-    return None, None, respondio
+                datos = _descargar_imagen(direccion)
+            except requests.RequestException:
+                datos = None
+            if datos:
+                return datos, fuente, True
+            continue
+        probadas += 1
+        try:
+            datos = _descargar_imagen(direccion)
+            im = _abrir_rgb(datos) if datos else None
+        except (requests.RequestException, OSError, ValueError):
+            im = None
+        if im is None:
+            continue
+        puntaje = calidad_fondo(im)
+        if puntaje >= FONDO_MINIMO:
+            if informe is not None:
+                informe.append((fuente, "", f"foto aceptada (fondo limpio {puntaje:.0%})"))
+            return _foto_catalogo(im), fuente, True
+        if informe is not None:
+            informe.append((fuente, "", f"foto descartada: no es de catálogo (fondo limpio {puntaje:.0%})"))
+    return None, None, estado["respondio"]
 
 
 def _toca_buscar(codigo, indice, fotos):
@@ -307,7 +428,7 @@ def procesar_pendientes(maximo=MAX_POR_VUELTA, dias_iniciales=60, registro=print
             registro(f"📷 {codigo}: foto de {fuente}")
         else:
             sin_foto += 1
-        time.sleep(0.6)      # amable con las bases abiertas
+        time.sleep(11)       # UPCitemdb gratis admite ~6 consultas por minuto
     indice["pendientes"] = cola[hechas:]
     guardar_indice(indice, base, headers)
     return {"buscadas": hechas, "halladas": halladas, "sin_foto": sin_foto,
@@ -379,6 +500,9 @@ def volver_a_buscar(codigo, base=None, headers=None):
     indice = leer_indice(base, headers)
     indice["sin_foto"].pop(codigo, None)
     fuente = buscar_y_guardar(codigo, base, headers, indice)
+    if not fuente:   # no hay una mejor: quitar la que estaba
+        _borrar(base, headers, BUCKET, [f"{CARPETA_INTERNET}/{codigo}.jpg"])
+        indice["origen"].pop(codigo, None)
     guardar_indice(indice, base, headers)
     return fuente
 
@@ -482,3 +606,30 @@ def probar(codigo):
         guardar_indice(indice, base, headers)
         resultado["ruta"] = f"{BUCKET}/{CARPETA_INTERNET}/{codigo}.jpg"
     return resultado
+
+
+def revisar_guardadas(base=None, headers=None):
+    """Quita las fotos de internet ya guardadas que no son de catálogo (fotos de tienda o con la
+    mano) y las deja para volver a buscar. Devuelve cuántas quitó."""
+    from PIL import Image  # noqa: F401  (en Streamlit siempre está)
+    if base is None:
+        base, headers = _conexion()
+    indice = leer_indice(base, headers)
+    quitadas = []
+    for nombre in _listar(base, headers, BUCKET, f"{CARPETA_INTERNET}/"):
+        datos = _leer(base, headers, f"{BUCKET}/{CARPETA_INTERNET}/{nombre}")
+        try:
+            puntaje = calidad_fondo(_abrir_rgb(datos)) if datos else 0.0
+        except (OSError, ValueError):
+            puntaje = 0.0
+        if puntaje < FONDO_MINIMO:
+            quitadas.append(nombre)
+            codigo = nombre.rsplit(".", 1)[0]
+            indice["origen"].pop(codigo, None)
+            indice["sin_foto"].pop(codigo, None)
+            if codigo not in indice["pendientes"]:
+                indice["pendientes"].append(codigo)
+    if quitadas:
+        _borrar(base, headers, BUCKET, [f"{CARPETA_INTERNET}/{n}" for n in quitadas])
+        guardar_indice(indice, base, headers)
+    return len(quitadas)
