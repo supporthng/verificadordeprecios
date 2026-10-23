@@ -1,200 +1,321 @@
-"""Configuración de ubicación del establecimiento mediante GPS del navegador."""
+"""Ubicación autorizada de Consulta Móvil: buscar el establecimiento por nombre,
+pegar un enlace de Google Maps o detectar el GPS, y ver el radio en el mapa."""
 import math
 import re
-import streamlit as st
-from mobile_geofence import get_settings, save_settings
-from streamlit_geolocation import streamlit_geolocation
+from urllib.parse import unquote, urlsplit
+
 import pandas as pd
 import requests
-from urllib.parse import unquote
+import streamlit as st
+from streamlit_geolocation import streamlit_geolocation
 
 from auth_usuarios import require_admin
+from mobile_geofence import get_settings, save_settings
+
 require_admin()
 
-st.title('📍 Ubicación autorizada · Consulta Móvil')
-st.caption('Configura el centro del establecimiento y la distancia máxima autorizada.')
+AGENTE = {"User-Agent": "SistemaConsultaPrecios/1.1 (configuracion de ubicacion)"}
+# País para dar prioridad a los resultados: código ISO y recuadro (minLon, minLat, maxLon, maxLat).
+PAISES = {
+    "República Dominicana": ("do", (-72.01, 17.36, -68.32, 19.93)),
+    "Todos los países": (None, None),
+}
+
+st.title("📍 Ubicación autorizada · Consulta Móvil")
+st.caption("Define dónde está el establecimiento y a qué distancia se permite consultar desde el celular.")
 try:
     cfg = get_settings()
 except Exception:
-    st.error('No se pudo leer la configuración geográfica de Supabase.')
+    st.error("No se pudo leer la configuración geográfica de Supabase.")
     st.stop()
 
-for key, value in [('geo_form_lat',float(cfg['latitude'])),
-                   ('geo_form_lon',float(cfg['longitude'])),
-                   ('geo_form_enabled',bool(cfg['enabled'])),
-                   ('geo_form_radius',int(cfg['radius_m'])),
-                   ('geo_attempt',0),('geo_detecting',False)]:
-    st.session_state.setdefault(key,value)
+for clave, valor in [("geo_form_lat", float(cfg["latitude"])), ("geo_form_lon", float(cfg["longitude"])),
+                     ("geo_form_enabled", bool(cfg["enabled"])), ("geo_form_radius", int(cfg["radius_m"])),
+                     ("geo_attempt", 0), ("geo_detecting", False), ("geo_results", []),
+                     ("geo_origen", "")]:
+    st.session_state.setdefault(clave, valor)
 
-# Aplicar cambios pendientes antes de crear los widgets con esas claves.
-# Streamlit impide modificar una clave después de instanciar su widget.
-geo_pending = st.session_state.pop('geo_pending_coordinates', None)
-if geo_pending is not None:
-    st.session_state['geo_form_lat'], st.session_state['geo_form_lon'] = geo_pending
+# Aplicar coordenadas pendientes ANTES de crear los campos de latitud/longitud.
+pendiente = st.session_state.pop("geo_pending_coordinates", None)
+if pendiente is not None:
+    st.session_state["geo_form_lat"], st.session_state["geo_form_lon"] = pendiente
 
-st.info('Pulsa Detectar mi ubicación desde el dispositivo que está en el establecimiento. El navegador debe solicitar permiso para compartir tu ubicación.')
-if st.button('📍 Detectar mi ubicación', use_container_width=True):
-    st.session_state.geo_attempt += 1
-    st.session_state.geo_detecting = True
-    st.session_state.geo_detect_error = None
 
-# El componente debe permanecer montado después del clic. La clave cambia en
-# cada intento para forzar un montaje nuevo y una nueva solicitud al navegador.
-if st.session_state.geo_detecting:
-    st.caption('Solicitando ubicación al navegador… Acepta el permiso cuando aparezca.')
+def aplicar(lat, lon, origen):
+    """Usar estas coordenadas como centro (se guardan con el botón Guardar)."""
+    st.session_state.geo_pending_coordinates = (float(lat), float(lon))
+    st.session_state.geo_origen = origen
+
+
+# ---------------------------------------------------------------------------
+# Búsqueda por nombre (OpenStreetMap: Photon + Nominatim, gratis, sin claves)
+# ---------------------------------------------------------------------------
+TIPOS = {"supermarket": "supermercado", "convenience": "colmado / tienda", "pharmacy": "farmacia",
+         "hardware": "ferretería", "department_store": "tienda por departamentos", "mall": "centro comercial",
+         "bakery": "panadería", "butcher": "carnicería", "greengrocer": "verdulería", "wholesale": "mayorista",
+         "restaurant": "restaurante", "cafe": "cafetería", "fuel": "gasolinera", "bank": "banco",
+         "clothes": "ropa", "electronics": "electrónica", "beauty": "salón de belleza", "shop": "tienda",
+         "marketplace": "mercado", "residential": "zona residencial", "house": "dirección",
+         "road": "calle", "primary": "avenida", "secondary": "calle", "tertiary": "calle",
+         "city": "ciudad", "town": "pueblo", "suburb": "sector", "neighbourhood": "barrio"}
+
+
+def _tipo(valor):
+    v = str(valor or "").strip().lower()
+    return TIPOS.get(v, v.replace("_", " "))
+
+
+def _texto_direccion(partes):
+    vistos, salida = set(), []
+    for p in partes:
+        p = str(p or "").strip()
+        if p and p.lower() not in vistos:
+            vistos.add(p.lower())
+            salida.append(p)
+    return ", ".join(salida)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def buscar_lugares(texto, pais, lat_ref, lon_ref):
+    """Combina Photon y Nominatim; prioriza el país elegido y la zona actual."""
+    codigo, recuadro = PAISES.get(pais, (None, None))
+    resultados = []
+    # 1) Photon: tolera errores de escritura y búsquedas parciales.
     try:
-        location = streamlit_geolocation(key=f'geo_permission_{st.session_state.geo_attempt}')
-    except Exception as exc:
-        st.session_state.geo_detecting = False
-        st.error('No se pudo iniciar la solicitud de ubicación del navegador.')
-        location = None
-    if isinstance(location,dict) and location.get('latitude') is not None and location.get('longitude') is not None:
-        try:
-            lat, lon = float(location['latitude']),float(location['longitude'])
-            accuracy = float(location.get('accuracy') or 0)
-            if not all(map(math.isfinite,(lat,lon,accuracy))) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                raise ValueError('Coordenadas inválidas')
-            st.session_state.geo_pending_coordinates = (lat, lon)
-            st.session_state.geo_accuracy = accuracy
-            st.session_state.geo_detecting = False
-            st.session_state.geo_location_applied = True
-            st.rerun()
-        except (ValueError,TypeError):
-            st.error('El navegador devolvió coordenadas inválidas.')
-    elif isinstance(location,dict) and location.get('error'):
-        st.error('El navegador no pudo obtener la ubicación: '+str(location['error']))
-        st.session_state.geo_detecting = False
-    else:
-        st.warning('Si no aparece el permiso, revisa los ajustes de ubicación del navegador y vuelve a pulsar Detectar mi ubicación.')
-        st.caption('En iPhone: Ajustes → Privacidad y seguridad → Localización → Safari (o Chrome), permitir ubicación precisa. En Safari también revisa aA → Configuración del sitio web → Ubicación → Preguntar. Abre el enlace directamente en Safari/Chrome, no en el navegador interno de otra aplicación.')
+        params = {"q": texto, "limit": 10, "lang": "default"}
+        if codigo:
+            params["countrycode"] = codigo.upper()
+            params["bbox"] = ",".join(str(x) for x in recuadro)
+        if lat_ref or lon_ref:
+            params.update(lat=lat_ref, lon=lon_ref, location_bias_scale=0.3)
+        r = requests.get("https://photon.komoot.io/api/", params=params, headers=AGENTE, timeout=12)
+        r.raise_for_status()
+        for f in r.json().get("features", []):
+            lon, lat = f["geometry"]["coordinates"][:2]
+            p = f.get("properties", {})
+            calle = " ".join(str(x) for x in (p.get("street"), p.get("housenumber")) if x)
+            resultados.append({
+                "nombre": p.get("name") or calle or "Ubicación",
+                "detalle": _texto_direccion([calle, p.get("district"), p.get("city"), p.get("state"), p.get("country")]),
+                "tipo": _tipo(p.get("osm_value")),
+                "lat": float(lat), "lon": float(lon)})
+    except (requests.RequestException, ValueError, TypeError, KeyError, IndexError):
+        pass
+    # 2) Nominatim: direcciones y lugares registrados con su nombre oficial.
+    try:
+        params = {"q": texto, "format": "jsonv2", "limit": 10, "addressdetails": 1, "accept-language": "es"}
+        if codigo:
+            params["countrycodes"] = codigo
+        r = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers=AGENTE, timeout=12)
+        r.raise_for_status()
+        for x in r.json():
+            a = x.get("address", {})
+            nombre = x.get("name") or str(x.get("display_name", "")).split(",")[0]
+            resultados.append({
+                "nombre": nombre or "Ubicación",
+                "detalle": _texto_direccion([a.get("road"), a.get("suburb") or a.get("neighbourhood"),
+                                             a.get("city") or a.get("town") or a.get("village"),
+                                             a.get("state"), a.get("country")]),
+                "tipo": _tipo(x.get("type")),
+                "lat": float(x["lat"]), "lon": float(x["lon"])})
+    except (requests.RequestException, ValueError, TypeError, KeyError):
+        pass
+    # Quitar duplicados (mismo lugar devuelto por los dos servicios).
+    unicos, vistos = [], set()
+    for res in resultados:
+        clave = (res["nombre"].lower(), round(res["lat"], 3), round(res["lon"], 3))
+        if clave not in vistos:
+            vistos.add(clave)
+            unicos.append(res)
+    return unicos[:12]
 
-if st.session_state.get('geo_location_applied'):
-    st.success('Coordenadas detectadas. Pulsa Guardar ubicación para aplicarlas.')
-    if st.session_state.get('geo_accuracy',0)>50:
-        st.warning('Precisión GPS baja. Intenta nuevamente cerca de una ventana o al aire libre.')
 
-st.toggle('Exigir ubicación para Consulta Móvil',key='geo_form_enabled')
-st.number_input('Distancia máxima permitida (metros)', min_value=10, max_value=10000,
-                step=10, key='geo_form_radius', help='Radio alrededor del establecimiento para Consulta Móvil.')
-st.number_input('Latitud',min_value=-90.0,max_value=90.0,step=0.000001,format='%.7f',key='geo_form_lat')
-st.number_input('Longitud',min_value=-180.0,max_value=180.0,step=0.000001,format='%.7f',key='geo_form_lon')
-st.divider()
-st.subheader('Buscar dirección o establecimiento')
-st.caption('Búsqueda gratuita mundial. Si un negocio no figura en mapas abiertos, usa Google Maps para copiar sus coordenadas.')
-query = st.text_input('Nombre, calle, sector, ciudad o dirección', key='geo_search_text',
-                      placeholder='Ej.: supermercado en Santo Domingo')
-if st.button('🔎 Buscar ubicación', use_container_width=True):
-    if not query.strip():
-        st.warning('Escribe un lugar o una dirección.')
+st.subheader("🔎 1. Busca el establecimiento por nombre")
+with st.form("buscar_lugar"):
+    c1, c2 = st.columns([3, 2])
+    texto = c1.text_input("Nombre, dirección o sector",
+                          placeholder="Ej.: Supermercado Bravo Churchill, Santo Domingo")
+    pais = c2.selectbox("Buscar en", list(PAISES))
+    buscar = st.form_submit_button("Buscar", type="primary", use_container_width=True)
+if buscar:
+    if len(texto.strip()) < 3:
+        st.warning("Escribe al menos 3 letras.")
     else:
-        results = []
+        lat0, lon0 = float(st.session_state.geo_form_lat), float(st.session_state.geo_form_lon)
+        cerca = (round(lat0, 2), round(lon0, 2)) if (lat0 or lon0) else (0.0, 0.0)
+        with st.spinner("Buscando en los mapas…"):
+            st.session_state.geo_results = buscar_lugares(texto.strip(), pais, *cerca)
+        st.session_state.pop("geo_eleccion", None)
+        if not st.session_state.geo_results:
+            st.warning("No apareció en los mapas abiertos. Prueba con la calle o el sector, "
+                       "o usa el enlace de Google Maps (opción 2).")
+
+resultados = st.session_state.geo_results
+if resultados:
+    def _al_elegir():
+        i = st.session_state.get("geo_eleccion")
+        if i is not None:
+            r = resultados[i]
+            aplicar(r["lat"], r["lon"], f"{r['nombre']} · {r['detalle']}")
+
+    st.radio(
+        f"{len(resultados)} resultado(s). Elige el correcto (se marca en el mapa de abajo):",
+        range(len(resultados)), index=None, key="geo_eleccion", on_change=_al_elegir,
+        format_func=lambda i: (f"**{resultados[i]['nombre']}**"
+                               + (f" · _{resultados[i]['tipo']}_" if resultados[i]["tipo"] else "")
+                               + (f"  \n{resultados[i]['detalle']}" if resultados[i]["detalle"] else "")),
+    )
+
+# ---------------------------------------------------------------------------
+# Enlace de Google Maps (incluye enlaces cortos maps.app.goo.gl)
+# ---------------------------------------------------------------------------
+HOSTS_GOOGLE = ("maps.app.goo.gl", "goo.gl", "g.co", "maps.google.com", "www.google.com", "google.com")
+
+
+def coordenadas_de_texto(texto):
+    """Extrae latitud y longitud de un texto o enlace de Google Maps."""
+    t = unquote(texto)
+    for patron in (r"!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)",          # punto exacto del lugar
+                   r"@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)",                # centro del mapa
+                   r"[?&](?:q|query|ll|destination)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)",
+                   r"(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})"):     # "18.47, -69.93"
+        m = re.search(patron, t)
+        if m:
+            lat, lon = map(float, m.groups())
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                return lat, lon
+    return None
+
+
+def expandir_enlace_google(enlace):
+    """Sigue un enlace corto de Google Maps hasta la dirección completa (solo dominios de Google)."""
+    host = (urlsplit(enlace).hostname or "").lower()
+    if not any(host == h or host.endswith("." + h) for h in HOSTS_GOOGLE):
+        return enlace
+    r = requests.get(enlace, headers={"User-Agent": "Mozilla/5.0"}, timeout=12, allow_redirects=True)
+    finales = [x.url for x in r.history] + [r.url]
+    return " ".join(finales) + " " + r.text[:20000]
+
+
+st.subheader("🗺️ 2. O pega el enlace de Google Maps")
+st.caption("En Google Maps busca el negocio, toca **Compartir** y copia el enlace "
+           "(sirven los enlaces cortos `maps.app.goo.gl`). También puedes pegar coordenadas: `18.4861, -69.9312`.")
+with st.form("enlace_google"):
+    pegado = st.text_input("Enlace o coordenadas", placeholder="https://maps.app.goo.gl/…")
+    usar = st.form_submit_button("Usar esta ubicación", use_container_width=True)
+if usar and pegado.strip():
+    coords = coordenadas_de_texto(pegado.strip())
+    if coords is None and pegado.strip().startswith("http"):
         try:
-            r = requests.get('https://photon.komoot.io/api/',
-                params={'q':query.strip(), 'limit':8, 'lang':'es'},
-                headers={'User-Agent':'ConsultaPreciosLocationPicker/1.0'}, timeout=12)
-            r.raise_for_status()
-            for feature in r.json().get('features', []):
-                coords=feature.get('geometry',{}).get('coordinates',[])
-                props=feature.get('properties',{})
-                if len(coords)==2:
-                    label=', '.join(str(props.get(k)) for k in ('name','street','city','state','country') if props.get(k))
-                    results.append({'label':label or 'Ubicación', 'lat':float(coords[1]),'lon':float(coords[0])})
-        except (requests.RequestException, ValueError, TypeError, KeyError):
-            pass
-        if not results:
-            try:
-                r=requests.get('https://nominatim.openstreetmap.org/search',
-                    params={'q':query.strip(),'format':'json','limit':8},
-                    headers={'User-Agent':'ConsultaPreciosLocationPicker/1.0'},timeout=12)
-                r.raise_for_status()
-                results=[{'label':x['display_name'],'lat':float(x['lat']),'lon':float(x['lon'])} for x in r.json()]
-            except (requests.RequestException, ValueError, TypeError, KeyError):
-                pass
-        st.session_state.geo_results=results
-        if not results:
-            st.warning('Sin resultados en los mapas abiertos. Puedes localizar el negocio en Google Maps y pegar sus coordenadas debajo.')
-results=st.session_state.get('geo_results',[])
-if results:
-    selected_index=st.selectbox('Resultados encontrados',range(len(results)),
-        format_func=lambda i:results[i]['label'],key='geo_result_index')
-    if st.button('📍 Seleccionar resultado',use_container_width=True):
-        result=results[selected_index]
-        st.session_state.geo_pending_coordinates=(result['lat'],result['lon'])
-        st.session_state.geo_location_applied=False
+            with st.spinner("Abriendo el enlace de Google Maps…"):
+                coords = coordenadas_de_texto(expandir_enlace_google(pegado.strip()))
+        except requests.RequestException:
+            coords = None
+    if coords:
+        aplicar(*coords, "Enlace de Google Maps")
         st.rerun()
-
-st.subheader('Usar coordenadas de Google Maps')
-st.caption('En Google Maps haz clic derecho en el punto exacto y copia los dos números de latitud y longitud.')
-coordinates=st.text_input('Pegar coordenadas o enlace de Google Maps',key='geo_pasted_coords',
-                           placeholder='18.123456, -69.123456')
-if st.button('Aplicar coordenadas',use_container_width=True):
-    value=unquote(coordinates.strip())
-    match=(re.search(r'@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)',value)
-           or re.search(r'[?&](?:q|query|ll)=(-?\d{1,2}\.\d+)%?2[Cc](-?\d{1,3}\.\d+)',coordinates)
-           or re.search(r'(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)',value))
-    if match:
-        lat0,lon0=map(float,match.groups())
-        if -90<=lat0<=90 and -180<=lon0<=180:
-            st.session_state.geo_pending_coordinates=(lat0,lon0)
-            st.rerun()
-        else:
-            st.error('Las coordenadas están fuera del rango permitido.')
     else:
-        st.warning('Este enlace no contiene coordenadas explícitas. Abre el lugar en Google Maps, haz clic derecho sobre el marcador y copia las coordenadas.')
+        st.warning("No se encontraron coordenadas en ese enlace. En Google Maps mantén pulsado el "
+                   "punto exacto del negocio y copia los dos números que aparecen arriba.")
 
-st.subheader('Nombre o dirección de las coordenadas')
-st.caption('La dirección se consulta en OpenStreetMap sin facturación. No es posible obtener el nombre comercial exclusivo de Google Maps sin su API.')
-if st.button('🔎 Identificar dirección de estas coordenadas', use_container_width=True):
-    try:
-        latitude = float(st.session_state.geo_form_lat)
-        longitude = float(st.session_state.geo_form_lon)
-        if latitude == 0 and longitude == 0:
-            st.warning('Primero selecciona unas coordenadas válidas.')
+# ---------------------------------------------------------------------------
+# GPS del dispositivo (estando en el establecimiento)
+# ---------------------------------------------------------------------------
+with st.expander("📡 3. O detecta tu ubicación actual (estando en el establecimiento)"):
+    if st.button("📍 Detectar mi ubicación", use_container_width=True):
+        st.session_state.geo_attempt += 1
+        st.session_state.geo_detecting = True
+    if st.session_state.geo_detecting:
+        st.caption("Solicitando ubicación al navegador… Acepta el permiso cuando aparezca.")
+        try:
+            ubic = streamlit_geolocation(key=f"geo_permission_{st.session_state.geo_attempt}")
+        except Exception:
+            st.session_state.geo_detecting = False
+            ubic = None
+            st.error("No se pudo iniciar la solicitud de ubicación del navegador.")
+        if isinstance(ubic, dict) and ubic.get("latitude") is not None and ubic.get("longitude") is not None:
+            try:
+                lat, lon = float(ubic["latitude"]), float(ubic["longitude"])
+                precision = float(ubic.get("accuracy") or 0)
+                if not all(map(math.isfinite, (lat, lon))) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    raise ValueError
+                st.session_state.geo_detecting = False
+                st.session_state.geo_accuracy = precision
+                aplicar(lat, lon, f"GPS de este dispositivo (±{precision:.0f} m)")
+                st.rerun()
+            except (ValueError, TypeError):
+                st.error("El navegador devolvió coordenadas inválidas.")
+        elif isinstance(ubic, dict) and ubic.get("error"):
+            st.session_state.geo_detecting = False
+            st.error("El navegador no pudo obtener la ubicación: " + str(ubic["error"]))
         else:
-            response = requests.get(
-                'https://nominatim.openstreetmap.org/reverse',
-                params={'lat': latitude, 'lon': longitude, 'format': 'json', 'zoom': 18, 'addressdetails': 1},
-                headers={'User-Agent': 'SistemaConsultaPrecios/1.0 (reverse-geocoding)'},
-                timeout=15,
-            )
-            response.raise_for_status()
-            place = response.json()
-            st.session_state.geo_resolved_name = place.get('name') or place.get('display_name') or 'Sin dirección registrada'
-            st.session_state.geo_resolved_point = (latitude, longitude)
-    except (requests.RequestException, ValueError, TypeError):
-        st.error('No se pudo consultar el nombre o dirección. Puedes guardar las coordenadas igualmente.')
-if st.session_state.get('geo_resolved_point') == (
-    float(st.session_state.geo_form_lat), float(st.session_state.geo_form_lon)
-):
-    st.info('📍 ' + st.session_state.get('geo_resolved_name', 'Sin dirección registrada'))
+            st.caption("Si no aparece el permiso, revisa los ajustes de ubicación del navegador.")
 
-st.subheader('Vista previa del punto autorizado')
-lat,lon=float(st.session_state.geo_form_lat),float(st.session_state.geo_form_lon)
-if lat==0 and lon==0:
-    st.info('Selecciona un resultado, detecta tu ubicación o introduce las coordenadas.')
+# ---------------------------------------------------------------------------
+# Resultado: mapa con el radio autorizado, ajustes y guardar
+# ---------------------------------------------------------------------------
+st.divider()
+st.subheader("✅ Ubicación y radio autorizado")
+lat, lon = float(st.session_state.geo_form_lat), float(st.session_state.geo_form_lon)
+if st.session_state.geo_origen:
+    st.info("📍 Seleccionado: " + st.session_state.geo_origen)
+if st.session_state.get("geo_accuracy", 0) > 50 and "GPS" in st.session_state.geo_origen:
+    st.warning("Precisión GPS baja. Si puedes, usa la búsqueda por nombre o el enlace de Google Maps.")
+
+st.number_input("Distancia máxima permitida (metros)", min_value=10, max_value=10000, step=10,
+                key="geo_form_radius", help="Radio alrededor del establecimiento dentro del cual se permite consultar.")
+radio = int(st.session_state.geo_form_radius)
+
+if lat == 0 and lon == 0:
+    st.info("Busca el establecimiento, pega un enlace o detecta tu ubicación para ver el mapa.")
 else:
-    st.map(pd.DataFrame([{'lat':lat,'lon':lon}]),latitude='lat',longitude='lon',zoom=16,size=140)
-    st.caption('Centro seleccionado. La restricción de acceso móvil utilizará el radio configurado arriba. Puedes ajustar la latitud y longitud en los campos superiores.')
-    st.link_button('Abrir punto en Google Maps',f'https://www.google.com/maps?q={lat:.7f},{lon:.7f}',use_container_width=True)
-
-if st.button('Guardar ubicación',type='primary',use_container_width=True):
     try:
-        latitude = float(st.session_state.geo_form_lat)
-        longitude = float(st.session_state.geo_form_lon)
+        import pydeck as pdk
+        capas = [
+            pdk.Layer("ScatterplotLayer", data=[{"lat": lat, "lon": lon}], get_position="[lon, lat]",
+                      get_radius=radio, radius_units="meters", stroked=True, filled=True,
+                      get_fill_color=[7, 87, 212, 45], get_line_color=[7, 87, 212, 220],
+                      line_width_min_pixels=2),
+            pdk.Layer("ScatterplotLayer", data=[{"lat": lat, "lon": lon}], get_position="[lon, lat]",
+                      get_radius=7, radius_units="pixels", get_fill_color=[220, 38, 38]),
+        ]
+        otros = [r for r in resultados if (round(r["lat"], 6), round(r["lon"], 6)) != (round(lat, 6), round(lon, 6))]
+        if otros:
+            capas.insert(0, pdk.Layer("ScatterplotLayer", data=otros, get_position="[lon, lat]",
+                                      get_radius=5, radius_units="pixels", get_fill_color=[100, 116, 139, 200],
+                                      pickable=True))
+        zoom = max(9.0, min(18.0, 16.6 - math.log2(max(radio, 10) / 50)))
+        st.pydeck_chart(pdk.Deck(layers=capas, map_provider="carto", map_style="light",
+                                 initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=zoom),
+                                 tooltip={"text": "{nombre}\n{detalle}"} if otros else None),
+                        use_container_width=True)
+        st.caption(f"🔴 Centro del establecimiento · 🔵 zona autorizada de {radio} m"
+                   + (" · ⚪ otros resultados de la búsqueda" if otros else ""))
+    except Exception:
+        st.map(pd.DataFrame([{"lat": lat, "lon": lon}]), latitude="lat", longitude="lon", zoom=16, size=40)
+    st.link_button("Ver este punto en Google Maps", f"https://www.google.com/maps?q={lat:.7f},{lon:.7f}",
+                   use_container_width=True)
+
+with st.expander("Ajuste fino de coordenadas"):
+    st.number_input("Latitud", min_value=-90.0, max_value=90.0, step=0.000001, format="%.7f", key="geo_form_lat")
+    st.number_input("Longitud", min_value=-180.0, max_value=180.0, step=0.000001, format="%.7f", key="geo_form_lon")
+
+st.toggle("Exigir ubicación para Consulta Móvil", key="geo_form_enabled")
+
+if st.button("💾 Guardar ubicación", type="primary", use_container_width=True):
+    try:
+        latitude, longitude = float(st.session_state.geo_form_lat), float(st.session_state.geo_form_lon)
         if latitude == 0 and longitude == 0:
-            st.error('Selecciona primero la ubicación del establecimiento.')
+            st.error("Selecciona primero la ubicación del establecimiento.")
         else:
-            save_settings(latitude, longitude, st.session_state.geo_form_enabled,
-                          st.session_state.geo_form_radius)
+            save_settings(latitude, longitude, st.session_state.geo_form_enabled, st.session_state.geo_form_radius)
             saved = get_settings()
-            if (abs(float(saved['latitude']) - latitude) > 0.0000001
-                or abs(float(saved['longitude']) - longitude) > 0.0000001
-                or bool(saved['enabled']) != bool(st.session_state.geo_form_enabled)
-                or int(saved['radius_m']) != int(st.session_state.geo_form_radius)):
-                st.error('Supabase no confirmó los valores guardados. Revisa los permisos de la tabla mobile_geo_settings.')
+            if (abs(float(saved["latitude"]) - latitude) > 1e-7 or abs(float(saved["longitude"]) - longitude) > 1e-7
+                    or bool(saved["enabled"]) != bool(st.session_state.geo_form_enabled)
+                    or int(saved["radius_m"]) != int(st.session_state.geo_form_radius)):
+                st.error("Supabase no confirmó los valores guardados. Revisa la tabla mobile_geo_settings.")
             else:
-                st.success('Ubicación guardada y verificada en Supabase.')
-                st.caption(f'Latitud: {latitude:.7f} · Longitud: {longitude:.7f} · Radio: {int(st.session_state.geo_form_radius)} metros')
+                st.success(f"Ubicación guardada: {latitude:.7f}, {longitude:.7f} · radio {radio} m.")
     except Exception as exc:
-        st.error('No se pudo guardar la ubicación en Supabase.')
+        st.error("No se pudo guardar la ubicación en Supabase.")
         st.code(str(exc))
