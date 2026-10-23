@@ -110,7 +110,7 @@ if preview and preview[:3]==(kind,fid,sheet):
                 {"kind":kind,"file_id":fid,"sheet_name":sheet,
                  "code_column":code_col,"name_column":name_col,"price_column":price_col})
             st.cache_data.clear()
-            st.success(f"Configuración de Google guardada: {len(df)} productos. Actívala en la pestaña Selección.")
+            st.success(f"Configuración de Google guardada: {len(df)} productos. Actívala en Precios > Fuente activa.")
             _equipos()
         except Exception as e:
             st.error("No se pudo activar: "+str(e))

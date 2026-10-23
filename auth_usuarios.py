@@ -17,12 +17,12 @@ KEY = clave_servidor()
 LARGO_MINIMO_PASSWORD = 4
 
 PERMISOS = {
-    "cargar_archivo": "Cargar Archivo Local",
-    "consultar_base": "Consulta de Base de Datos",
-    "fuentes": "Fuentes de Datos",
-    "configurar": "Configurar Consulta",
-    "logo": "Logo del Negocio",
-    "usuarios": "Administrador de Usuarios",
+    "cargar_archivo": "Inventarios (Excel)",
+    "consultar_base": "Buscar productos y registro de consultas",
+    "fuentes": "Fuente activa y servidores SQL",
+    "configurar": "Google y consulta externa (SQL Server)",
+    "logo": "Logo, QR y apariencia",
+    "usuarios": "Usuarios",
     "solo_consulta": "Modo verificador (kiosko): solo Consulta de Precios",
 }
 MAX_FALLOS = 5

@@ -479,27 +479,40 @@ if _oauth_notice:
     else:
         st.error(_oauth_notice[1])
 
-pagina_tradicional = st.Page("consulta_precios.py", title="Consulta de Precios", icon="🏷️", default=True)
-pagina_movil = st.Page("pages/8_Escaner_Movil.py", title="Escáner Móvil", icon="📱")
+pagina_tradicional = st.Page("consulta_precios.py", title="Consulta de precios", icon="🏷️", default=True)
+pagina_movil = st.Page("pages/8_Escaner_Movil.py", title="Escáner móvil", icon="📱")
 pages = {"Principal": [pagina_tradicional, pagina_movil]}
-config = [
-    ("cargar_archivo", "pages/10_Inventarios.py", "Inventarios independientes", "📚"),
-    ("consultar_base", "pages/4_Listado_Productos.py", "Consulta de Base de Datos", "📋"),
-    ("consultar_base", "pages/13_Registro_Consultas.py", "Registro de consultas", "📊"),
-    ("fuentes", "pages/2_Fuentes_de_datos.py", "Administración de Fuentes de Datos", "🔌"),
-    ("fuentes", "pages/11_Seleccion_Fuentes.py", "Selección de Fuentes de Datos", "🎯"),
-    ("configurar", "pages/7_Google_Drive.py", "Conexión Google Drive / Sheets", "☁️"),
-    ("configurar", "pages/3_Consulta_Bases_de_Datos.py", "Configurar Consulta", "⚙️"),
-    ("logo", "pages/3_Logo_del_negocio.py", "Logo del Negocio", "🖼️"),
-    ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
-    ("usuarios", "pages/5_Administrador_Usuarios.py", "Administrador de Usuarios", "👥"),
-    ("ubicacion_movil", "pages/9_Ubicacion_Movil.py", "Ubicación Consulta Móvil", "📍"),
-    ("ubicacion_movil", "pages/14_Equipos_sin_internet.py", "Equipos sin internet", "📴"),
-]
-habilitadas = [st.Page(path, title=title, icon=icon)
-                for perm, path, title, icon in config if (es_administrador_autenticado if perm == "ubicacion_movil" else allowed(user, perm))]
-if habilitadas:
-    pages["Configuración"] = habilitadas
+# Menú agrupado por tarea, con nombres cortos (caben sin cortarse en la barra lateral).
+# "admin" = solo administradores. Las direcciones de las páginas no cambian (salen del archivo).
+MENU = {
+    "Precios": [
+        ("cargar_archivo", "pages/10_Inventarios.py", "Inventarios (Excel)", "📚"),
+        ("fuentes", "pages/11_Seleccion_Fuentes.py", "Fuente activa", "🎯"),
+        ("configurar", "pages/7_Google_Drive.py", "Google Drive / Sheets", "☁️"),
+        ("consultar_base", "pages/4_Listado_Productos.py", "Buscar productos", "📋"),
+    ],
+    "Equipos y pantallas": [
+        ("admin", "pages/14_Equipos_sin_internet.py", "Equipos sin internet", "📴"),
+        ("logo", "pages/3_Logo_del_negocio.py", "Logo y QR", "🖼️"),
+        ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
+        ("admin", "pages/9_Ubicacion_Movil.py", "Ubicación del móvil", "📍"),
+    ],
+    "Informes": [
+        ("consultar_base", "pages/13_Registro_Consultas.py", "Registro de consultas", "📊"),
+    ],
+    "Administración": [
+        ("usuarios", "pages/5_Administrador_Usuarios.py", "Usuarios", "👥"),
+    ],
+    "SQL Server": [
+        ("fuentes", "pages/2_Fuentes_de_datos.py", "Servidores", "🔌"),
+        ("configurar", "pages/3_Consulta_Bases_de_Datos.py", "Consulta externa", "⚙️"),
+    ],
+}
+for seccion, opciones in MENU.items():
+    visibles = [st.Page(path, title=title, icon=icon) for perm, path, title, icon in opciones
+                if (es_administrador_autenticado if perm == "admin" else allowed(user, perm))]
+    if visibles:
+        pages[seccion] = visibles
 if es_solo_consulta:
     # Ocultar la barra por completo, incluso si el navegador recuerda que estaba abierta.
     # No se modifica el lector ni el script de enfoque de consulta_precios.py.
@@ -578,7 +591,10 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 
 # Ejecutar el navegador exactamente una vez.
-navegacion = st.navigation(pages, position=posicion_navegacion)
+try:   # expanded=True: todo el menú a la vista, sin "View more / View less"
+    navegacion = st.navigation(pages, position=posicion_navegacion, expanded=True)
+except TypeError:
+    navegacion = st.navigation(pages, position=posicion_navegacion)
 if es_solo_consulta:
     if st.button("✕", key="boton_salida_x_consulta", help="Cerrar: requiere contraseña de administrador"):
         st.session_state.autorizar_salida_consulta = True

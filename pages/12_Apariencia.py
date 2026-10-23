@@ -36,5 +36,5 @@ if guardar:
         st.error("No se pudo guardar la apariencia: " + str(exc))
 
 st.divider()
-st.caption("El logo y el código QR se suben en **Logo del Negocio**. "
+st.caption("El logo y el código QR se suben en **Logo y QR**. "
            "Si un elemento está activado pero no se subió su imagen, simplemente no aparece.")

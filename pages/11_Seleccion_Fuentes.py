@@ -40,7 +40,7 @@ except Exception as exc:
     st.code(str(exc))
     st.stop()
 
-labels = {'local': 'Supabase — Inventarios independientes',
+labels = {'local': 'Excel — Inventarios',
           'external': 'Base de datos externa — conector Windows',
           'google': 'Google Drive / Google Sheets'}
 st.info('Fuente actual: ' + labels[current])
@@ -50,15 +50,15 @@ if selected == 'local':
     active = next((item for item in inventories if item.get('is_active')), None)
     if active:
         st.success('Inventario activo: ' + active['name'])
-        st.caption('Para cambiarlo, utiliza Inventarios independientes.')
+        st.caption('Para cambiarlo, utiliza Precios > Inventarios (Excel).')
     else:
-        st.warning('No hay un inventario activo. Ve a Inventarios independientes, carga los productos y activa el catálogo.')
+        st.warning('No hay un inventario activo. Ve a Precios > Inventarios (Excel), carga los productos y activa el catálogo.')
 elif selected == 'external':
     enabled = [item for item in sources if item.get('enabled')]
     if len(enabled) == 1:
         st.success('Configuración externa activa: ' + enabled[0]['name'])
     else:
-        st.warning('Debes activar exactamente una configuración en Configurar Consulta.')
+        st.warning('Debes activar exactamente una configuración en SQL Server > Consulta externa.')
 google_listo = False
 if selected == 'google':
     # No permitir activar Google si no está configurado: el verificador quedaría sin precios.
@@ -66,7 +66,7 @@ if selected == 'google':
         from google_oauth_source import faltantes, config as google_config
         if faltantes():
             st.warning('Google no está configurado en Streamlit Secrets. '
-                       'Ver Configuración > Conexión Google Drive / Sheets.')
+                       'Ver Precios > Google Drive / Sheets.')
         else:
             cfg = google_config() or {}
             google_listo = all(cfg.get(k) for k in ('refresh_token_encrypted', 'kind', 'file_id',
@@ -74,7 +74,7 @@ if selected == 'google':
             if google_listo:
                 st.success('Archivo de Google configurado.')
             else:
-                st.warning('Conecta la cuenta y elige archivo y columnas en Conexión Google Drive / Sheets.')
+                st.warning('Conecta la cuenta y elige archivo y columnas en Precios > Google Drive / Sheets.')
     except Exception as exc:
         st.warning('No se pudo verificar la conexión de Google: ' + str(exc))
 

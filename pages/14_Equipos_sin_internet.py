@@ -50,7 +50,7 @@ try:
     fuente = pe.fuente_activa()
 except Exception:
     fuente = "local"
-NOMBRE_FUENTE = {"local": "Excel (Inventarios independientes)", "google": "Google Drive / Sheets",
+NOMBRE_FUENTE = {"local": "Excel (Inventarios)", "google": "Google Drive / Sheets",
                  "external": "SQL Server"}
 if fuente == "external":
     st.error("La fuente activa es **SQL Server**: los equipos sin internet no pueden recibir esos precios y "
@@ -211,7 +211,7 @@ aunque nadie tenga abierta la app.
 3. Para probar: pestaña **Actions** > *Mantener al día los equipos sin internet* > **Run workflow**.
    En el resultado verás *Precios nuevos publicados* o *Sin cambios*.
 
-Con el Excel no hace falta: al publicarlo en *Inventarios independientes* se envía al instante.
+Con el Excel no hace falta: al publicarlo en *Precios > Inventarios (Excel)* se envía al instante.
 Si la revisión falla (por ejemplo, si Google pide reconectar la cuenta), GitHub te avisa por correo.
 """)
 

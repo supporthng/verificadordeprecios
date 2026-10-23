@@ -115,7 +115,7 @@ def _catalogo_google():
     import google_oauth_source as g
     cfg = g.config()
     if not cfg or not cfg.get("file_id"):
-        raise RuntimeError("Configura el archivo de Google en Conexión Google Drive / Sheets.")
+        raise RuntimeError("Configura el archivo de Google en Precios > Google Drive / Sheets.")
     g.read_file.clear()   # leer SIEMPRE la versión actual del archivo
     g.catalog.clear()
     df = g.catalog(cfg["kind"], cfg["file_id"], cfg.get("sheet_name") or "",
@@ -146,7 +146,7 @@ def _catalogo_local(base, headers):
     if not inv.ok:
         raise RuntimeError(f"Supabase {inv.status_code}: {inv.text[:300]}")
     if not inv.json():
-        raise RuntimeError("No hay un inventario activo. Activa uno en Inventarios independientes.")
+        raise RuntimeError("No hay un inventario activo. Activa uno en Precios > Inventarios (Excel).")
     inventario = inv.json()[0]
     filas, desde = [], 0
     while True:

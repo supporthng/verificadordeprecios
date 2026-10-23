@@ -130,7 +130,7 @@ if selected == 'local':
         from inventarios import active_inventory_id
         inventory_id = active_inventory_id()
         if inventory_id is None:
-            st.info('No hay un inventario activo. Actívalo en Inventarios independientes.')
+            st.info('No hay un inventario activo. Actívalo en Precios > Inventarios (Excel).')
             st.stop()
         filt['inventory_id'] = f'eq.{inventory_id}'
         r = api('GET', 'price_inventory_items', {**filt, 'select': 'barcode,name,price',
