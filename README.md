@@ -31,7 +31,9 @@ resultado. Las credenciales SQL quedan cifradas en el equipo Windows (DPAPI).
 | `inventarios.py` | Inventarios Excel y búsqueda por código |
 | `google_oauth_source.py` | Conexión y lectura de Google Drive / Sheets |
 | `mobile_geofence.py` | Zona autorizada (GPS) de Consulta Móvil |
-| `apariencia.py` | Qué se ve en la pantalla de consulta (logo, QR, cuadro) |
+| `apariencia.py` | Apariencia de la pantalla lectora: nombre del negocio, estilo, color, textos, logo, QR, cuadro |
+| `imagenes_negocio.py` | Logo, código QR y fotos de productos (almacenamiento privado de Supabase) |
+| `vista_previa.py` | Vista previa de la pantalla lectora a la resolución de cada equipo (usa los archivos de `docs/`) |
 | `sql/` | Instalación y migraciones de Supabase |
 | `windows_bridge/` | Código del Conector Windows |
 | `installer/` | Instalador del conector (Inno Setup) y su configuración de ejemplo |
@@ -83,7 +85,7 @@ Se cierra sola únicamente si la cuenta se desactiva o se le cambia la contrase�
 | Consulta de Base de Datos | Listado de productos de cualquier fuente |
 | Fuentes de Datos | Administración y selección de la fuente activa |
 | Configurar Consulta | Conexiones SQL Server y conexión Google |
-| Logo del Negocio | Logo y código QR, y **Apariencia**: mostrar u ocultar logo, QR y cuadro del código |
+| Apariencia | Todo lo de la pantalla lectora en un lugar: nombre del negocio, 5 estilos (Claro, Noche, Color del negocio, Etiqueta de góndola, Panel lateral), color, textos, logo, código QR y fotos de productos, con vista previa en 1024×600, 800×480, 1280×800, Full HD y vertical |
 | Administrador de Usuarios | Cambiar su propia contraseña (crear usuarios requiere rol admin) |
 | **Modo verificador (kiosko)** | Solo la pantalla de consulta, sin menú. Para salir pide usuario y clave de un administrador |
 
@@ -189,3 +191,12 @@ pidiendo la clave de un administrador.
   arranca con Windows. Workflow *Construir app Windows*.
   Descarga fija: `https://github.com/supporthng/verificadordeprecios/releases/download/windows/Instalador_Consulta_de_Precios.exe`
 - En las dos, se sale desde el menú ✕ con la clave de salida del verificador.
+
+### Publicar una versión nueva del marco de las apps (APK / instalador)
+
+Solo cuando cambia el código de `apps/` (las funciones del verificador viven en `docs/` y se actualizan solas):
+1. Sube la versión en `apps/android/app/build.gradle` (`versionName`), `apps/windows/kiosco.py` (`VERSION`)
+   y `apps/windows/ConsultaPrecios.iss` (`MyAppVersion`).
+2. Ejecuta los workflows *Construir app Android* / *Construir app Windows* y espera a que publiquen.
+3. **Después**, sube la misma versión en `docs/apps.json`: los equipos verán en el menú ✕
+   "⬇️ Actualizar la app" (Windows se instala solo; Android pide tocar Instalar, salvo con bloqueo total).

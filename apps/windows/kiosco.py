@@ -12,15 +12,20 @@ bloqueo total, usar además "Acceso asignado" de Windows (ver la guía en Equipo
 """
 import ctypes
 import os
+import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.request
 from ctypes import wintypes
 
 import webview
 
 DIRECCION = "https://supporthng.github.io/verificadordeprecios/"
 VERSION = "1.0.0"
+# Solo se aceptan actualizaciones publicadas en el repositorio del negocio.
+ORIGEN_ACTUALIZACION = "https://github.com/supporthng/verificadordeprecios/releases/download/"
 DATOS = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ConsultaPrecios", "WebView")
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -135,6 +140,38 @@ class Kiosco:
         if self._ventana:
             self._ventana.destroy()
         return True
+
+    def actualizar(self, url):
+        """Descargar el instalador nuevo, instalarlo en silencio y volver a abrir la app."""
+        if not isinstance(url, str) or not url.startswith(ORIGEN_ACTUALIZACION) or not url.endswith(".exe"):
+            return False
+        threading.Thread(target=self._actualizar, args=(url,), name="actualizar-app", daemon=True).start()
+        return True
+
+    def _avisar(self, estado):
+        try:
+            self._ventana.evaluate_js(f"window.__actualizacionApp && window.__actualizacionApp('{estado}')")
+        except Exception:
+            pass
+
+    def _actualizar(self, url):
+        try:
+            self._avisar("descargando")
+            destino = os.path.join(tempfile.gettempdir(), "Instalador_Consulta_de_Precios.exe")
+            with urllib.request.urlopen(url, timeout=120) as respuesta, open(destino, "wb") as archivo:
+                while True:
+                    bloque = respuesta.read(1 << 16)
+                    if not bloque:
+                        break
+                    archivo.write(bloque)
+            self._avisar("instalando")
+            # El instalador espera a que esta app se cierre, reemplaza los archivos y la vuelve a abrir.
+            subprocess.Popen([destino, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"],
+                             close_fds=True, creationflags=0x00000008 | 0x00000200)  # DETACHED | NEW_GROUP
+            time.sleep(1)
+            self.salir()
+        except Exception:
+            self._avisar("error")
 
     def recargar(self):
         if self._ventana:

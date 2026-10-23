@@ -363,7 +363,6 @@ ACCESOS = [
     ("cargar_archivo", "pages/10_Inventarios.py", "Subir precios (Excel)", "📚"),
     ("consultar_base", "pages/4_Listado_Productos.py", "Buscar productos", "📋"),
     ("admin", "pages/14_Equipos_sin_internet.py", "Equipos sin internet", "📴"),
-    ("logo", "pages/3_Logo_del_negocio.py", "Logo y QR", "🖼️"),
     ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
     ("usuarios", "pages/5_Administrador_Usuarios.py", "Usuarios", "👥"),
     (None, "consulta_precios.py", "Pantalla del verificador", "🏷️"),

@@ -1,187 +1,303 @@
-/* Mismo diseño que la Consulta de Precios de la app en línea (modo verificador),
-   sin depender de Streamlit: todo se ajusta solo al alto y ancho de la pantalla. */
+/* Verificador de precios: pantalla blanca y tranquila. Lo único que se mueve es el láser,
+   y lo único grande es el precio, escrito como en la etiqueta de la góndola. */
+@font-face {
+  font-family: "Sora";
+  src: url("fuentes/Sora.ttf") format("truetype");
+  font-weight: 100 800;
+  font-display: swap;
+}
+:root {
+  --papel: #ffffff;
+  --tinta: #0f2440;
+  --gris: #6b7a90;
+  --linea: #e6ebf2;
+  --marca: #0757d4;
+  --laser: #ff7a1a;
+  --alerta: #d92d20;
+  --precio: var(--marca);
+  --acento: var(--marca);
+  --sobre-marca: #ffffff;
+  --margen: clamp(18px, 4vmin, 64px);
+}
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
-  background: #f4f8ff; color: #102b50;
-  font-family: "Source Sans Pro", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--papel); color: var(--tinta);
+  font-family: "Sora", "Segoe UI", Roboto, Arial, sans-serif;
   -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none;
-  overscroll-behavior: none;
+  overscroll-behavior: none; font-variant-numeric: tabular-nums;
 }
 [hidden] { display: none !important; }
 
-/* ---------- Cuadro del escáner ---------- */
+/* ---------- Cuadro del escáner (activo siempre; visible solo si Apariencia lo pide) ---------- */
 .lector {
   position: fixed; z-index: 60; left: 50%; transform: translateX(-50%);
-  bottom: max(12px, env(safe-area-inset-bottom));
-  width: min(520px, 70vw); height: 46px; padding: 0 14px;
-  border: 2px solid #16823c; border-radius: 10px; background: #fff;
-  font: inherit; font-size: 20px; letter-spacing: 1px; color: #102b50; outline: none;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  width: min(480px, 70vw); height: 46px; padding: 0 16px;
+  border: 1px solid var(--linea); border-radius: 23px; background: #fff;
+  font: inherit; font-size: 18px; letter-spacing: .04em; color: var(--tinta); outline: none;
   user-select: text; -webkit-user-select: text;
 }
-/* Oculto pero ACTIVO: sigue recibiendo lo que escribe el escáner. */
+.lector:focus { border-color: var(--marca); }
 .lector.oculto {
   opacity: 0; pointer-events: none; width: 2px; height: 2px; padding: 0; border: 0;
   bottom: 0; caret-color: transparent;
 }
 
-/* ---------- Pantalla de espera ---------- */
-.pantalla-espera {
-  position: fixed; inset: 0; z-index: 50;
-  display: flex; flex-direction: column; align-items: center;
-  gap: clamp(8px, 2.4dvh, 26px);
-  padding: clamp(8px, 2dvh, 22px) clamp(10px, 2vw, 28px) clamp(10px, 2.4dvh, 26px);
-  background: #f4f8ff;
+/* ---------- Estructura común: espera y precio ocupan la pantalla (menos el panel, si hay) ---------- */
+.espera, .resultado {
+  position: fixed; z-index: 50; top: var(--arriba, 0px); left: var(--izq, 0px); right: 0; bottom: 0;
+  background: var(--papel); display: grid; padding: var(--margen);
 }
-.pantalla-espera > * { flex: 0 0 auto; }
-.main-header {
-  width: 100%; text-align: center; color: #fff;
-  background: linear-gradient(110deg, #0b315f, #0757d4);
-  border-radius: 14px; box-shadow: 0 5px 14px rgba(8, 60, 130, .10);
-  padding: clamp(8px, 2.6dvh, 28px) 40px;
-}
-.main-header h1 { margin: 0; font-size: clamp(18px, 6.2dvh, 46px); line-height: 1.15; font-weight: 800; }
-.main-header p { margin: .5dvh 0 0; color: #dceaff; font-size: clamp(11px, 2.8dvh, 20px); }
+.chip { background: #fff; border-radius: 14px; padding: clamp(5px, 1.3vmin, 12px); }
 
-.animated-barcode-card {
-  width: min(560px, 60vw); background: #fff; border-radius: 16px; text-align: center;
-  padding: 1.4dvh 18px 1dvh; box-shadow: 0 6px 18px rgba(17, 54, 98, .10);
+/* ---------- Espera ---------- */
+.espera { grid-template-rows: auto 1fr auto; }
+.cabecera { grid-row: 1; justify-self: start; display: flex; align-items: center; gap: clamp(10px, 2.4vmin, 22px); min-width: 0; max-width: 100%; }
+.cabecera-logo { display: block; max-height: clamp(40px, 12vh, 160px); max-width: 34vw; object-fit: contain; }
+.cabecera-nombre {
+  font-weight: 700; letter-spacing: -0.015em; line-height: 1.1; font-size: clamp(18px, 3.8vmin, 50px);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 62vw;
 }
-.animated-bars {
-  position: relative; overflow: hidden; height: clamp(34px, 17dvh, 160px);
-  background: repeating-linear-gradient(90deg,
-    #102b50 0px, #102b50 2px, #fff 2px, #fff 5px,
-    #102b50 5px, #102b50 9px, #fff 9px, #fff 12px,
-    #102b50 12px, #102b50 13px, #fff 13px, #fff 17px,
-    #102b50 17px, #102b50 22px, #fff 22px, #fff 26px);
+.sin-logo .cabecera-nombre { font-size: clamp(20px, 4.6vmin, 60px); }
+.espera-centro {
+  grid-row: 2; align-self: center; justify-self: center; width: min(1300px, 100%);
+  text-align: center;
 }
-.animated-scan-line {
-  position: absolute; top: 0; bottom: 0; left: 0; width: 4px;
-  background: #ff9d20; box-shadow: 0 0 9px 3px rgba(255, 157, 32, .7);
-  animation: barrido 2.4s ease-in-out infinite alternate;
+.titulo {
+  margin: 0; font-weight: 600; letter-spacing: -0.02em; line-height: 1.05; text-wrap: balance;
+  font-size: clamp(30px, 8.4vmin, 110px); overflow-wrap: anywhere;
 }
-@keyframes barrido { from { left: 0; } to { left: calc(100% - 4px); } }
-.animated-barcode-caption { color: #102b50; font-size: clamp(10px, 2.2dvh, 16px); margin-top: .6dvh; }
-.barcode-not-found { background: #fff1f2; }
-.barcode-not-found .animated-bars {
-  background: repeating-linear-gradient(90deg, #b91c1c 0px, #b91c1c 3px, transparent 3px, transparent 6px,
-    #dc2626 6px, #dc2626 8px, transparent 8px, transparent 12px);
+.pista {
+  margin: clamp(14px, 3vh, 28px) 0 0; color: var(--gris); font-weight: 400; text-wrap: balance;
+  font-size: clamp(15px, 3.2vmin, 36px);
 }
-.barcode-not-found .animated-scan-line { display: none; }
-@media (prefers-reduced-motion: reduce) { .animated-scan-line { animation: none; left: 50%; } }
+.pista strong { color: var(--tinta); font-weight: 600; letter-spacing: .03em; }
 
-.espera-textos { text-align: center; }
-.scan-title { font-size: clamp(16px, 5.8dvh, 42px); line-height: 1.1; font-weight: 700; color: #102b50; }
-.scan-title.no-encontrado { color: #b91c1c; font-weight: 800; }
-.scan-hint { color: #7c8ca6; font-size: clamp(11px, 2.8dvh, 20px); margin-top: .4dvh; font-weight: 500; }
-.scan-hint.no-encontrado { color: #b91c1c; font-weight: 700; }
+/* Logo en el centro: grande, encima del mensaje. */
+.logo-centro .espera { grid-template-rows: 1fr auto auto 1fr auto; }
+.logo-centro .cabecera { grid-row: 2; justify-self: center; flex-direction: column; text-align: center; }
+.logo-centro .cabecera-logo { max-height: clamp(60px, 24vh, 340px); max-width: 64vw; }
+.logo-centro .cabecera-nombre { font-size: clamp(18px, 4vmin, 54px); color: var(--gris); white-space: normal; text-wrap: balance; max-width: 80vw; }
+.logo-centro .espera-centro { grid-row: 3; margin-top: clamp(20px, 7vh, 64px); }
+.logo-centro .titulo { font-size: clamp(26px, 6.6vmin, 90px); }
+.logo-centro .espera-qr { grid-row: 5; }
 
-/* Logo y QR usan todo el alto que queda. */
-.verif-imagenes {
-  flex: 1 1 0; min-height: 0; width: 100%;
-  display: flex; justify-content: center; align-items: center; gap: clamp(18px, 6vw, 80px);
+/* El láser: una línea fina que barre de lado a lado, como la del lector. */
+.laser {
+  position: relative; height: 2px; margin: clamp(22px, 6vh, 54px) auto 0; width: min(900px, 78%);
+  background: var(--linea); border-radius: 1px; overflow: visible;
 }
-.verif-logo { display: block; object-fit: contain; max-width: min(34vw, 320px); max-height: min(100%, 260px); }
-.verif-qr {
-  height: 100%; min-height: 0; max-height: 300px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .8dvh;
+.logo-centro .laser { margin-top: clamp(14px, 4vh, 36px); }
+.laser-haz {
+  position: absolute; top: -1px; left: 0; height: 4px; width: 22%; border-radius: 2px;
+  background: var(--laser); box-shadow: 0 0 14px 2px rgba(255, 122, 26, .55);
+  animation: barrido 2.6s cubic-bezier(.45, 0, .55, 1) infinite alternate;
 }
-.verif-qr img {
-  display: block; flex: 0 1 auto; min-height: 0; object-fit: contain;
-  max-height: calc(100% - 2.6em); max-width: min(30vw, 240px);
-  background: #fff; padding: 4px; border-radius: 8px;
+@keyframes barrido { from { left: 0; } to { left: 78%; } }
+@media (prefers-reduced-motion: reduce) { .laser-haz { animation: none; left: 39%; } }
+
+/* No encontrado: el láser se detiene en rojo. */
+.laser.barcode-not-found { background: transparent; }
+.laser.barcode-not-found .laser-haz {
+  animation: none; left: 0; width: 100%; background: var(--alerta); box-shadow: none; height: 3px; top: -.5px;
 }
-.verif-qr span {
-  flex: 0 0 auto; background: #0757d4; color: #fff; font-weight: 800; white-space: nowrap;
-  font-size: clamp(12px, 2.8dvh, 20px); line-height: 1.15; padding: .6dvh 12px; border-radius: 999px;
-  box-shadow: 0 2px 6px rgba(7, 87, 212, .25);
+.titulo.no-encontrado { color: var(--alerta); }
+
+.espera-qr {
+  grid-row: 3; justify-self: end; display: flex; align-items: center; gap: 14px;
+  color: var(--gris); font-size: clamp(12px, 2.3vmin, 24px); line-height: 1.3; text-align: right;
+}
+.espera-qr span { max-width: 15ch; }
+.espera-qr img {
+  display: block; width: clamp(72px, 17vmin, 210px); height: auto;
+  border-radius: 10px; border: 1px solid var(--linea); padding: 6px; background: #fff;
 }
 
-/* ---------- Pantalla del precio ---------- */
-.resultado-pantalla {
-  position: fixed; z-index: 50;
-  inset: clamp(6px, 1.5dvh, 16px) clamp(8px, 1.5vw, 20px);
-  border-radius: 15px; overflow: hidden; background: #f6faff; text-align: center;
-  display: flex; flex-direction: column; box-shadow: 0 4px 18px rgba(14, 49, 101, .07);
+/* ---------- Precio ---------- */
+.resultado { grid-template-rows: auto 1fr auto; padding-bottom: calc(var(--margen) + 28px); /* aire para el ✕ */ }
+.resultado-cabecera {
+  grid-row: 1; display: flex; align-items: center; gap: 12px; min-width: 0;
+  color: var(--gris); font-weight: 600; font-size: clamp(14px, 2.6vmin, 30px);
 }
-.resultado-datos {
-  flex: 1 1 53%; min-height: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: clamp(8px, 2dvh, 16px); padding: clamp(10px, 2dvh, 22px) clamp(14px, 3vw, 40px);
-}
-.resultado-etiqueta { color: #8799b4; letter-spacing: .15em; font-weight: 800; font-size: clamp(15px, 1.8vw, 23px); }
+.resultado-cabecera span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.resultado-logo { display: block; max-height: clamp(26px, 7vh, 84px); max-width: 22vw; object-fit: contain; }
+.resultado-producto { grid-row: 2; align-self: center; max-width: 92%; min-width: 0; }
 .resultado-nombre {
-  color: #0d2d58; font-weight: 900; font-size: clamp(31px, 4.6vw, 72px); line-height: 1.12;
-  max-width: 96%; overflow-wrap: anywhere; text-wrap: balance;
+  margin: 0; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; text-wrap: balance;
+  font-size: clamp(28px, 7vmin, 92px); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.resultado-codigo { color: #8497b2; font-size: clamp(17px, 2.1vw, 27px); }
-.resultado-precio-panel {
-  flex: 0 0 42%; min-height: 0; color: #fff;
-  background: linear-gradient(105deg, #0860e8, #0851d3);
-  display: flex; flex-direction: column; justify-content: center; align-items: center;
-  gap: clamp(5px, 1.2dvh, 14px); padding: 8px 18px;
+.resultado-codigo {
+  margin: clamp(8px, 2vh, 16px) 0 0; color: var(--gris); font-size: clamp(14px, 2.6vmin, 30px);
 }
-.resultado-precio-etiqueta { font-weight: 800; letter-spacing: .05em; white-space: nowrap; font-size: clamp(17px, 2.2vw, 27px); }
-.resultado-precio {
-  font-weight: 900; font-size: clamp(64px, 9.5vw, 136px); line-height: 1.05;
-  white-space: nowrap; font-variant-numeric: tabular-nums;
+.resultado-codigo span { color: var(--tinta); letter-spacing: .03em; }
+
+/* Etiqueta de góndola: moneda pequeña, entero enorme, centavos arriba.
+   --escala la ajusta pantalla.js para que el precio quepa siempre, sea cual sea la pantalla. */
+.etiqueta {
+  grid-row: 3; margin: 0; justify-self: end; display: flex; align-items: flex-start; color: var(--precio);
+  font-weight: 700; line-height: .86; letter-spacing: -0.04em; white-space: nowrap;
 }
-@media (orientation: landscape) and (max-height: 550px) {
-  .resultado-datos { padding: 5px 14px; gap: 6px; }
-  .resultado-nombre { font-size: clamp(29px, 4.2vw, 58px); }
-  .resultado-precio-panel { flex-basis: 43%; }
-  .resultado-precio { font-size: clamp(59px, 8.7vw, 112px); }
+.etiqueta-moneda {
+  font-size: calc(clamp(22px, 6vmin, 80px) * var(--escala, 1)); font-weight: 600; letter-spacing: 0;
+  margin: .5em .3em 0 0; color: var(--tinta);
 }
-@media (max-width: 650px) { .resultado-precio { font-size: clamp(44px, 13vw, 80px); } }
+.etiqueta-entero { font-size: calc(clamp(96px, 31vmin, 440px) * var(--escala, 1)); }
+.etiqueta-centavos {
+  font-size: calc(clamp(36px, 11vmin, 150px) * var(--escala, 1)); margin-left: .08em; padding-top: .1em;
+  border-bottom: .07em solid currentColor; line-height: .9;
+}
+
+/* Cuenta regresiva: cuánto falta para volver a la pantalla de espera. */
+.cuenta { position: absolute; top: 0; left: 0; right: 0; height: clamp(4px, .6vmin, 8px); background: var(--linea); overflow: hidden; }
+.cuenta span { display: block; height: 100%; width: 100%; background: var(--acento); transform-origin: left; }
+.cuenta span.corriendo { animation: cuenta var(--duracion, 10s) linear forwards; }
+@keyframes cuenta { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .cuenta span.corriendo { animation: none; } }
+
+/* ---------- Estilo Noche ---------- */
+.estilo-noche { --alerta: #ff7b70; }
+.estilo-noche .cabecera-logo, .estilo-noche .resultado-logo,
+.estilo-marca .cabecera-logo, .estilo-marca .resultado-logo {
+  background: #fff; border-radius: 12px; padding: clamp(5px, 1.2vmin, 12px);
+}
+.estilo-noche .espera-qr img, .estilo-marca .espera-qr img { border-color: transparent; }
+
+/* ---------- Estilo Color del negocio ---------- */
+.estilo-marca .laser-haz { background: var(--tinta); box-shadow: 0 0 12px 1px var(--tinta); }
+.estilo-marca .titulo.no-encontrado { color: var(--tinta); }
+.estilo-marca .laser.barcode-not-found .laser-haz { background: var(--tinta); opacity: .55; }
+
+/* ---------- Estilo Etiqueta de góndola ---------- */
+.riel { display: none; }
+.estilo-etiqueta .riel {
+  display: block; position: fixed; z-index: 55; left: 0; right: 0; bottom: 0;
+  height: clamp(6px, 1.6vh, 14px); background: #ffd21f; box-shadow: inset 0 2px 0 rgba(15, 36, 64, .12);
+}
+.estilo-etiqueta .etiqueta {
+  background: #ffd21f; border-radius: clamp(6px, 1.2vmin, 12px);
+  padding: clamp(12px, 3vmin, 30px) clamp(16px, 4vmin, 40px) clamp(10px, 2.4vmin, 24px);
+  box-shadow: inset 0 calc(-1 * clamp(4px, 1vmin, 9px)) 0 rgba(15, 36, 64, .1);
+}
+.estilo-etiqueta .etiqueta-moneda { color: var(--precio); }
+.estilo-etiqueta .resultado { padding-bottom: calc(var(--margen) + 34px); }
+
+/* ---------- Estilo Panel lateral ---------- */
+.estilo-panel { --ancho-panel: clamp(220px, 31vw, 460px); --izq: var(--ancho-panel); }
+.panel {
+  position: fixed; z-index: 52; left: 0; top: 0; bottom: 0; width: var(--ancho-panel);
+  background: var(--marca); color: var(--sobre-marca);
+  display: flex; flex-direction: column; justify-content: space-between; gap: 16px;
+  padding: var(--margen); padding-bottom: calc(var(--margen) + 40px);   /* aire para el ✕ */
+}
+.panel-marca { display: flex; flex-direction: column; align-items: flex-start; gap: clamp(10px, 2.4vh, 22px); min-width: 0; }
+.panel-logo { display: block; max-width: 100%; max-height: clamp(56px, 26vh, 220px); object-fit: contain; }
+.panel-nombre {
+  margin: 0; font-weight: 700; letter-spacing: -0.02em; line-height: 1.08; font-size: clamp(20px, 4.8vmin, 46px);
+  overflow-wrap: anywhere; text-wrap: balance;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.panel-qr { margin: 0; display: flex; align-items: center; gap: 12px; }
+.panel-qr img { display: block; width: clamp(66px, 15vmin, 140px); height: auto; border-radius: 10px; padding: 6px; background: #fff; flex: none; }
+.panel-qr figcaption { font-size: clamp(12px, 2.2vmin, 17px); line-height: 1.3; opacity: .85; }
+.estilo-panel .boton-esquina { color: var(--sobre-marca); border-color: currentColor; opacity: .45; }
+.estilo-panel .estado-red { color: var(--sobre-marca); opacity: .7; }
+.estilo-panel .lector { left: calc(var(--izq) + (100vw - var(--izq)) / 2); }
+.estilo-panel .resultado-producto { max-width: 100%; }
+
+/* Botón ✕ e indicador en fondos oscuros. */
+.estilo-noche .boton-esquina, .estilo-marca .boton-esquina { color: var(--gris); border-color: var(--linea); }
+.estilo-noche .estado-red, .estilo-marca .estado-red { color: var(--gris); }
+
+/* Pantallas verticales (tabletas, celulares): todo apilado y centrado. */
+@media (orientation: portrait) {
+  .resultado { grid-template-rows: auto 1fr auto auto 1fr; text-align: center; }
+  .resultado-cabecera { justify-self: center; }
+  .resultado-producto { grid-row: 3; justify-self: center; max-width: 100%; }
+  .etiqueta { grid-row: 4; justify-self: center; align-self: start; margin-top: 4vh; }
+  .etiqueta-entero { font-size: calc(clamp(88px, 28vw, 400px) * var(--escala, 1)); }
+  .espera-qr { justify-self: center; }
+  .cabecera { justify-self: center; }
+  .estilo-panel { --alto-panel: clamp(110px, 20vh, 260px); --izq: 0px; --arriba: var(--alto-panel); }
+  .panel {
+    right: 0; bottom: auto; width: auto; height: var(--alto-panel);
+    flex-direction: row; align-items: center; padding-bottom: var(--margen);
+  }
+  .panel-marca { flex-direction: row; align-items: center; }
+  .panel-logo { max-height: calc(var(--alto-panel) - 2 * var(--margen)); max-width: 40vw; }
+  .panel-nombre { font-size: clamp(18px, 4.6vw, 40px); }
+  .panel-qr figcaption { display: none; }
+  .panel-qr img { width: calc(var(--alto-panel) - 2 * var(--margen)); }
+  .estilo-panel .boton-esquina { color: #a3aebe; border-color: var(--linea); opacity: 1; }
+  .estilo-panel .estado-red { color: #a3aebe; opacity: 1; }
+}
+
+/* Pantallas muy bajitas (p. ej. 800×480 o menos): menos aire. */
+@media (max-height: 480px) {
+  :root { --margen: 14px; }
+  .laser { margin-top: 16px; }
+}
+
+/* Vista previa en Apariencia: la cuenta regresiva queda quieta a la mitad. */
+.vista-previa .cuenta span { animation: none !important; transform: scaleX(.55); }
 
 /* ---------- Avisos de primera vez ---------- */
-.aviso { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 20px; background: #f4f8ff; }
-.aviso-caja { max-width: 560px; width: 100%; text-align: center; background: #fff; border-radius: 16px; padding: 28px 24px; box-shadow: 0 6px 18px rgba(17, 54, 98, .10); }
-.aviso-icono { font-size: 46px; }
-.aviso h2 { margin: 8px 0; font-size: 24px; }
-.aviso p { color: #475569; font-size: 17px; line-height: 1.4; margin: 6px 0; }
-#form-vincular { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.aviso { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center;
+         padding: 24px; background: var(--papel); }
+.aviso-caja { max-width: 560px; width: 100%; text-align: center; }
+.aviso-icono { font-size: 44px; }
+.aviso h2 { margin: 10px 0 8px; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.aviso p { color: var(--gris); font-size: 17px; line-height: 1.5; margin: 6px 0; }
+#form-vincular { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
 
-/* ---------- Botón de la esquina e indicador ---------- */
+/* ---------- Botón de la esquina e indicador: discretos ---------- */
 .boton-esquina {
-  position: fixed; z-index: 80; left: 12px; bottom: max(14px, env(safe-area-inset-bottom));
-  width: 44px; height: 44px; padding: 0; border-radius: 50%;
-  background: rgba(255, 255, 255, .92); border: 1px solid #d5e1f1; color: #12376b;
-  box-shadow: 0 2px 6px rgba(16, 43, 80, .12); font-size: 22px; font-weight: 700; line-height: 1; cursor: pointer;
+  position: fixed; z-index: 80; left: 10px; bottom: max(10px, env(safe-area-inset-bottom));
+  width: 38px; height: 38px; padding: 0; border-radius: 50%;
+  background: transparent; border: 1px solid var(--linea); color: #a3aebe;
+  font-size: 17px; font-weight: 600; line-height: 1; cursor: pointer;
 }
+/* Junto al ✕ (abajo a la izquierda): así no tapa el QR. */
 .estado-red {
-  position: fixed; z-index: 80; right: 12px; bottom: max(10px, env(safe-area-inset-bottom));
-  font-size: 12px; color: #7c8ca6; background: rgba(255, 255, 255, .85);
-  padding: 3px 9px; border-radius: 999px; pointer-events: none;
+  position: fixed; z-index: 80; left: 58px; bottom: max(20px, calc(env(safe-area-inset-bottom) + 10px));
+  font-size: 11px; color: #a3aebe; pointer-events: none;
 }
 .estado-red::before { content: "●"; margin-right: 5px; color: var(--punto, #16a34a); }
 
-/* ---------- Diálogos ---------- */
+/* ---------- Diálogos (menú ✕ y clave) ---------- */
+/* Siempre claros y con el azul de la app, sin importar el estilo elegido para la pantalla. */
+dialog, .aviso { --papel: #ffffff; --tinta: #0f2440; --gris: #6b7a90; --linea: #e6ebf2; --marca: #0757d4; }
+dialog { background: #fff; }
 dialog {
-  border: 0; border-radius: 16px; padding: 22px; width: min(460px, 92vw);
-  max-height: 92dvh; overflow: auto; box-shadow: 0 12px 40px rgba(10, 30, 60, .3); color: #102b50;
-  user-select: text; -webkit-user-select: text;
+  border: 0; border-radius: 18px; padding: 24px; width: min(460px, 92vw);
+  max-height: 92dvh; overflow: auto; color: var(--tinta);
+  box-shadow: 0 24px 60px rgba(15, 36, 64, .25); user-select: text; -webkit-user-select: text;
 }
-dialog::backdrop { background: rgba(10, 30, 60, .45); }
-dialog h2 { margin: 0 0 6px; font-size: 21px; }
-input[type=password], input[type=url] {
-  width: 100%; font: inherit; font-size: 19px; padding: 11px 12px;
-  border: 2px solid #cbd5e1; border-radius: 10px; color: #102b50; background: #fff;
+dialog::backdrop { background: rgba(15, 36, 64, .4); }
+dialog h2 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
+input[type=password], input[type=url], #nombre-equipo {
+  width: 100%; font: inherit; font-size: 18px; padding: 11px 14px;
+  border: 1px solid #cfd8e3; border-radius: 12px; color: var(--tinta); background: #fff;
 }
-input[type=password]:focus, input[type=url]:focus { border-color: #0757d4; outline: none; }
+input[type=password]:focus, input[type=url]:focus, #nombre-equipo:focus { border-color: var(--marca); outline: none; }
 button, .boton {
-  font: inherit; font-size: 17px; font-weight: 700; padding: 11px 14px; border-radius: 10px;
-  border: 1px solid #0757d4; background: #0757d4; color: #fff; cursor: pointer; text-align: center; text-decoration: none;
+  font: inherit; font-size: 16px; font-weight: 600; padding: 11px 14px; border-radius: 12px;
+  border: 1px solid var(--marca); background: var(--marca); color: #fff; cursor: pointer;
+  text-align: center; text-decoration: none;
 }
+button:focus-visible, .boton:focus-visible { outline: 3px solid rgba(7, 87, 212, .35); outline-offset: 2px; }
 button:disabled { opacity: .6; }
-.secundario, .botones-menu button, .botones-menu .boton { background: #fff; color: #0757d4; }
-.botones-menu .principal { background: #0757d4; color: #fff; }
-.peligro { border-color: #dc2626 !important; color: #b91c1c !important; }
-.botones { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
-.botones-menu { display: grid; gap: 9px; margin-top: 12px; }
-.suave { color: #64748b; font-size: 15px; margin: 6px 0; }
-.error { color: #b91c1c; font-weight: 700; min-height: 1.2em; margin: 6px 0 0; }
-.aviso-amarillo { background: #fef3c7; color: #92400e; border-radius: 10px; padding: 9px 12px; font-size: 15px; }
-.estado-lista { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0; font-size: 15px; }
-.estado-lista dt { color: #64748b; }
-.estado-lista dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.secundario, .botones-menu button, .botones-menu .boton { background: #fff; color: var(--marca); border-color: #cfd8e3; }
+.botones-menu .principal { background: var(--marca); color: #fff; border-color: var(--marca); }
+.peligro { border-color: #f1c4c0 !important; color: var(--alerta) !important; }
+.botones { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+.botones-menu { display: grid; gap: 8px; margin-top: 14px; }
+.suave { color: var(--gris); font-size: 14px; margin: 6px 0; }
+.error { color: var(--alerta); font-weight: 600; min-height: 1.2em; margin: 6px 0 0; }
+.aviso-amarillo { background: #fff6e5; color: #8a4b00; border-radius: 12px; padding: 10px 12px; font-size: 14px; }
+.estado-lista { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; margin: 12px 0; font-size: 14px; }
+.estado-lista dt { color: var(--gris); }
+.estado-lista dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.fila-nombre { display: flex; gap: 8px; margin: 4px 0 2px; }
+.fila-nombre input { flex: 1; min-width: 0; font-size: 16px !important; padding: 9px 12px !important; }

@@ -3,50 +3,65 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#0757d4">
+<meta name="theme-color" content="#ffffff">
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex">
 <title>Consulta de Precios</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icono.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icono-192.png">
+<link rel="preload" href="fuentes/Sora.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="stylesheet" href="estilos.css">
 </head>
-<body>
+<body class="estilo-claro logo-esquina">
 <!-- Cuadro del escáner: siempre activo y con el cursor, visible u oculto según Apariencia. -->
 <input id="lector" class="lector oculto" type="text" inputmode="none" autocomplete="off"
        autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"
        aria-label="Código de barras" placeholder="Escanea o escribe el código y pulsa Enter">
 
-<main id="espera" class="pantalla-espera" hidden>
-  <div class="main-header"><h1>🏷️ CONSULTA DE PRECIOS</h1><p>Consulta rápida de productos y precios</p></div>
-  <div id="tarjeta-codigo" class="animated-barcode-card" aria-hidden="true">
-    <div class="animated-bars"><div class="animated-scan-line"></div></div>
-    <div class="animated-barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div>
+<!-- Estilo "Panel lateral": franja fija con logo, nombre y QR. -->
+<aside id="panel" class="panel" hidden>
+  <div class="panel-marca">
+    <img id="panel-logo" class="panel-logo chip" alt="Logo de la tienda" hidden>
+    <p id="panel-nombre" class="panel-nombre" hidden></p>
   </div>
-  <div class="espera-textos">
-    <div id="titulo" class="scan-title">ESCANEA TU CÓDIGO AQUÍ</div>
-    <div id="pista" class="scan-hint">El precio se mostrará automáticamente</div>
-  </div>
-  <div id="imagenes" class="verif-imagenes">
-    <img id="logo" class="verif-logo" alt="Logo de la empresa" hidden>
-    <div id="qr" class="verif-qr" hidden>
-      <img id="qr-img" alt="Código QR para consultar desde el celular"><span>📱 Consulta desde tu celular</span>
-    </div>
-  </div>
+  <figure id="panel-qr" class="panel-qr" hidden>
+    <img id="panel-qr-img" alt="Código QR para consultar precios desde el celular">
+    <figcaption id="panel-qr-texto"></figcaption>
+  </figure>
+</aside>
+
+<main id="espera" class="espera" hidden>
+  <header id="cabecera" class="cabecera">
+    <img id="logo" class="cabecera-logo" alt="Logo de la tienda" hidden>
+    <span id="nombre-negocio" class="cabecera-nombre" hidden></span>
+  </header>
+  <section class="espera-centro">
+    <h1 id="titulo" class="titulo">Escanea tu producto</h1>
+    <div id="tarjeta-codigo" class="laser" aria-hidden="true"><span class="laser-haz"></span></div>
+    <p id="pista" class="pista">Pasa el código de barras por el lector</p>
+  </section>
+  <aside id="qr" class="espera-qr" hidden>
+    <span id="qr-texto">Consulta también desde tu celular</span>
+    <img id="qr-img" class="chip" alt="Código QR para consultar precios desde el celular">
+  </aside>
 </main>
 
-<main id="resultado" class="resultado-pantalla" hidden>
-  <div class="resultado-datos">
-    <div class="resultado-etiqueta">PRODUCTO</div>
-    <div id="nombre" class="resultado-nombre"></div>
-    <div class="resultado-codigo">Código consultado: <strong id="codigo"></strong></div>
-  </div>
-  <div class="resultado-precio-panel">
-    <div class="resultado-precio-etiqueta">PRECIO DE VENTA</div>
-    <div id="precio" class="resultado-precio"></div>
-  </div>
+<main id="resultado" class="resultado" hidden>
+  <header id="resultado-cabecera" class="resultado-cabecera">
+    <img id="resultado-logo" class="resultado-logo" alt="" hidden>
+    <span id="resultado-negocio" hidden></span>
+  </header>
+  <section class="resultado-producto">
+    <p id="nombre" class="resultado-nombre"></p>
+    <p class="resultado-codigo">Código <span id="codigo"></span></p>
+  </section>
+  <p class="etiqueta" aria-label="Precio">
+    <span id="moneda" class="etiqueta-moneda">RD$</span><span id="precio" class="etiqueta-entero"></span><span id="centavos" class="etiqueta-centavos"></span>
+  </p>
+  <div class="cuenta" aria-hidden="true"><span id="cuenta-barra"></span></div>
 </main>
+<div class="riel" aria-hidden="true"></div>
 
 <!-- Primera vez: vincular el equipo, descargar precios, o avisar que falta internet. -->
 <section id="aviso" class="aviso" hidden>
@@ -91,6 +106,7 @@
     <button type="button" id="m-actualizar">🔄 Buscar actualización ahora</button>
     <button type="button" id="m-completa">⛶ Pantalla completa y volver</button>
     <a id="m-en-linea" class="boton" target="_blank" rel="noopener" hidden>🌐 Abrir la app en línea</a>
+    <button type="button" id="m-marco" class="principal" hidden>⬇️ Actualizar la app</button>
     <button type="button" id="m-fijar" hidden>📌 Fijar la app en pantalla (bloqueo)</button>
     <button type="button" id="m-inicio" hidden>🏠 Cambiar la pantalla de inicio de Android</button>
     <button type="button" id="m-cerrar" class="peligro">⏻ Cerrar aplicación</button>
@@ -103,6 +119,7 @@
 <script src="config.js"></script>
 <script src="codigos.js"></script>
 <script src="datos.js"></script>
+<script src="pantalla.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

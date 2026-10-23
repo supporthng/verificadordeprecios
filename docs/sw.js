@@ -1,8 +1,8 @@
 /* Guarda la app en el equipo para que abra SIN internet.
    Al cambiar cualquier archivo de la app, sube VERSION: los equipos la renuevan solos. */
-const VERSION = "verificador-1.4.0";
-const ARCHIVOS = ["./", "index.html", "estilos.css", "app.js", "config.js", "codigos.js", "datos.js",
-                  "manifest.webmanifest", "icono.svg", "icono-192.png", "icono-512.png"];
+const VERSION = "verificador-1.7.0";
+const ARCHIVOS = ["./", "index.html", "estilos.css", "app.js", "config.js", "codigos.js", "datos.js", "pantalla.js",
+                  "manifest.webmanifest", "fuentes/Sora.ttf", "icono.svg", "icono-192.png", "icono-512.png"];
 
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(VERSION)
@@ -21,7 +21,7 @@ self.addEventListener("fetch", function (e) {
   const pedido = e.request;
   const destino = new URL(pedido.url);
   if (pedido.method !== "GET" || destino.origin !== self.location.origin) return;  // Supabase: directo
-  if (destino.pathname.endsWith("/version.txt")) return;   // siempre de internet: avisa si hay app nueva
+  if (destino.pathname.endsWith("/version.txt") || destino.pathname.endsWith("/apps.json")) return;   // siempre de internet
   if (pedido.mode === "navigate" && !/\/(privacidad|condiciones)\.html$/.test(destino.pathname)) {
     // La página siempre desde el equipo (con o sin ?estado=...).
     e.respondWith(caches.match("index.html").then(function (r) { return r || fetch(pedido); }));

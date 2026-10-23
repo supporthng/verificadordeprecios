@@ -2,7 +2,14 @@ package com.supporthng.consultaprecios;
 
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.DownloadManager;
+import android.app.PendingIntent;
 import android.app.admin.DevicePolicyManager;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
+import android.content.pm.PackageInstaller;
+import android.database.Cursor;
+import android.os.ParcelFileDescriptor;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -28,6 +35,9 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import java.io.InputStream;
+import java.io.OutputStream;
+
 /**
  * Consulta de Precios: muestra la app sin internet (GitHub Pages) a pantalla completa, como quiosco.
  * - Pantalla siempre encendida, sin barras de Android, sin botón Atrás.
@@ -39,11 +49,15 @@ public class MainActivity extends Activity {
 
     static final String DIRECCION = "https://supporthng.github.io/verificadordeprecios/";
     static final String HOST_APP = "supporthng.github.io";
+    /** Solo se aceptan actualizaciones publicadas en el repositorio del negocio. */
+    static final String ORIGEN_ACTUALIZACION = "https://github.com/supporthng/verificadordeprecios/releases/download/";
 
     private WebView web;
     private FrameLayout raiz;
     private final Handler hilo = new Handler(Looper.getMainLooper());
     private boolean saliendo = false;
+    private long descargaId = -1;
+    private BroadcastReceiver alTerminarDescarga;
 
     @Override
     protected void onCreate(Bundle guardado) {
@@ -61,6 +75,103 @@ public class MainActivity extends Activity {
         else web.loadUrl(DIRECCION);
         ocultarBarras();
         activarBloqueo();
+        escucharDescargas();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (alTerminarDescarga != null) {
+            try { unregisterReceiver(alTerminarDescarga); } catch (RuntimeException ignorado) { }
+        }
+        super.onDestroy();
+    }
+
+    // ------------------------------------------------------------ actualizar la app
+    private void escucharDescargas() {
+        alTerminarDescarga = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent i) {
+                long id = i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                if (id != -1 && id == descargaId) instalarDescarga(id);
+            }
+        };
+        IntentFilter filtro = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(alTerminarDescarga, filtro, 0x2 /* RECEIVER_EXPORTED */);
+        else registerReceiver(alTerminarDescarga, filtro);
+    }
+
+    private void avisarWeb(String estado) {
+        hilo.post(() -> {
+            if (web != null) web.evaluateJavascript(
+                    "window.__actualizacionApp && window.__actualizacionApp('" + estado + "')", null);
+        });
+    }
+
+    private void descargarActualizacion(String url) {
+        DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        if (dm == null) { avisarWeb("error"); return; }
+        DownloadManager.Request pedido = new DownloadManager.Request(Uri.parse(url));
+        pedido.setTitle("Consulta de Precios");
+        pedido.setDescription("Descargando la versión nueva de la app");
+        pedido.setMimeType("application/vnd.android.package-archive");
+        pedido.setDestinationInExternalFilesDir(this, null, "actualizacion-" + System.currentTimeMillis() + ".apk");
+        pedido.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
+        descargaId = dm.enqueue(pedido);
+        avisarWeb("descargando");
+    }
+
+    private void instalarDescarga(long id) {
+        DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        boolean ok = false;
+        try (Cursor c = dm.query(new DownloadManager.Query().setFilterById(id))) {
+            if (c != null && c.moveToFirst()) {
+                int col = c.getColumnIndex(DownloadManager.COLUMN_STATUS);
+                ok = col >= 0 && c.getInt(col) == DownloadManager.STATUS_SUCCESSFUL;
+            }
+        }
+        if (!ok) { avisarWeb("error"); return; }
+        if (esDeviceOwner()) {
+            // Bloqueo total: instalar sin preguntar (y la app se vuelve a abrir sola).
+            new Thread(() -> instalarSinPreguntar(dm, id), "actualizar-app").start();
+            return;
+        }
+        // Sin bloqueo total, Android pide confirmar: hay que soltar el bloqueo de pantalla.
+        avisarWeb("instalando");
+        hilo.post(() -> {
+            saliendo = true;
+            try { if (enModoBloqueo()) stopLockTask(); } catch (RuntimeException ignorado) { }
+            Uri archivo = dm.getUriForDownloadedFile(id);
+            Intent instalar = new Intent(Intent.ACTION_VIEW);
+            instalar.setDataAndType(archivo, "application/vnd.android.package-archive");
+            instalar.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            try { startActivity(instalar); } catch (RuntimeException e) { avisarWeb("error"); }
+        });
+    }
+
+    private void instalarSinPreguntar(DownloadManager dm, long id) {
+        try {
+            PackageInstaller instalador = getPackageManager().getPackageInstaller();
+            PackageInstaller.SessionParams parametros =
+                    new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            parametros.setAppPackageName(getPackageName());
+            int sesionId = instalador.createSession(parametros);
+            try (PackageInstaller.Session sesion = instalador.openSession(sesionId);
+                 InputStream entrada = new ParcelFileDescriptor.AutoCloseInputStream(dm.openDownloadedFile(id));
+                 OutputStream salida = sesion.openWrite("app", 0, -1)) {
+                byte[] bufer = new byte[65536];
+                int n;
+                while ((n = entrada.read(bufer)) > 0) salida.write(bufer, 0, n);
+                sesion.fsync(salida);
+                salida.close();
+                Intent resultado = new Intent(this, MainActivity.class).setAction("ACTUALIZADA");
+                PendingIntent aviso = PendingIntent.getActivity(this, sesionId, resultado,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                avisarWeb("instalando");
+                sesion.commit(aviso.getIntentSender());
+            }
+        } catch (Exception e) {
+            avisarWeb("error");
+        }
     }
 
     private void crearWeb() {
@@ -224,6 +335,13 @@ public class MainActivity extends Activity {
         /** Sin Device Owner: fijar la app en pantalla (Android pide confirmar una vez). */
         @JavascriptInterface public void fijar() {
             hilo.post(() -> { try { startLockTask(); } catch (RuntimeException ignorado) { } });
+        }
+
+        /** Descargar e instalar la versión nueva de la app (solo desde el repositorio del negocio). */
+        @JavascriptInterface public boolean actualizar(String url) {
+            if (url == null || !url.startsWith(ORIGEN_ACTUALIZACION) || !url.endsWith(".apk")) return false;
+            hilo.post(() -> descargarActualizacion(url));
+            return true;
         }
 
         /** Recargar la app (por ejemplo, tras una actualización). */

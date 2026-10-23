@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.4.0";
+  const APP_VERSION = "1.7.0";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -45,7 +45,6 @@
                                          hour: "numeric", minute: "2-digit" });
     }
   }
-  const formatoPrecio = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   function local(clave, valor) {
     try {
       if (valor === undefined) return localStorage.getItem(clave);
@@ -72,49 +71,25 @@
     $("aviso-texto").textContent = texto;
     $("form-vincular").hidden = !conFormulario;
     $("aviso").hidden = false;
-    $("espera").hidden = true;
-    $("resultado").hidden = true;
+    Pantalla.ocultar();
     $("boton-salida").hidden = conFormulario;
   }
 
+  /* El dibujo (estilo, textos, logo, nombre, QR) lo hace pantalla.js. */
   function mostrarEspera(noEncontrado, codigo) {
     $("aviso").hidden = true;
-    $("resultado").hidden = true;
-    $("espera").hidden = false;
     $("boton-salida").hidden = false;
-    $("tarjeta-codigo").classList.toggle("barcode-not-found", !!noEncontrado);
-    $("titulo").textContent = noEncontrado ? "PRODUCTO NO ENCONTRADO" : "ESCANEA TU CÓDIGO AQUÍ";
-    $("titulo").classList.toggle("no-encontrado", !!noEncontrado);
-    const pista = $("pista");
-    pista.classList.toggle("no-encontrado", !!noEncontrado);
-    pista.textContent = "";
-    if (noEncontrado) {
-      pista.append("Código consultado: ");
-      const b = document.createElement("strong");
-      b.textContent = codigo;
-      pista.append(b);
-    } else {
-      pista.textContent = "El precio se mostrará automáticamente";
-    }
+    Pantalla.espera(noEncontrado, codigo);
     if (!noEncontrado && recargarAlVolver) location.reload();   // app nueva instalada
   }
 
   function mostrarProducto(p, codigo) {
-    $("nombre").textContent = p[1];
-    $("codigo").textContent = codigo;
-    $("precio").textContent = "RD$ " + formatoPrecio.format(Number(p[2]) || 0);
     $("aviso").hidden = true;
-    $("espera").hidden = true;
-    $("resultado").hidden = false;
+    Pantalla.producto(p, codigo, SEG_ENCONTRADO);
   }
 
   function aplicarApariencia() {
-    const a = (estado && estado.apariencia) || { mostrar_logo: true, mostrar_qr: true, mostrar_cuadro: false };
-    $("logo").hidden = !(a.mostrar_logo && imagenes.logo);
-    if (imagenes.logo) $("logo").src = imagenes.logo;
-    $("qr").hidden = !(a.mostrar_qr && imagenes.qr);
-    if (imagenes.qr) $("qr-img").src = imagenes.qr;
-    lector.classList.toggle("oculto", !a.mostrar_cuadro);
+    Pantalla.aplicar(estado && estado.apariencia, imagenes);
   }
 
   function ponerImagen(clave, blob) {
@@ -268,6 +243,7 @@
       if (!$("aviso").hidden) mostrarEspera(false);
       subirRegistro();
       revisarApp(false, reconectado || despertado);
+      revisarMarco();
       despertado = false;
     } catch (e) {
       ultimoError = e && e.name === "AbortError" ? "Sin respuesta (¿hay internet?)." : String(e && e.message || e);
@@ -388,7 +364,9 @@
       ["Reporte al panel", resultadoReporte],
       ["App", "versión " + APP_VERSION + (versionNueva ? " (instalando la " + versionNueva + "…)" : "")
               + (nativo() ? " · app " + (nativo().tipo === "android" ? "Android" : "Windows")
-                 + (nativo().bloqueoTotal() ? " (bloqueo total)" : "") : "")],
+                 + (nativo().version() ? " " + nativo().version() : "")
+                 + (nativo().bloqueoTotal() ? " (bloqueo total)" : "")
+                 + (marcoNuevo ? " · hay una versión nueva: " + marcoNuevo.version : "") : "")],
     ];
     if (ultimoError) filas.push(["Último aviso", ultimoError]);
     const dl = $("menu-estado");
@@ -409,6 +387,8 @@
     $("m-completa").hidden = !!app;               // las apps ya están a pantalla completa
     $("m-fijar").hidden = !(app && app.tipo === "android" && !app.bloqueoTotal());
     $("m-inicio").hidden = !(app && app.tipo === "android");
+    $("m-marco").hidden = !(app && marcoNuevo);
+    if (marcoNuevo) $("m-marco").textContent = "⬇️ Actualizar la app a la versión " + marcoNuevo.version;
     $("m-cerrar").textContent = app && app.tipo === "android" ? "⏻ Salir del verificador (abre Ajustes)"
                                                               : "⏻ Cerrar aplicación";
   }
@@ -502,15 +482,48 @@
       return { tipo: "android", salir: function () { a.salir(); },
                bloqueoTotal: function () { try { return !!a.bloqueoTotal(); } catch (e) { return false; } },
                version: function () { try { return a.version(); } catch (e) { return ""; } },
-               fijar: function () { a.fijar(); }, cambiarInicio: function () { a.cambiarInicio(); } };
+               fijar: function () { a.fijar(); }, cambiarInicio: function () { a.cambiarInicio(); },
+               actualizar: typeof a.actualizar === "function" ? function (url) { a.actualizar(url); } : null };
     }
     if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.salir === "function") {
       const w = window.pywebview.api;
       return { tipo: "windows", salir: function () { w.salir(); }, bloqueoTotal: function () { return false; },
-               version: function () { return ""; } };
+               version: function () { return versionMarcoWindows; },
+               actualizar: function (url) { w.actualizar(url); } };
     }
     return null;
   }
+  // En Windows las llamadas al puente son asíncronas: la versión se pide una vez al abrir.
+  let versionMarcoWindows = "";
+  window.addEventListener("pywebviewready", function () {
+    try { window.pywebview.api.version().then(function (v) { versionMarcoWindows = String(v || ""); revisarMarco(); }); }
+    catch (e) { /* sin puente */ }
+  });
+
+  /* ------------------------------------------------------------ actualizar el "marco" de la app
+     docs/apps.json dice la versión vigente del APK y del instalador de Windows. */
+  let marcoNuevo = null;   // {version, url} si hay una versión nueva del marco
+  function versionMayor(a, b) {
+    const x = String(a || "0").split(".").map(Number), y = String(b || "0").split(".").map(Number);
+    for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); }
+    return false;
+  }
+  async function revisarMarco() {
+    const app = nativo();
+    if (!app || !app.actualizar || !app.version()) { marcoNuevo = null; return; }
+    try {
+      const r = await conTiempo("apps.json?t=" + Date.now(), { cache: "no-store" }, 8000);
+      if (!r.ok) return;
+      const info = (await r.json())[app.tipo];
+      marcoNuevo = info && info.url && versionMayor(info.version, app.version()) ? info : null;
+    } catch (e) { /* sin internet: se revisa después */ }
+  }
+  window.__actualizacionApp = function (estado) {
+    const textos = { descargando: "⬇️ Descargando la versión nueva de la app…",
+                     instalando: "⚙️ Instalando… (en Android, toca «Instalar» si lo pide)",
+                     error: "No se pudo actualizar la app. Revisa la conexión e inténtalo de nuevo." };
+    $("menu-mensaje").textContent = textos[estado] || "";
+  };
 
   /* ------------------------------------------------------------ cerrar la app */
   $("m-cerrar").addEventListener("click", function () {
@@ -531,6 +544,12 @@
     }, 600);
   });
 
+  $("m-marco").addEventListener("click", function () {
+    const a = nativo();
+    if (!a || !a.actualizar || !marcoNuevo) return;
+    a.actualizar(marcoNuevo.url);
+    window.__actualizacionApp("descargando");
+  });
   $("m-fijar").addEventListener("click", function () { cerrarMenu(); const a = nativo(); if (a && a.fijar) a.fijar(); });
   $("m-inicio").addEventListener("click", function () { cerrarMenu(); const a = nativo(); if (a && a.cambiarInicio) a.cambiarInicio(); });
   $("m-volver").addEventListener("click", cerrarMenu);

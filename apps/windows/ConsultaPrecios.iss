@@ -36,3 +36,5 @@ Name: "{userdesktop}\Consulta de Precios"; Filename: "{app}\{#MyAppExeName}"; Ta
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "ConsultaPrecios"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: inicio
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Consulta de Precios ahora"; Flags: postinstall nowait skipifsilent
+; Actualización automática (instalación silenciosa desde la app): volver a abrirla al terminar.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: WizardSilent
