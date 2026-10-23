@@ -143,189 +143,21 @@ def imagen_base64(nombre, ancho, alto):
         return None
 
 
+# Diseño de la pantalla: el mismo de los equipos sin internet (pantalla_en_linea.py).
+import pantalla_en_linea
+
 CSS = """
 <style>
-.stApp { background: #f4f7fc; }
-.block-container {
-    max-width: 100%;
-    padding: .5rem .8rem 1rem;
-}
+.block-container { max-width: 100%; padding: .5rem .8rem .8rem; }
 #MainMenu, footer { visibility: hidden; }
 header[data-testid="stHeader"] { background: transparent; }
-.main-header {
-    background: linear-gradient(135deg, #0c2e59, #0759c9);
-    border-radius: 20px;
-    padding: clamp(12px, 3vw, 28px);
-    text-align: center;
-    color: white;
-    margin-bottom: 12px;
+/* Elementos que solo llevan estilos o scripts: no ocupan espacio. */
+[data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"] > :not(style))) {
+  display: none !important;
 }
-.main-header h1 {
-    color: white !important;
-    font-size: clamp(20px, 4vw, 38px);
-    margin: 0;
-}
-.main-header p {
-    color: #dceaff;
-    font-size: clamp(12px, 2vw, 17px);
-    margin: 6px 0 0;
-}
-.scan-title {
-    color: #102b50;
-    text-align: center;
-    font-weight: 850;
-    font-size: clamp(18px, 3.5vw, 32px);
-    margin: 10px 0;
-}
-div[data-testid="stTextInput"] input {
-    text-align: center !important;
-    font-size: clamp(16px, 2vw, 21px) !important;
-    min-height: 44px;
-    height: 44px;
-    padding: 4px 12px;
-    border-radius: 14px;
-    border: 2px solid #d5e1f1;
-    background: white;
-}
-.product-card {
-    background: white;
-    border: 1px solid #dce5f2;
-    border-radius: 20px;
-    padding: clamp(16px, 4vw, 36px);
-    text-align: center;
-    margin: 10px auto;
-    box-shadow: 0 7px 25px rgba(20,50,90,.07);
-}
-/* Resultado ampliado para pantallas de verificadores de precios. */
-.product-card.result-card {
-    width: 100%;
-    min-height: 76dvh;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: clamp(8px, 1.5vh, 18px);
-    padding: clamp(16px, 3vw, 40px);
-    margin: 0 auto;
-}
-.result-card .product-name {
-    font-size: clamp(28px, 5.5vw, 66px);
-    margin: 2px 0;
-}
-.result-card .product-code {
-    font-size: clamp(17px, 2.5vw, 26px);
-    margin: 0;
-}
-.result-card .product-price {
-    font-size: clamp(54px, 10vw, 126px);
-    margin: 0;
-}
-.result-card .product-label, .result-card .price-label {
-    font-size: clamp(15px, 2vw, 23px);
-}
-@media (max-width: 600px) {
-    .product-card.result-card { min-height: 72dvh; }
-    .result-card .product-price { font-size: clamp(42px, 11vw, 78px); }
-}
-@media (orientation: landscape) and (max-height: 650px) {
-    .product-card.result-card { min-height: 79dvh; padding: 10px 22px; gap: 6px; }
-    .result-card .product-name { font-size: clamp(28px, 5vw, 58px); }
-    .result-card .product-price { font-size: clamp(55px, 9vw, 110px); }
-}
-.product-label, .price-label {
-    color: #64748b;
-    font-weight: 800;
-    letter-spacing: 1px;
-    font-size: clamp(12px, 2vw, 17px);
-}
-.product-name {
-    color: #102b50;
-    font-size: clamp(22px, 4.5vw, 40px);
-    font-weight: 850;
-    overflow-wrap: anywhere;
-    line-height: 1.2;
-    margin: 12px 0;
-}
-.product-code {
-    color: #64748b;
-    font-size: clamp(14px, 2vw, 21px);
-    overflow-wrap: anywhere;
-    margin-bottom: 22px;
-}
-.product-price {
-    color: #0757c3;
-    font-size: clamp(40px, 8vw, 76px);
-    font-weight: 900;
-    line-height: 1.1;
-    overflow-wrap: anywhere;
-    margin-top: 8px;
-}
-@media (max-width: 600px) {
-    .block-container { padding: .6rem .6rem 1rem; }
-    .main-header { padding: 13px 10px; margin-bottom: 8px; }
-    .main-header h1 { font-size: clamp(19px, 5.5vw, 27px); }
-    .scan-title { margin: 6px 0; font-size: clamp(17px, 5vw, 24px); }
-    div[data-testid="stTextInput"] input { min-height: 48px; }
-    .product-card { padding: 18px 12px; }
-}
-@media (orientation: landscape) and (max-height: 650px) {
-    .block-container { padding-top: .25rem; padding-bottom: .4rem; }
-    .main-header { padding: 8px 12px; margin-bottom: 5px; }
-    .main-header h1 { font-size: clamp(18px, 3vw, 27px); }
-    .main-header p { margin-top: 2px; font-size: 12px; }
-    .scan-title { margin: 4px 0; font-size: clamp(17px, 3vw, 24px); }
-    div[data-testid="stTextInput"] input { min-height: 44px; }
-    .product-card { padding: 12px; margin: 4px auto; }
-    .product-name { margin: 6px 0; }
-    .product-code { margin-bottom: 8px; }
-}
-
-.search-card { min-height: 255px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
-.search-card .search-label { color: #64748b; font-weight: 800; letter-spacing: 1px; font-size: 14px; }
-.search-card .search-text { color: #102b50; font-weight: 750; font-size: clamp(18px, 3vw, 24px); }
-.search-visual { width: min(300px, 90%); height: 105px; overflow: hidden; }
-.search-lens { animation: scan-barcode 2.1s ease-in-out infinite; transform-origin: center; }
-@keyframes scan-barcode { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(180px); } }
-@media (prefers-reduced-motion: reduce) { .search-lens { animation: none; } }
-.not-found-name { color: #102b50; font-size: clamp(23px, 4.5vw, 40px); font-weight: 850; line-height: 1.2; margin: 16px 0; }
-.business-logo-label {
-    text-align: center;
-    color: #64748b;
-    font-weight: 750;
-    letter-spacing: 1px;
-    margin: 22px 0 8px;
-}
-
-/* Codigo de barras decorativo con barrido continuo, sin recursos externos. */
-.animated-barcode-card {
-    width: min(310px, 75vw); margin: 8px auto 20px; padding: 16px 18px 12px;
-    background: #fff; border-radius: 12px; text-align: center;
-    box-shadow: 0 2px 10px rgba(20,50,90,.04);
-}
-.animated-bars {
-    position: relative; height: 105px; overflow: hidden;
-    background: repeating-linear-gradient(90deg,
-        #102b50 0px, #102b50 2px, #fff 2px, #fff 5px,
-        #102b50 5px, #102b50 9px, #fff 9px, #fff 12px,
-        #102b50 12px, #102b50 13px, #fff 13px, #fff 17px,
-        #102b50 17px, #102b50 22px, #fff 22px, #fff 26px);
-}
-.animated-scan-line {
-    position: absolute; top: 0; bottom: 0; left: 0; width: 4px;
-    background: #ff9d20; box-shadow: 0 0 9px 3px rgba(255,157,32,.7);
-    animation: barcode-sweep 2.4s ease-in-out infinite alternate;
-}
-@keyframes barcode-sweep { from { left: 0; } to { left: calc(100% - 4px); } }
-.animated-barcode-caption { color: #102b50; margin-top: 10px; font-size: 16px; }
-@media (prefers-reduced-motion: reduce) { .animated-scan-line { animation: none; left: 50%; } }
-@media (max-width: 600px) { .animated-barcode-card { width: min(260px, 76vw); } }
-</style>
-"""
-# Color verde del campo de la antigua Prueba del Cursor.
-# Solo modifica la apariencia; no cambia el mecanismo de enfoque.
-CSS += """
-<style>
+[data-testid="stElementContainer"]:has(.vp),
+[data-testid="stElementContainer"]:has(.vp) [data-testid="stMarkdown"],
+[data-testid="stElementContainer"]:has(.vp) [data-testid="stMarkdownContainer"] { margin: 0 !important; }
 div[data-testid="stTextInput"] input:focus,
 div[data-testid="stTextInput"] input:focus-visible {
     outline: none !important;
@@ -333,63 +165,11 @@ div[data-testid="stTextInput"] input:focus-visible {
     box-shadow: 0 0 0 3px #d9f5df !important;
 }
 </style>
-"""
-
-# Ajuste para pantallas integradas de verificadores (ej. 2connect).
-# Se preserva la lógica del escáner, el enfoque y los tiempos de resultados.
-CSS += """
-<style>
-@media (max-height: 720px) and (min-width: 600px) {
-  [data-testid="stMainBlockContainer"], .block-container {
-    padding-top: 0.25rem !important;
-    padding-bottom: 0.2rem !important;
-  }
-  [data-testid="stVerticalBlock"] { gap: 0.35rem !important; }
-  .main-header {
-    padding: 9px 14px !important;
-    margin-bottom: 2px !important;
-    border-radius: 12px !important;
-  }
-  .main-header h1 { font-size: clamp(19px, 3.2vh, 27px) !important; }
-  .main-header p { font-size: 11px !important; margin-top: 2px !important; }
-  .animated-barcode-card {
-    height: auto !important;
-    width: min(260px, 60vw) !important;
-    padding: 8px 12px 6px !important;
-    margin: 1px auto 2px !important;
-  }
-  .animated-bars { height: clamp(45px, 11vh, 70px) !important; }
-  .animated-barcode-caption { margin-top: 3px !important; font-size: 12px !important; }
-  .scan-title { margin: 2px 0 !important; font-size: clamp(17px, 3vh, 23px) !important; }
-  div[data-testid="stTextInput"] input {
-    height: 39px !important;
-    min-height: 39px !important;
-  }
-  [data-testid="stImage"] img {
-    max-height: clamp(55px, 14vh, 88px) !important;
-    width: auto !important;
-    object-fit: contain !important;
-    margin: 0 auto !important;
-  }
-  [data-testid="stImage"] { text-align: center !important; }
-  .product-card.result-card {
-    min-height: 68dvh !important;
-    padding: 12px 20px !important;
-  }
-}
-@media (max-height: 480px) and (min-width: 600px) {
-  .main-header { padding: 6px 12px !important; }
-  .animated-bars { height: 42px !important; }
-  .animated-barcode-card { padding: 5px 10px 3px !important; }
-  .scan-title { font-size: 17px !important; }
-  [data-testid="stImage"] img { max-height: 54px !important; }
-}
-</style>
-"""
+""" + pantalla_en_linea.CSS
 
 # El textbox sigue en el DOM y recibe el foco y los codigos del escaner.
 # Se oculta solo visualmente: NO usar display:none ni visibility:hidden.
-# Se aplica o no según la pestaña Apariencia (ver verificador()).
+# Se aplica o no según Apariencia (ver verificador()).
 CSS_CUADRO_OCULTO = """
 <style>
 /* El contenedor sale del flujo: no ocupa espacio ni separación en pantalla. */
@@ -418,318 +198,19 @@ div[data-testid="stTextInput"] input {
 </style>
 """
 
-# Cuadro visible: centrado y discreto. Sigue recibiendo el foco igual.
+# Cuadro visible: flota abajo al centro, encima de la pantalla. Sigue recibiendo el foco igual.
 CSS_CUADRO_VISIBLE = """
 <style>
-/* Flota abajo al centro, encima de la pantalla adaptable. */
 .st-key-cuadro_codigo {
     position: fixed !important; z-index: 1000 !important;
     left: 50% !important; transform: translateX(-50%) !important;
     bottom: clamp(8px, 2dvh, 20px) !important; top: auto !important;
     width: min(420px, 50vw) !important;
 }
-/* Reservar ese espacio abajo para que no tape el logo ni el QR. */
-.pantalla-espera.pantalla-fija { padding-bottom: calc(clamp(10px, 2.4dvh, 26px) + 58px) !important; }
-div[data-testid="stTextInput"] {
-    max-width: 460px !important;
-    margin: 0 auto !important;
-}
-div[data-testid="stTextInput"] input {
-    text-align: center !important;
-    font-size: 20px !important;
-    letter-spacing: 1px;
-}
+div[data-testid="stTextInput"] { max-width: 460px !important; margin: 0 auto !important; }
+div[data-testid="stTextInput"] input { text-align: center !important; font-size: 20px !important; letter-spacing: 1px; }
 </style>
 """
-
-# Pantalla 2connect: distribuir el contenido por la ALTURA real del visor.
-# No cambiar el input oculto, FOCO_JS, ni la lógica del lector.
-CSS += """
-<style>
-.stApp { background:#f4f8ff !important; }
-.main-header {
-  background:linear-gradient(110deg,#0b315f,#0757d4) !important;
-  border-radius:14px !important;
-  box-shadow:0 5px 14px rgba(8,60,130,.10) !important;
-  padding:clamp(14px,3vh,24px) 48px !important;
-  margin-bottom:clamp(12px,3vh,24px) !important;
-}
-.main-header h1 { font-size:clamp(22px,3.6vw,37px) !important; }
-.main-header p { font-size:clamp(12px,1.5vw,16px) !important; }
-.animated-barcode-card {
-  width:min(460px,75vw) !important;
-  max-width:100% !important;
-  padding:clamp(12px,2vh,22px) clamp(15px,2vw,25px) 10px !important;
-  margin:0 auto clamp(14px,3vh,24px) !important;
-  border-radius:16px !important;
-  box-shadow:0 6px 18px rgba(17,54,98,.10) !important;
-}
-.animated-bars { height:clamp(75px,18vh,140px) !important; }
-.animated-barcode-caption { margin-top:7px !important; font-size:clamp(13px,1.6vw,17px) !important; }
-.scan-title { font-size:clamp(22px,3.2vw,34px) !important; margin:0 !important; }
-.scan-hint { color:#7c8ca6; text-align:center; font-weight:500;
-  font-size:clamp(14px,1.8vw,19px); margin:5px auto 0; }
-[data-testid="stImage"] { text-align:center !important; }
-[data-testid="stImage"] img { object-fit:contain !important; width:auto !important; margin:auto !important; }
-/* Pantalla horizontal del equipo: evitar el diseño miniatura anterior.
-   Escalar tamaños con la altura útil en vez de reducirlos al mínimo. */
-@media (orientation:landscape) and (min-width:600px) and (max-height:800px) {
-  [data-testid="stMainBlockContainer"], .block-container {
-    padding-top:0.25rem !important;
-    padding-bottom:0.15rem !important;
-  }
-  [data-testid="stVerticalBlock"] { gap:clamp(4px,1.1vh,10px) !important; }
-  .main-header {
-    box-sizing:border-box !important;
-    min-height:clamp(82px,20dvh,142px) !important;
-    padding:clamp(12px,3vh,20px) 50px !important;
-    margin-bottom:clamp(10px,2.5vh,18px) !important;
-    display:flex !important;
-    flex-direction:column !important;
-    justify-content:center !important;
-  }
-  .main-header h1 { font-size:clamp(22px,5vh,34px) !important; }
-  .main-header p { font-size:clamp(12px,2.7vh,16px) !important; margin-top:5px !important; }
-  .animated-barcode-card {
-    width:min(440px,70vw) !important;
-    padding:clamp(10px,2vh,18px) 20px 9px !important;
-    margin:0 auto clamp(12px,3vh,22px) !important;
-  }
-  .animated-bars { height:clamp(80px,21dvh,140px) !important; }
-  .animated-barcode-caption { font-size:clamp(13px,2.8vh,17px) !important; margin-top:6px !important; }
-  .scan-title { font-size:clamp(21px,4.8vh,32px) !important; }
-  .scan-hint { font-size:clamp(13px,3vh,18px) !important; margin-top:5px !important; }
-  [data-testid="stImage"] img { max-height:clamp(65px,16dvh,110px) !important; }
-}
-@media (orientation:landscape) and (min-width:600px) and (max-height:420px) {
-  .main-header { min-height:72px !important; margin-bottom:6px !important; }
-  .animated-barcode-card { margin-bottom:6px !important; padding:7px 16px 5px !important; }
-  .animated-bars { height:clamp(60px,19dvh,90px) !important; }
-  .scan-title { font-size:clamp(18px,4.8vh,24px) !important; }
-  [data-testid="stImage"] img { max-height:clamp(48px,13dvh,70px) !important; }
-}
-@media (max-width:599px) {
-  .main-header { padding:13px 38px !important; }
-  .main-header h1 { font-size:clamp(17px,4.7vw,24px) !important; }
-  .animated-barcode-card { width:min(330px,80vw) !important; }
-  .scan-title { font-size:clamp(18px,5vw,24px) !important; }
-}
-</style>
-"""
-
-# Prioridad sobre reglas de pantallas compactas anteriores.
-CSS += """
-<style>
-@media (max-height: 800px) and (min-width: 600px) {
-  [data-testid="stImage"] { display: flex !important; justify-content: center !important; }
-  [data-testid="stImage"] img {
-    max-height: 112px !important;
-    max-width: 145px !important;
-    width: auto !important;
-    object-fit: contain !important;
-  }
-}
-</style>
-"""
-# Solo en PRODUCTO NO ENCONTRADO: barras rojas estáticas y fondo tenue.
-CSS += """<style>
-.animated-barcode-card.barcode-not-found {background:#fff1f2 !important;}
-.animated-barcode-card.barcode-not-found .animated-bars {
-  background:repeating-linear-gradient(90deg,#b91c1c 0px,#b91c1c 3px,transparent 3px,transparent 6px,#dc2626 6px,#dc2626 8px,transparent 8px,transparent 12px) !important;
-  animation:none !important;
-}
-.animated-barcode-card.barcode-not-found .animated-scan-line,
-.animated-barcode-card.barcode-not-found .animated-bars::before,
-.animated-barcode-card.barcode-not-found .animated-bars::after {display:none !important;animation:none !important;}
-.scan-title.scan-title-not-found {color:#b91c1c !important;font-weight:800 !important;}
-</style>"""
-
-# Diseño aprobado: producto sin fotografía, precio en franja azul.
-CSS += """<style>
-.resultado-pantalla {
-  box-sizing: border-box !important;
-  width: 100% !important;
-  height: min(86dvh, 760px) !important;
-  min-height: 250px !important;
-  margin: 0 auto !important;
-  border-radius: 15px !important;
-  overflow: hidden !important;
-  background: #f6faff !important;
-  display: flex !important;
-  flex-direction: column !important;
-  box-shadow: 0 4px 18px rgba(14,49,101,.07);
-  text-align: center !important;
-}
-.resultado-datos {
-  flex: 1 1 53% !important;
-  min-height: 0 !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: clamp(4px, 1.2dvh, 12px) !important;
-  padding: 8px 20px !important;
-}
-.resultado-etiqueta {color:#8799b4;letter-spacing:.15em;font-weight:800;font-size:clamp(12px,1.5vw,19px)}
-.resultado-nombre {color:#0d2d58;font-weight:900;font-size:clamp(24px,3.3vw,56px);line-height:1.13;overflow-wrap:anywhere;max-width:100%;text-wrap:balance}
-.resultado-codigo {color:#8497b2;font-size:clamp(13px,1.5vw,22px)}
-.resultado-precio-panel {
-  flex: 0 0 42% !important;
-  min-height: 0 !important;
-  background:linear-gradient(105deg,#0860e8,#0851d3) !important;
-  color:white !important;
-  display:flex !important;
-  flex-direction:row !important;
-  justify-content:center !important;
-  align-items:center !important;
-  gap:clamp(12px,2vw,35px) !important;
-  padding:8px 18px !important;
-}
-.resultado-precio-etiqueta {font-weight:800;letter-spacing:.05em;font-size:clamp(13px,1.5vw,22px);white-space:nowrap;color:white}
-.resultado-precio {font-weight:900;font-size:clamp(44px,5.9vw,105px);line-height:1.04;white-space:nowrap;color:white;font-variant-numeric:tabular-nums}
-@media (max-width:650px) {
-  .resultado-precio-panel {flex-direction:column !important;gap:4px !important;}
-  .resultado-precio {font-size:clamp(38px,8vw,65px)}
-}
-@media (orientation:landscape) and (max-height:550px) {
-  .resultado-pantalla {height:87dvh !important;}
-  .resultado-datos {flex-basis:53% !important;padding:5px 14px !important;gap:4px !important;}
-  .resultado-nombre {font-size:clamp(20px,3.3vw,43px) !important;}
-  .resultado-precio-panel {flex-basis:43% !important;}
-  .resultado-precio {font-size:clamp(40px,6vw,78px) !important;}
-}
-</style>"""
-
-
-# Tipografía ampliada para el resultado, ajustada al 2connect horizontal.
-# Se aplica al final para prevalecer sobre las reglas compactas anteriores.
-CSS += """<style>
-.resultado-pantalla .resultado-datos {
-  padding: clamp(10px,2dvh,22px) clamp(14px,3vw,40px) !important;
-  gap: clamp(8px,2dvh,16px) !important;
-}
-.resultado-pantalla .resultado-nombre {
-  font-size: clamp(31px, 4.6vw, 72px) !important;
-  line-height: 1.12 !important;
-  max-width: 96% !important;
-  text-wrap: balance !important;
-}
-.resultado-pantalla .resultado-etiqueta {
-  font-size: clamp(15px, 1.8vw, 23px) !important;
-}
-.resultado-pantalla .resultado-codigo {
-  font-size: clamp(17px, 2.1vw, 27px) !important;
-}
-.resultado-pantalla .resultado-precio-panel {
-  flex-direction: column !important;
-  gap: clamp(5px,1.2dvh,14px) !important;
-}
-.resultado-pantalla .resultado-precio-etiqueta {
-  font-size: clamp(17px, 2.2vw, 27px) !important;
-}
-.resultado-pantalla .resultado-precio {
-  font-size: clamp(64px, 9.5vw, 136px) !important;
-  line-height: 1.05 !important;
-}
-@media (orientation: landscape) and (max-height: 550px) {
-  .resultado-pantalla .resultado-nombre {font-size: clamp(29px,4.2vw,58px) !important;}
-  .resultado-pantalla .resultado-precio {font-size: clamp(59px,8.7vw,112px) !important;}
-  .resultado-pantalla .resultado-datos {gap: 6px !important;}
-}
-</style>"""
-
-# Diseño adaptable: la pantalla de espera y la del precio se ajustan SOLAS al
-# alto del equipo (2connect, monitor, tableta). Va al final para prevalecer.
-CSS += """
-<style>
-/* Elementos que solo llevan estilos o scripts: no ocupan espacio. */
-[data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"] > :not(style))) {
-  display: none !important;
-}
-/* Sin los márgenes negativos que Streamlit pone a los bloques de texto. */
-[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla),
-[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla) [data-testid="stMarkdown"],
-[data-testid="stElementContainer"]:has(.pantalla-espera, .resultado-pantalla) [data-testid="stMarkdownContainer"] {
-  margin-top: 0 !important; margin-bottom: 0 !important;
-}
-
-/* ---------- Pantalla de espera ---------- */
-.pantalla-espera {
-  display: flex; flex-direction: column; align-items: center;
-  gap: clamp(8px, 2.4dvh, 26px);
-  width: 100%; box-sizing: border-box;
-  height: calc(100dvh - 7rem); min-height: 420px;   /* usuarios con menú */
-}
-/* Verificador (kiosko): ocupa exactamente la pantalla, sin depender de Streamlit. */
-.pantalla-espera.pantalla-fija {
-  position: fixed; inset: 0; z-index: 50;
-  height: auto; min-height: 0; background: #f4f8ff;
-  padding: clamp(8px, 2dvh, 22px) clamp(10px, 2vw, 28px) clamp(10px, 2.4dvh, 26px);
-}
-.pantalla-espera > * { flex: 0 0 auto; }
-.pantalla-espera .main-header {
-  width: 100%; box-sizing: border-box; margin: 0 !important; min-height: 0 !important;
-  padding: clamp(8px, 2.6dvh, 28px) 40px !important; border-radius: 14px !important;
-}
-.pantalla-espera .main-header h1 {
-  font-size: clamp(18px, 6.2dvh, 46px) !important; line-height: 1.15 !important;
-  margin: 0 !important; padding: 0 !important;
-}
-.pantalla-espera .main-header p {
-  font-size: clamp(11px, 2.8dvh, 20px) !important; margin: 0.5dvh 0 0 !important;
-}
-.pantalla-espera .animated-barcode-card {
-  width: min(560px, 60vw) !important; margin: 0 !important; box-sizing: border-box;
-  padding: 1.4dvh 18px 1dvh !important;
-}
-.pantalla-espera .animated-bars { height: clamp(34px, 17dvh, 160px) !important; }
-.pantalla-espera .animated-barcode-caption {
-  font-size: clamp(10px, 2.2dvh, 16px) !important; margin-top: 0.6dvh !important;
-}
-.pantalla-espera .espera-textos { text-align: center; }
-.pantalla-espera .scan-title {
-  font-size: clamp(16px, 5.8dvh, 42px) !important; line-height: 1.1 !important; margin: 0 !important;
-}
-.pantalla-espera .scan-hint {
-  font-size: clamp(11px, 2.8dvh, 20px) !important; margin: 0.4dvh 0 0 !important;
-}
-.pantalla-espera .scan-hint-codigo { color: #b91c1c !important; font-weight: 700; }
-/* Logo y QR: usan TODO el alto que queda (se encogen o agrandan solos). */
-.pantalla-espera .verif-imagenes {
-  flex: 1 1 0; min-height: 0; width: 100%;
-  display: flex; justify-content: center; align-items: center;
-  gap: clamp(18px, 6vw, 80px);
-}
-.verif-logo {
-  display: block; width: auto; height: auto; object-fit: contain;
-  max-width: min(34vw, 320px); max-height: min(100%, 260px);
-}
-.verif-qr {
-  height: 100%; min-height: 0; max-height: 300px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 0.8dvh;
-}
-.verif-qr img {
-  display: block; flex: 0 1 auto; min-height: 0; width: auto; height: auto;
-  max-height: calc(100% - 2.6em); max-width: min(30vw, 240px); object-fit: contain;
-  background: #fff; padding: 4px; border-radius: 8px; box-sizing: border-box;
-}
-/* Etiqueta destacada bajo el QR. */
-.verif-qr span {
-  flex: 0 0 auto; display: inline-block; background: #0757d4; color: #ffffff;
-  font-weight: 800; letter-spacing: .02em; white-space: nowrap;
-  font-size: clamp(12px, 2.8dvh, 20px); line-height: 1.15;
-  padding: 0.6dvh 12px; border-radius: 999px;
-  box-shadow: 0 2px 6px rgba(7, 87, 212, .25);
-}
-
-/* ---------- Pantalla del precio (kiosko): también a pantalla completa ---------- */
-.resultado-pantalla.pantalla-fija {
-  position: fixed !important; z-index: 50;
-  inset: clamp(6px, 1.5dvh, 16px) clamp(8px, 1.5vw, 20px) !important;
-  width: auto !important; height: auto !important; min-height: 0 !important; margin: 0 !important;
-}
-</style>"""
 
 # Cada <style> debe empezar en SU PROPIA línea: si queda pegado a un </style>
 # anterior, Markdown lo trata como texto y puede mostrar el CSS en pantalla.
@@ -900,7 +381,7 @@ def verificador():
         from apariencia import obtener as obtener_apariencia
         vista = obtener_apariencia()
     except Exception:
-        vista = {"mostrar_logo": True, "mostrar_qr": True, "mostrar_cuadro": False}
+        vista = _apariencia_predeterminada()
     st.markdown(CSS_CUADRO_VISIBLE if vista["mostrar_cuadro"] else CSS_CUADRO_OCULTO,
                 unsafe_allow_html=True)
 
@@ -917,92 +398,60 @@ def verificador():
         )
 
     product = st.session_state.current_product
+    a = vista if "estilo" in vista else {**_apariencia_predeterminada(), **vista}
+    logo = imagen_base64("logo.png", 700, 420) if a["mostrar_logo"] else None
+    qr = imagen_base64("qr-movil.png", 300, 300) if a["mostrar_qr"] else None
+    logo = f"data:image/png;base64,{logo}" if logo else None
+    qr = f"data:image/png;base64,{qr}" if qr else None
+    codigo = str(st.session_state.get("last_searched_barcode") or "")
+    comun = {"logo": logo, "qr": qr, "codigo": codigo, "fija": modo_kiosko}
 
     if product is not None:
-        name = html.escape(str(product["name"]))
-        # Mostrar el código que se escaneó (lo que el cliente consultó).
-        barcode = html.escape(str(st.session_state.get("last_searched_barcode") or product["barcode"]))
-        price = float(product["price"])
-
-        st.markdown(
-            f'<div class="resultado-pantalla{" pantalla-fija" if modo_kiosko else ""}">'
-            '<div class="resultado-datos">'
-            '<div class="resultado-etiqueta">PRODUCTO</div>'
-            f'<div class="resultado-nombre">{name}</div>'
-            f'<div class="resultado-codigo">Código consultado: <strong>{barcode}</strong></div>'
-            '</div>'
-            '<div class="resultado-precio-panel">'
-            '<div class="resultado-precio-etiqueta">PRECIO DE VENTA</div>'
-            f'<div class="resultado-precio">RD$ {price:,.2f}</div>'
-            '</div></div>', 
-            unsafe_allow_html=True,
-        )
-
+        foto = foto_producto(codigo, str(product.get("barcode") or "")) if a.get("mostrar_foto", True) else None
+        html_pantalla = pantalla_en_linea.pantalla(a, "producto", producto=product, foto=foto, **comun)
     elif st.session_state.consult_error:
-        st.error(st.session_state.consult_error)
+        html_pantalla = pantalla_en_linea.pantalla(a, "error", **comun)
+        if not modo_kiosko:   # el detalle técnico solo lo ve el personal
+            st.error(st.session_state.consult_error)
     elif st.session_state.external_job:
-        # Solo se muestra una animación amigable; no exponer detalles técnicos.
-        st.markdown(
-            '<div class="product-card search-card">'
-            '<div class="search-label">VERIFICANDO PRECIO</div>'
-            '<svg class="search-visual" viewBox="0 0 300 105" role="img" '
-            'aria-label="Lupa buscando un código de barras">'
-            '<g fill="#64748b">'
-            + ''.join(
-                f'<rect x="{15 + i * 9}" y="22" width="{4 if i % 3 == 0 else 2}" '
-                f'height="{55 if i % 4 == 0 else 45}" />' for i in range(27)
-            )
-            + '</g><g class="search-lens">'
-            '<circle cx="36" cy="42" r="23" fill="#e8f1ff" fill-opacity="0.9" '
-            'stroke="#0759c9" stroke-width="5"/>'
-            '<path d="M53 59 L78 84" stroke="#0759c9" stroke-width="9" '
-            'stroke-linecap="round"/></g></svg>'
-            '<div class="search-text">Buscando producto...</div>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        html_pantalla = pantalla_en_linea.pantalla(a, "buscando", **comun)
     else:
-        # Pantalla de espera como UN solo bloque. En el verificador (kiosko)
-        # ocupa exactamente el alto de la pantalla y se adapta sola: la franja,
-        # el código de barras y el título toman su tamaño, y el logo y el QR
-        # se agrandan o encogen para llenar el espacio que queda.
-        no_encontrado = st.session_state.not_found
-        clase_error = " barcode-not-found" if no_encontrado else ""
-        titulo_escaneo = "PRODUCTO NO ENCONTRADO" if no_encontrado else "ESCANEA TU CÓDIGO AQUÍ"
+        html_pantalla = pantalla_en_linea.pantalla(a, "no" if st.session_state.not_found else "espera", **comun)
+    st.markdown(html_pantalla, unsafe_allow_html=True)
 
-        imagenes = []
-        if vista["mostrar_logo"]:
-            logo = imagen_base64("logo.png", 440, 260)
-            if logo:
-                imagenes.append(
-                    '<img class="verif-logo" alt="Logo de la empresa" '
-                    f'src="data:image/png;base64,{logo}">')
-        if vista["mostrar_qr"]:
-            qr = imagen_base64("qr-movil.png", 300, 300)
-            if qr:
-                imagenes.append(
-                    '<div class="verif-qr"><img alt="Código QR para consultar desde el celular" '
-                    f'src="data:image/png;base64,{qr}"><span>📱 Consulta desde tu celular</span></div>')
 
-        clase_pantalla = "pantalla-espera" + (" pantalla-fija" if modo_kiosko else "")
-        st.markdown(
-            f'<div class="{clase_pantalla}">'
-            '<div class="main-header"><h1>🏷️ CONSULTA DE PRECIOS</h1>'
-            '<p>Consulta rápida de productos y precios</p></div>'
-            f'<div class="animated-barcode-card{clase_error}" aria-label="Código de barras decorativo">'
-            '<div class="animated-bars"><div class="animated-scan-line"></div></div>'
-            '<div class="animated-barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div></div>'
-            '<div class="espera-textos">'
-            f'<div class="scan-title{" scan-title-not-found" if no_encontrado else ""}">{titulo_escaneo}</div>'
-            + ('<div class="scan-hint scan-hint-codigo">Código consultado: <strong>'
-               + html.escape(str(st.session_state.get("last_searched_barcode", ""))) + '</strong></div>'
-               if no_encontrado else
-               '<div class="scan-hint">El precio se mostrará automáticamente</div>')
-            + '</div>'
-            + ('<div class="verif-imagenes">' + "".join(imagenes) + '</div>' if imagenes else '')
-            + '</div>',
-            unsafe_allow_html=True,
-        )
+def _apariencia_predeterminada():
+    try:
+        from apariencia import PREDETERMINADA
+        return dict(PREDETERMINADA)
+    except Exception:
+        return {"nombre_negocio": "", "mostrar_nombre": True, "estilo": "claro", "color_marca": "#0757d4",
+                "posicion_logo": "esquina", "titulo_espera": "Escanea tu producto",
+                "mensaje_espera": "Pasa el código de barras por el lector",
+                "texto_qr": "Consulta también desde tu celular", "moneda": "RD$",
+                "mostrar_logo": True, "mostrar_qr": True, "mostrar_cuadro": False, "mostrar_foto": True}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def foto_producto(*codigos):
+    """Foto del producto (a mano o encontrada en internet) como data: URL, o None."""
+    try:
+        import fotos_productos as fp
+        from codigos_barras import variantes_codigo
+        base, headers = fp._conexion()
+        formas = []
+        for c in codigos:
+            if c:
+                formas += [f for f in variantes_codigo(c) if f not in formas]
+        for forma in formas[:6]:
+            for ruta, tipo in ((f"{fp.BUCKET}/{forma}.png", "image/png"),
+                               (f"{fp.BUCKET}/{fp.CARPETA_INTERNET}/{forma}.jpg", "image/jpeg")):
+                datos = fp._leer(base, headers, ruta)
+                if datos:
+                    return f"data:{tipo};base64," + base64.b64encode(datos).decode("ascii")
+    except Exception:
+        pass
+    return None
 
 
 
@@ -1010,6 +459,7 @@ def verificador():
 # fragmento que se actualiza cada segundo) y desde ahí vigila el cuadro.
 from shared import ejecutar_js_en_pagina
 ejecutar_js_en_pagina(FOCO_JS, "foco_verificador_js")
+ejecutar_js_en_pagina(pantalla_en_linea.AJUSTE_JS, "ajuste_precio_js")
 
 try:
     verificador()
