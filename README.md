@@ -131,11 +131,21 @@ mkdir -p .streamlit && cp .streamlit-secrets-EJEMPLO.toml .streamlit/secrets.tom
 streamlit run app.py
 ```
 
-## Equipos sin internet (en preparación)
+## Equipos sin internet
+
+La app del verificador sin internet está en la carpeta `docs/` y se publica con GitHub Pages.
 
 1. Ejecuta `sql/MIGRACION_004_equipos_sin_internet.sql` en Supabase > SQL Editor.
-2. En **Configuración > Equipos sin internet** define la **clave de salida del verificador**
-   (distinta de tu contraseña) y pulsa **Publicar precios a los equipos**.
-3. Desde ese momento, activar o publicar el inventario activo, cambiar logo, QR o apariencia
-   actualiza solo a los equipos. Ellos revisan la versión cada pocos minutos y descargan el
-   catálogo únicamente cuando cambia.
+2. En GitHub: **Settings > Pages > Build and deployment > Deploy from a branch > `main` / `/docs` > Save**.
+   GitHub muestra la dirección (por ejemplo `https://tuusuario.github.io/verificadordeprecios/`).
+3. En la app en línea, **Configuración > Equipos sin internet**:
+   - define la **clave de salida del verificador** (distinta de tu contraseña);
+   - pulsa **Publicar precios a los equipos**;
+   - pega la dirección de GitHub Pages y guárdala: aparece el **enlace de instalación** con su QR.
+4. En cada equipo, abre ese enlace **una vez con internet**. Descarga los precios y queda vinculado.
+   En Chrome para Android: menú ⋮ > **Instalar aplicación**.
+5. Desde ese momento, activar o publicar el inventario activo, o cambiar el logo, el QR o la apariencia,
+   actualiza solo a los equipos. Revisan cada 5 minutos con internet y descargan el catálogo solo si cambió.
+
+Al cambiar cualquier archivo de `docs/`, sube `VERSION` en `docs/sw.js`: así los equipos instalan la app nueva.
+La carpeta `pwa_offline/` es el prototipo anterior y ya no se usa: puedes borrarla.

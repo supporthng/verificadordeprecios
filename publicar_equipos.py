@@ -164,6 +164,52 @@ def guardar_clave_salida(clave):
         raise RuntimeError(f"No se pudo guardar la clave de salida (HTTP {r.status_code}): {r.text[:300]}")
 
 
+# ---------------------------------------------------------------- app de los equipos
+APP_EQUIPOS = f"{PRIVADO}/equipos-app.json"
+
+
+def app_equipos():
+    """Dirección de la app sin internet (GitHub Pages) guardada por el administrador, o ""."""
+    try:
+        base, headers = _conexion()
+        datos = _leer_privado(base, headers, APP_EQUIPOS)
+        return str(json.loads(datos).get("url") or "") if datos else ""
+    except (RuntimeError, ValueError, requests.RequestException):
+        return ""
+
+
+def guardar_app_equipos(direccion):
+    from urllib.parse import urlsplit
+    direccion = str(direccion or "").strip()
+    partes = urlsplit(direccion)
+    if partes.scheme != "https" or not partes.netloc:
+        raise ValueError("Escribe la dirección completa, empezando por https://")
+    direccion = f"https://{partes.netloc}{partes.path.rstrip('/')}/"
+    base, headers = _conexion()
+    r = requests.post(f"{base}/storage/v1/object/{APP_EQUIPOS}",
+                      headers={**headers, "Content-Type": "application/json", "x-upsert": "true"},
+                      data=json.dumps({"url": direccion}).encode("utf-8"), timeout=15)
+    if not r.ok:
+        raise RuntimeError(f"No se pudo guardar la dirección (HTTP {r.status_code}): {r.text[:300]}")
+    return direccion
+
+
+def enlace_instalacion(direccion_app):
+    from urllib.parse import quote
+    return f"{direccion_app}?estado={quote(url_publica('estado.json'), safe='')}"
+
+
+def _app_en_linea():
+    """Dirección de esta app de Streamlit (para el botón 'Abrir la app en línea' del equipo)."""
+    try:
+        import streamlit as st
+        from urllib.parse import urlsplit
+        partes = urlsplit(st.context.url)
+        return f"{partes.scheme}://{partes.netloc}/" if partes.netloc else None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------- publicar
 def publicar(apariencia_actual=None):
     """Publica catálogo, apariencia, logo, QR y clave de salida. Devuelve el estado publicado."""
@@ -210,6 +256,7 @@ def publicar(apariencia_actual=None):
         "logo": imagenes["logo"],
         "qr": imagenes["qr"],
         "salida": salida,
+        "app_en_linea": _app_en_linea() or anterior.get("app_en_linea"),
         # Para que los equipos suban su registro de consultas hechas sin internet.
         # La clave pública solo permite AGREGAR filas 'offline-*' (ver MIGRACION_004).
         "registro": {"url": base, "clave": clave_publica()} if clave_publica() else None,

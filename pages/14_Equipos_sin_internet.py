@@ -91,6 +91,39 @@ with st.form("clave_salida", clear_on_submit=True):
         except Exception as exc:
             st.error(str(exc))
 
+# ---------------- Instalar en un equipo ----------------
+st.subheader("📲 Instalar en un equipo")
+st.markdown(
+    "La app sin internet está en la carpeta **docs** del repositorio y se publica gratis con "
+    "**GitHub Pages** (en GitHub: *Settings > Pages > Deploy from a branch > main / docs*). "
+    "GitHub te muestra su dirección, por ejemplo `https://tuusuario.github.io/verificadordeprecios/`."
+)
+guardada = pe.app_equipos()
+with st.form("app_equipos"):
+    direccion = st.text_input("Dirección de la app en GitHub Pages", value=guardada,
+                              placeholder="https://tuusuario.github.io/verificadordeprecios/")
+    if st.form_submit_button("Guardar dirección"):
+        try:
+            guardada = pe.guardar_app_equipos(direccion)
+            st.success("Dirección guardada.")
+        except Exception as exc:
+            st.error(str(exc))
+if guardada:
+    enlace = pe.enlace_instalacion(guardada)
+    st.markdown("**Enlace de instalación.** Ábrelo **una vez** en cada equipo con internet. "
+                "El equipo queda vinculado y descarga los precios. Después funciona sin conexión.")
+    st.code(enlace, language=None)
+    try:
+        import io
+        import segno
+        imagen = io.BytesIO()
+        segno.make(enlace, error="m").save(imagen, kind="png", scale=6, border=3)
+        st.image(imagen.getvalue(), caption="Escanéalo con la cámara del equipo", width=260)
+    except Exception:
+        pass
+    st.caption("En Chrome para Android: menú ⋮ > **Instalar aplicación** (o *Agregar a la pantalla "
+               "principal*) para abrirla a pantalla completa, como una app.")
+
 # ---------------- Direcciones ----------------
 with st.expander("Detalles técnicos"):
     st.markdown("Archivo que revisan los equipos:")
