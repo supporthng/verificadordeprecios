@@ -116,6 +116,9 @@ def mostrar_qr_actual():
             elif "embed=true" not in enlace:
                 st.info("Lleva a Consulta Móvil, pero con la barra y los íconos de Streamlit. "
                         "Si generas uno nuevo, se abrirá sin ellos.")
+            elif "/escaner_movil" in enlace.lower() or "light_theme" not in enlace:
+                st.info("Lleva a Consulta Móvil, pero es de una versión anterior: puede mostrar el aviso "
+                        "«Page not found» o el tema oscuro. Pulsa «Generar y guardar QR» para actualizarlo.")
             else:
                 st.success("Correcto: lleva a Consulta Móvil sin el marco de Streamlit.")
         else:
@@ -132,14 +135,17 @@ def generar_qr_png(enlace):
 
 
 def enlace_consulta_movil():
-    """Dirección pública de Consulta Móvil, sin el marco de Streamlit (embed=true)."""
+    """Dirección pública de Consulta Móvil, sin el marco de Streamlit (embed=true).
+    Usa la dirección RAÍZ con ?movil=1: en modo embed, Streamlit Cloud no reconoce
+    la ruta /Escaner_Movil y muestra "Page not found". light_theme evita el tema
+    oscuro del teléfono, con el que algunos textos no se leen bien."""
     from urllib.parse import urlsplit
     try:
         partes = urlsplit(st.context.url)
         base = f"{partes.scheme}://{partes.netloc}" if partes.netloc else ""
     except (AttributeError, TypeError, ValueError):
         base = ""
-    return (base or "https://TU-APP.streamlit.app") + "/Escaner_Movil?movil=1&embed=true"
+    return (base or "https://TU-APP.streamlit.app") + "/?movil=1&embed=true&embed_options=light_theme"
 
 
 st.divider()
