@@ -221,7 +221,9 @@ if usar and pegado.strip():
 # ---------------------------------------------------------------------------
 # GPS del dispositivo (estando en el establecimiento)
 # ---------------------------------------------------------------------------
-with st.expander("📡 3. O detecta tu ubicación actual (estando en el establecimiento)"):
+st.subheader("📡 3. O detecta tu ubicación actual")
+st.caption("Úsalo estando en el establecimiento.")
+with st.container():
     if st.button("📍 Detectar mi ubicación", use_container_width=True):
         st.session_state.geo_attempt += 1
         st.session_state.geo_detecting = True
@@ -281,30 +283,34 @@ radio = int(st.session_state.geo_form_radius)
 if lat == 0 and lon == 0:
     st.info("Busca el establecimiento, pega un enlace o detecta tu ubicación para ver el mapa.")
 else:
-    try:
-        import pydeck as pdk
-        capas = [
-            pdk.Layer("ScatterplotLayer", data=[{"lat": lat, "lon": lon}], get_position="[lon, lat]",
-                      get_radius=radio, radius_units="meters", stroked=True, filled=True,
-                      get_fill_color=[7, 87, 212, 45], get_line_color=[7, 87, 212, 220],
-                      line_width_min_pixels=2),
-            pdk.Layer("ScatterplotLayer", data=[{"lat": lat, "lon": lon}], get_position="[lon, lat]",
-                      get_radius=7, radius_units="pixels", get_fill_color=[220, 38, 38]),
-        ]
-        otros = [r for r in resultados if (round(r["lat"], 6), round(r["lon"], 6)) != (round(lat, 6), round(lon, 6))]
-        if otros:
-            capas.insert(0, pdk.Layer("ScatterplotLayer", data=otros, get_position="[lon, lat]",
-                                      get_radius=5, radius_units="pixels", get_fill_color=[100, 116, 139, 200],
-                                      pickable=True))
-        zoom = max(9.0, min(18.0, 16.6 - math.log2(max(radio, 10) / 50)))
-        st.pydeck_chart(pdk.Deck(layers=capas, map_provider="carto", map_style="light",
-                                 initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=zoom),
-                                 tooltip={"text": "{nombre}\n{detalle}"} if otros else None),
-                        use_container_width=True)
-        st.caption(f"🔴 Centro del establecimiento · 🔵 zona autorizada de {radio} m"
-                   + (" · ⚪ otros resultados de la búsqueda" if otros else ""))
-    except Exception:
-        st.map(pd.DataFrame([{"lat": lat, "lon": lon}]), latitude="lat", longitude="lon", zoom=16, size=40)
+    # Mapa Leaflet: el círculo es la zona autorizada en metros reales y el acercamiento
+    # se ajusta solo para que se vea completo.
+    import json as _json
+    import streamlit.components.v1 as _components
+    otros = [r for r in resultados if (round(r["lat"], 6), round(r["lon"], 6)) != (round(lat, 6), round(lon, 6))]
+    _datos = _json.dumps({"lat": lat, "lon": lon, "radio": radio,
+                          "otros": [{"lat": r["lat"], "lon": r["lon"], "nombre": str(r.get("nombre", ""))[:80]}
+                                    for r in otros[:20]]})
+    _components.html("""
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<div id="mapa" style="height:400px;border-radius:12px;border:1px solid #e3eaf5"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const d = """ + _datos + """;
+  const mapa = L.map('mapa', { scrollWheelZoom: false }).setView([d.lat, d.lon], 16);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(mapa);
+  const zona = L.circle([d.lat, d.lon], { radius: d.radio, color: '#0757d4', weight: 2,
+                                         fillColor: '#0757d4', fillOpacity: 0.12 }).addTo(mapa);
+  L.circleMarker([d.lat, d.lon], { radius: 7, color: '#ffffff', weight: 2, fillColor: '#dc2626',
+                                   fillOpacity: 1 }).addTo(mapa).bindTooltip('Centro del establecimiento');
+  d.otros.forEach(o => L.circleMarker([o.lat, o.lon], { radius: 5, color: '#ffffff', weight: 1,
+      fillColor: '#64748b', fillOpacity: 0.9 }).addTo(mapa).bindTooltip(o.nombre));
+  // Encuadrar la zona completa (el diámetro es 2 × radio).
+  mapa.fitBounds(L.latLng(d.lat, d.lon).toBounds(d.radio * 2), { padding: [24, 24] });
+</script>""", height=412)
+    st.caption(f"🔴 Centro del establecimiento · 🔵 zona autorizada de {radio:,} m"
+               + (" · ⚪ otros resultados de la búsqueda" if otros else ""))
     st.link_button("Ver este punto en Google Maps", f"https://www.google.com/maps?q={lat:.7f},{lon:.7f}",
                    use_container_width=True)
 
