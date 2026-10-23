@@ -1,7 +1,7 @@
 /* Guarda la app en el equipo para que abra SIN internet.
    Al cambiar cualquier archivo de la app, sube VERSION: los equipos la renuevan solos. */
-const VERSION = "verificador-1.0.0";
-const ARCHIVOS = ["./", "index.html", "estilos.css", "app.js", "codigos.js", "datos.js",
+const VERSION = "verificador-1.0.1";
+const ARCHIVOS = ["./", "index.html", "estilos.css", "app.js", "config.js", "codigos.js", "datos.js",
                   "manifest.webmanifest", "icono.svg", "icono-192.png", "icono-512.png"];
 
 self.addEventListener("install", function (e) {

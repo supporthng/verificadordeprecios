@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.0.0";
+  const APP_VERSION = "1.0.1";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 5 * 60 * 1000;      // revisar si hay precios nuevos
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -435,7 +435,8 @@
     let guardado = {};
     try { guardado = await BD.leer(["origen", "estado", "catalogo", "img_logo", "img_qr", "revisado"]); }
     catch (e) { guardado = {}; }
-    origen = desdeEnlace || guardado.origen || validarOrigen(local("origen"));
+    origen = desdeEnlace || guardado.origen || validarOrigen(local("origen")) ||
+             validarOrigen((self.CONFIG_EQUIPOS || {}).estado);
     if (desdeEnlace) {
       if (desdeEnlace !== guardado.origen) await BD.guardar({ origen: desdeEnlace }).catch(function () {});
       local("origen", desdeEnlace);

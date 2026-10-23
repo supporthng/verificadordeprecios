@@ -109,18 +109,21 @@ with st.form("app_equipos"):
         except Exception as exc:
             st.error(str(exc))
 if guardada:
-    enlace = pe.enlace_instalacion(guardada)
-    st.markdown("**Enlace de instalación.** Ábrelo **una vez** en cada equipo con internet. "
-                "El equipo queda vinculado y descarga los precios. Después funciona sin conexión.")
-    st.code(enlace, language=None)
+    st.markdown("**Para instalar en un equipo**, abre esta dirección **una vez con internet**. "
+                "Descarga los precios y después funciona sin conexión:")
+    st.markdown(f"### {guardada.replace('https://', '').rstrip('/')}")
     try:
         import io
         import segno
         imagen = io.BytesIO()
-        segno.make(enlace, error="m").save(imagen, kind="png", scale=6, border=3)
-        st.image(imagen.getvalue(), caption="Escanéalo con la cámara del equipo", width=260)
+        segno.make(guardada, error="m").save(imagen, kind="png", scale=8, border=3)
+        st.image(imagen.getvalue(), caption="O escanéalo con la cámara del equipo", width=220)
     except Exception:
         pass
+    with st.expander("¿El equipo no encuentra los precios?"):
+        st.caption("La app ya trae la dirección de los precios (archivo docs/config.js). Si cambias de "
+                   "proyecto de Supabase, actualiza ese archivo, o abre una vez este enlace largo:")
+        st.code(pe.enlace_instalacion(guardada), language=None)
     st.caption("En Chrome para Android: menú ⋮ > **Instalar aplicación** (o *Agregar a la pantalla "
                "principal*) para abrirla a pantalla completa, como una app.")
 
