@@ -226,17 +226,60 @@ def _descargar_imagen(direccion, motivo=None):
 
 
 UPCITEMDB = "https://api.upcitemdb.com/prod/trial/lookup"   # gratis: 100 consultas al día
-BRAVE_IMAGENES = "https://api.search.brave.com/res/v1/images/search"   # opcional: BRAVE_SEARCH_KEY
+DDG = "https://duckduckgo.com/"
 
 
-def _clave_brave():
-    """Clave del buscador de imágenes de Brave (Secrets: BRAVE_SEARCH_KEY), o vacío si no hay."""
+def _duckduckgo_imagenes(consulta, anotar):
+    """Direcciones de imágenes para una búsqueda (DuckDuckGo, gratis y sin clave).
+    Devuelve None si el buscador no respondió. Es un servicio no oficial: si algún día deja de
+    responder, el resto de la búsqueda sigue funcionando igual."""
+    import re
+    cab = {"User-Agent": NAVEGADOR, "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"}
     try:
-        import streamlit as st
-        return str(st.secrets.get("BRAVE_SEARCH_KEY", "") or "").strip()
-    except Exception:
-        import os
-        return os.environ.get("BRAVE_SEARCH_KEY", "").strip()
+        r = requests.get(DDG, params={"q": consulta, "iax": "images", "ia": "images"}, headers=cab, timeout=12)
+        m = re.search(r"vqd=['\"]?([\d-]+)", r.text or "")
+        if not m:
+            anotar("Buscador DuckDuckGo", consulta, f"no respondió (HTTP {r.status_code})")
+            return None
+        r = requests.get(DDG + "i.js", timeout=12,
+                         params={"l": "us-en", "o": "json", "q": consulta, "vqd": m.group(1), "f": ",,,,,", "p": "1"},
+                         headers={**cab, "Referer": DDG, "Accept": "application/json"})
+        resultados = ((r.json() or {}).get("results") or []) if r.ok else []
+    except (requests.RequestException, ValueError) as exc:
+        anotar("Buscador DuckDuckGo", consulta, f"sin respuesta ({type(exc).__name__})")
+        return None
+    anotar("Buscador DuckDuckGo", consulta, f"{len(resultados)} imagen(es)" if resultados else "sin resultados")
+    urls = []
+    for res in resultados[:10]:
+        # La original y, de respaldo, la miniatura (siempre se puede descargar).
+        urls += [u for u in (res.get("image"), res.get("thumbnail")) if isinstance(u, str) and u.startswith("http")]
+    return urls
+
+
+def _foto_de_pagina(enlace):
+    """Foto principal de la página de un producto (og:image / twitter:image / JSON-LD), o None."""
+    import re
+    from urllib.parse import urljoin
+    try:
+        r = requests.get(enlace, headers={"User-Agent": NAVEGADOR, "Accept": "text/html"}, timeout=15,
+                         allow_redirects=True, stream=True)
+        if not r.ok or "html" not in r.headers.get("Content-Type", "").lower():
+            return None
+        crudo = b""
+        for bloque in r.iter_content(65536):
+            crudo += bloque
+            if len(crudo) > 1_500_000:
+                break
+        texto = crudo.decode(r.encoding or "utf-8", "ignore")
+    except (requests.RequestException, ValueError, OSError, AttributeError, LookupError):
+        return None
+    for patron in (r'<meta[^>]+(?:property|name)=["\'](?:og:image(?::secure_url)?|twitter:image)["\'][^>]*content=["\']([^"\']+)',
+                   r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\'](?:og:image|twitter:image)',
+                   r'"image"\s*:\s*"(https?:[^"]+)"', r'"image"\s*:\s*\[\s*"(https?:[^"]+)"'):
+        m = re.search(patron, texto, re.I)
+        if m:
+            return urljoin(r.url, m.group(1).replace("&amp;", "&").replace("\\/", "/"))
+    return None
 
 
 def _nombre_consultado(codigo):
@@ -340,7 +383,16 @@ def _candidatas(codigo, informe, estado):
         anotar("UPCitemdb", forma, f"{len(fotos)} foto(s)" if fotos else "no lo tiene")
         for u in fotos:
             yield "UPCitemdb", u, True
-        if fotos:
+        # Las tiendas que venden el producto: la foto principal de su página (suele ser de catálogo).
+        tiendas = [o for it in items for o in (it.get("offers") or []) if str(o.get("link", "")).startswith("http")]
+        for oferta in tiendas[:4]:
+            u = _foto_de_pagina(oferta["link"])
+            tienda = oferta.get("domain") or oferta.get("merchant") or "tienda"
+            if u:
+                yield f"Tienda {tienda}", u, True
+            else:
+                anotar(f"Tienda {tienda}", forma, "sin foto en la página")
+        if items:
             break
     for nombre, sitio in FUENTES:
         for forma in formas[:3]:
@@ -370,33 +422,14 @@ def _candidatas(codigo, informe, estado):
                 yield nombre, u, False
             if urls:
                 break
-    # Último recurso (si hay clave): buscador de imágenes de Brave, con el nombre del producto.
-    clave = _clave_brave()
-    if clave:
-        nombre_producto = estado.get("titulo") or _nombre_consultado(codigo)
-        consulta = f"{nombre_producto} {codigo}".strip() if nombre_producto else codigo
-        try:
-            r = requests.get(BRAVE_IMAGENES, params={"q": consulta, "count": 20, "safesearch": "strict"},
-                             headers={"Accept": "application/json", "X-Subscription-Token": clave}, timeout=15)
-        except requests.RequestException as exc:
-            anotar("Buscador Brave", consulta, f"sin respuesta ({type(exc).__name__})")
-            return
-        if r.status_code in (401, 403):
-            anotar("Buscador Brave", consulta, "clave inválida o sin crédito")
-            return
-        if r.status_code == 429:
-            anotar("Buscador Brave", consulta, "límite alcanzado (se reintenta después)")
-            return
-        estado["respondio"] = estado["respondio"] or r.ok
-        try:
-            resultados = (r.json() or {}).get("results") or [] if r.ok else []
-        except ValueError:
-            resultados = []
-        anotar("Buscador Brave", consulta, f"{len(resultados)} imagen(es)" if resultados else "sin resultados")
-        for res in resultados:
-            u = ((res.get("properties") or {}).get("url") or (res.get("thumbnail") or {}).get("src") or "")
-            if u:
-                yield "Buscador Brave", u, False
+    # Último recurso (gratis, sin clave): buscador de imágenes de DuckDuckGo, por nombre y código.
+    nombre_producto = estado.get("titulo") or _nombre_consultado(codigo)
+    consulta = f"{nombre_producto} {codigo}".strip() if nombre_producto else codigo
+    imagenes = _duckduckgo_imagenes(consulta, anotar)
+    if imagenes is not None:
+        estado["respondio"] = True
+    for u in imagenes or []:
+        yield "Buscador DuckDuckGo", u, False
 
 
 def _carpeta_open_facts(codigo):
