@@ -1,0 +1,61 @@
+name: Construir app Android
+# Genera el APK "Consulta de Precios" (quiosco). Para que cada APK nuevo se instale ENCIMA del
+# anterior hace falta firmarlo siempre con la misma llave: secretos ANDROID_KEYSTORE_B64 y
+# ANDROID_KEYSTORE_PASSWORD (Settings > Secrets and variables > Actions).
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "apps/android/**"
+      - ".github/workflows/android-build.yml"
+permissions:
+  contents: write   # publicar el APK en Releases (dirección fija de descarga)
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Llave de firma
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then
+            echo "$KS" | base64 -d > "$RUNNER_TEMP/firma.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/firma.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Falta el secreto ANDROID_KEYSTORE_B64: se genera un APK de PRUEBA que no se podrá actualizar encima."
+          fi
+      - name: Compilar
+        working-directory: apps/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_PATH" ]; then
+            gradle --no-daemon assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk ../../ConsultaPrecios.apk
+          else
+            gradle --no-daemon assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk ../../ConsultaPrecios-PRUEBA.apk
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: App-Android-ConsultaPrecios
+          path: ConsultaPrecios*.apk
+      - name: Publicar en la dirección fija de descarga
+        if: env.ANDROID_KEYSTORE_PATH != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android --yes --cleanup-tag || true
+          gh release create android ConsultaPrecios.apk --title "App Android · Consulta de Precios" \
+            --notes "APK firmado, compilación ${{ github.run_number }}. Descarga directa: https://github.com/${{ github.repository }}/releases/download/android/ConsultaPrecios.apk" \
+            --latest=false
