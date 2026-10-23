@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.2.0";
+  const APP_VERSION = "1.2.2";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -35,8 +35,15 @@
     if (!valor) return "—";
     const d = new Date(valor);
     if (isNaN(d)) return "—";
-    return d.toLocaleString("es-DO", { day: "2-digit", month: "2-digit", year: "numeric",
-                                       hour: "numeric", minute: "2-digit" });
+    // Siempre en hora de República Dominicana, aunque el equipo tenga otra zona horaria
+    // (los 2connect vienen de fábrica con la de China: 12 horas de diferencia).
+    try {
+      return d.toLocaleString("es-DO", { timeZone: "America/Santo_Domingo", day: "2-digit", month: "2-digit",
+                                         year: "numeric", hour: "numeric", minute: "2-digit" });
+    } catch (e) {
+      return d.toLocaleString("es-DO", { day: "2-digit", month: "2-digit", year: "numeric",
+                                         hour: "numeric", minute: "2-digit" });
+    }
   }
   const formatoPrecio = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   function local(clave, valor) {
@@ -285,20 +292,34 @@
 
   /* Avisa a la app en línea que este equipo está encendido y qué precios tiene. */
   let ultimoReporte = 0;
+  let resultadoReporte = "todavía no se ha intentado";
   async function reportar(ahora) {
     const destino = estado && estado.registro;
-    if (!destino || !destino.url || !destino.clave || !equipo.id) return;
+    if (!destino || !destino.url || !destino.clave) {
+      resultadoReporte = "❌ falta la clave pública de Supabase (SUPABASE_PUBLISHABLE_KEY) en Secrets; luego pulsa Publicar";
+      return;
+    }
+    if (!equipo.id) return;
     if (!ahora && Date.now() - ultimoReporte < 5 * 60 * 1000) return;   // basta cada 5 minutos
     ultimoReporte = Date.now();
     try {
       const cabeceras = { "apikey": destino.clave, "Content-Type": "application/json" };
       if (String(destino.clave).indexOf("eyJ") === 0) cabeceras["Authorization"] = "Bearer " + destino.clave;
       const pendientesN = await BD.contar().catch(function () { return 0; });
-      await conTiempo(destino.url + "/rest/v1/rpc/equipo_reporta", { method: "POST", headers: cabeceras,
+      const r = await conTiempo(destino.url + "/rest/v1/rpc/equipo_reporta", { method: "POST", headers: cabeceras,
         body: JSON.stringify({ p_id: equipo.id, p_nombre: nombreEquipo(), p_tipo: "verificador",
           p_app: APP_VERSION, p_precios: estado.version, p_productos: productos.size,
           p_pendientes: pendientesN, p_navegador: navigator.userAgent.slice(0, 160) }) }, 15000);
-    } catch (e) { /* sin internet o sin la migración 005: no afecta al verificador */ }
+      if (r.ok) {
+        resultadoReporte = "✅ " + fecha(Date.now());
+      } else {
+        const texto = (await r.text().catch(function () { return ""; })).slice(0, 160);
+        resultadoReporte = "❌ error " + r.status + (r.status === 404 ? " (falta ejecutar MIGRACION_005)" :
+          (r.status === 401 || r.status === 403) ? " (clave o permiso)" : "") + (texto ? ": " + texto : "");
+      }
+    } catch (e) {
+      resultadoReporte = "⏳ sin conexión, se reintenta";   // no afecta al verificador
+    }
   }
 
   $("form-nombre").addEventListener("submit", async function (e) {
@@ -331,6 +352,7 @@
     $("m-desvincular").textContent = "🔗 Desvincular este equipo";
     $("nombre-equipo").value = equipo.nombre;
     $("dlg-menu").showModal();
+    reportar(true).then(rellenarMenu);
     reiniciarCierreMenu();
   }
   function reiniciarCierreMenu() {
@@ -355,6 +377,7 @@
       ["Última revisión", ultimaRevisionOk ? fecha(ultimaRevisionOk) : "sin conexión desde que se abrió"],
       ["Consultas por subir", String(pendientesN)],
       ["Equipo", nombreEquipo()],
+      ["Reporte al panel", resultadoReporte],
       ["App", "versión " + APP_VERSION],
     ];
     if (ultimoError) filas.push(["Último aviso", ultimoError]);
