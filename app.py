@@ -442,11 +442,23 @@ es_solo_consulta = es_kiosko(user)
 # consulta_precios.py lo usa para mostrar la pantalla adaptada al alto del equipo.
 st.session_state["modo_kiosko"] = es_solo_consulta
 if not es_solo_consulta:
+    # Marca arriba del menú (y su ícono cuando el menú está plegado).
+    try:
+        st.logo("assets/logo_menu.png", size="large", icon_image="assets/icono_menu.png")
+    except Exception:
+        pass
     with st.sidebar:
-        st.caption("Sesión: " + user["username"])
+        import html as _html
+        _nombre = str(user["username"])
+        _rol = "Administrador" if user.get("role") == "admin" else "Usuario"
+        st.markdown(
+            f'<div class="menu-usuario"><div class="menu-avatar">{_html.escape(_nombre[:1].upper())}</div>'
+            f'<div><div class="menu-nombre">{_html.escape(_nombre)}</div>'
+            f'<div class="menu-rol">{_rol}</div></div></div>', unsafe_allow_html=True)
         # Usuarios normales y administradores salen directamente; solo la
         # cuenta kiosko (sin barra lateral) exige la clave del administrador.
-        if st.button("🚪 Cerrar sesión", key="sidebar_logout"):
+        if st.button("Cerrar sesión", key="sidebar_logout", icon=":material/logout:",
+                     use_container_width=True):
             _cerrar_sesion()
 
 if user and user["must_change_password"]:
@@ -551,6 +563,54 @@ else:
       }
       [data-testid="stSidebarUserContent"] { padding-top: .5rem !important; }
       [data-testid="stSidebarNav"] { padding-top: 0 !important; }
+      /* ---------- Menú lateral ---------- */
+      [data-testid="stSidebar"] {
+          background: linear-gradient(180deg, #f8fbff 0%, #eef3fb 100%) !important;
+          border-right: 1px solid #e1e9f5 !important;
+      }
+      [data-testid="stSidebarHeader"] { padding-left: 1.1rem !important; }
+      [data-testid="stSidebarHeader"] img { height: 2.1rem !important; max-height: 2.1rem !important; }
+      [data-testid="stSidebarNavItems"] { padding: .25rem .6rem 0 !important; }
+      /* Títulos de sección: pequeños y discretos */
+      [data-testid="stNavSectionHeader"], [data-testid="stSidebarNavItems"] header {
+          font-size: .7rem !important; font-weight: 800 !important; letter-spacing: .09em !important;
+          text-transform: uppercase !important; color: #8a99b3 !important;
+          margin: 1rem .4rem .3rem !important; padding: 0 !important;
+      }
+      [data-testid="stNavSectionHeader"] * { color: #8a99b3 !important; font-size: .7rem !important; }
+      [data-testid="stSidebarNavItems"] > *:first-child [data-testid="stNavSectionHeader"] { margin-top: .2rem !important; }
+      /* Opciones */
+      [data-testid="stSidebarNavLink"] {
+          border-radius: 10px !important; padding: .42rem .7rem !important; margin: 1px 0 !important;
+          transition: background .12s, transform .12s;
+      }
+      [data-testid="stSidebarNavLink"] span { color: #23395d !important; font-weight: 600 !important; font-size: .92rem !important; }
+      [data-testid="stSidebarNavLink"]:hover { background: #e3ecfb !important; }
+      [data-testid="stSidebarNavLink"]:hover span { color: #0757d4 !important; }
+      /* Página actual: resaltada en azul */
+      [data-testid="stSidebarNavLink"][aria-current="page"] {
+          background: linear-gradient(105deg, #0757d4, #2f7bf0) !important;
+          box-shadow: 0 4px 12px rgba(7, 87, 212, .25) !important;
+      }
+      [data-testid="stSidebarNavLink"][aria-current="page"] span { color: #ffffff !important; }
+      [data-testid="stSidebarNavSeparator"] { margin: .8rem .6rem !important; }
+      /* Tarjeta del usuario */
+      .menu-usuario {
+          display: flex; align-items: center; gap: 12px; background: #ffffff; border: 1px solid #e1e9f5;
+          border-radius: 14px; padding: 10px 12px; box-shadow: 0 2px 8px rgba(16, 43, 80, .05);
+      }
+      .menu-avatar {
+          width: 38px; height: 38px; border-radius: 50%; flex: 0 0 auto; display: grid; place-items: center;
+          background: linear-gradient(135deg, #0757d4, #ff9d20); color: #fff; font-weight: 800; font-size: 17px;
+      }
+      .menu-nombre { font-weight: 700; color: #0d2d58; font-size: 15px; line-height: 1.2; }
+      .menu-rol { color: #7c8ca6; font-size: 12.5px; }
+      .st-key-sidebar_logout button {
+          border-radius: 10px !important; border: 1px solid #f3c9c9 !important; background: #fff !important;
+          color: #b42318 !important; font-weight: 600 !important;
+      }
+      .st-key-sidebar_logout button:hover { background: #fff1f1 !important; border-color: #e8a0a0 !important; }
+      .st-key-sidebar_logout button * { color: #b42318 !important; }
       /* Elementos invisibles (estilos, guardado de sesión, scripts): Streamlit les deja
          16 px de separación a cada uno. Se sacan del flujo, pero siguen funcionando. */
       [data-testid="stMain"] [data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"] > :not(style))) {
