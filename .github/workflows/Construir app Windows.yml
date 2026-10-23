@@ -1,0 +1,44 @@
+name: Construir app Windows
+# Genera el instalador de "Consulta de Precios" para Windows (verificador tipo quiosco).
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "apps/windows/**"
+      - ".github/workflows/windows-app-build.yml"
+permissions:
+  contents: write   # publicar el instalador en Releases (dirección fija de descarga)
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - name: Crear la app
+        shell: pwsh
+        run: ./apps/windows/build_windows.ps1
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+      - name: Construir instalador
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "apps\windows\ConsultaPrecios.iss"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: App-Windows-ConsultaPrecios
+          path: dist_instalador/Instalador_Consulta_de_Precios.exe
+      - name: Publicar en la dirección fija de descarga
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete windows --yes --cleanup-tag 2>$null; $global:LASTEXITCODE = 0
+          gh release create windows dist_instalador/Instalador_Consulta_de_Precios.exe `
+            --title "App Windows · Consulta de Precios" `
+            --notes "Instalador, compilación ${{ github.run_number }}. Descarga directa: https://github.com/${{ github.repository }}/releases/download/windows/Instalador_Consulta_de_Precios.exe" `
+            --latest=false
