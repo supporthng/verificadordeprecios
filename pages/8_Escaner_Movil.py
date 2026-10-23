@@ -19,6 +19,11 @@ st.markdown('<style>'
     '.movil-titulo {font-size: clamp(22px, 6.5vw, 30px); font-weight: 800; color: #0d2d58; margin: 0; line-height: 1.2;}'
     + ('header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}'
        if _sin_menu else '')
+    # Enlace público en modo embed (QR): Streamlit Cloud abre la app con una ruta
+    # interna y Streamlit muestra "Page not found" aunque carga bien esta página.
+    # Aquí no se usa ninguna ventana emergente, así que se oculta ese aviso.
+    + ('div[data-baseweb="modal"], [data-testid="stDialog"] {display: none !important;}'
+       if st.session_state.get('mobile_public_access') else '')
     + '</style>', unsafe_allow_html=True)
 
 try:
