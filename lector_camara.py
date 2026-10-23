@@ -19,44 +19,78 @@ LECTOR_COMPATIBLE = "https://cdn.jsdelivr.net/npm/barcode-detector@3.1.3/dist/ii
 
 LECTOR_JS = r"""
 (() => {
-  if (window.__lectorVivoV7) return;        // instalar una sola vez por ventana
+  if (window.__lectorVivoV8) return;        // instalar una sola vez por ventana
   const estado = { stream: null, video: null, elemento: null, abriendo: false,
                    ultimo: '', ultimoT: 0, abiertoEn: 0 };
-  window.__lectorVivoV7 = estado;
+  window.__lectorVivoV8 = estado;
   const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39'];
 
   // ---------- Sonido de lector ("bip") ----------
   // Archivo de audio (<audio>): en iPhone suena aunque esté en modo silencio.
   // Los navegadores exigen un primer toque en la pantalla para permitir sonido.
-  function crearBip() {
-    const sr = 22050, n = Math.floor(sr * 0.12), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  // WAV generado en el teléfono: tono de lector (2700 Hz) o silencio.
+  function crearWav(segundos, conTono) {
+    const sr = 22050, n = Math.floor(sr * segundos), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
     const txt = (o, t) => { for (let k = 0; k < t.length; k++) v.setUint8(o + k, t.charCodeAt(k)); };
     txt(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); txt(8, 'WAVE'); txt(12, 'fmt ');
     v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
     v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
     txt(36, 'data'); v.setUint32(40, n * 2, true);
-    for (let k = 0; k < n; k++) {
+    for (let k = 0; conTono && k < n; k++) {
       const env = Math.min(1, k / 150, (n - k) / 300);
       const onda = Math.sin(2 * Math.PI * 2700 * k / sr) >= 0 ? 1 : -1;
       v.setInt16(44 + k * 2, Math.round(onda * env * 0.55 * 32767), true);
     }
     return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
   }
-  const bip = new Audio(crearBip()); bip.preload = 'auto';
+  const BIP = crearWav(0.12, true), SILENCIO = crearWav(0.05, false);
+  const bip = new Audio(BIP); bip.preload = 'auto';
   estado.sonidoListo = false;
+
+  // Primer toque en la pantalla = permiso de sonido. Se reproduce un SILENCIO
+  // real (no "muted": en iPhone una reproducción muda no cuenta como permiso).
   function activarSonido() {
-    if (estado.sonidoListo) return;
-    bip.muted = true;
+    if (estado.sonidoListo || estado.activando) return;
+    estado.activando = true;
+    // Respaldo Web Audio: se habilita dentro del mismo toque.
+    try {
+      const A = window.AudioContext || window.webkitAudioContext;
+      if (A) {
+        estado.ctx = estado.ctx || new A();
+        if (estado.ctx.state === 'suspended') estado.ctx.resume();
+        const fuente = estado.ctx.createBufferSource();
+        fuente.buffer = estado.ctx.createBuffer(1, 1, 22050);
+        fuente.connect(estado.ctx.destination); fuente.start(0);
+      }
+    } catch (_) {}
+    bip.muted = false; bip.src = SILENCIO;
     bip.play().then(() => {
-      bip.pause(); bip.currentTime = 0; bip.muted = false;
-      estado.sonidoListo = true; mostrarSonido();
-    }).catch(() => { bip.muted = false; });
+      estado.sonidoListo = true;
+      bip.pause(); bip.src = BIP; bip.load();
+      mostrarSonido();
+    }).catch(() => { bip.src = BIP; })
+      .finally(() => { estado.activando = false; });
   }
   ['pointerdown', 'touchend', 'click', 'keydown'].forEach((ev) =>
     document.addEventListener(ev, activarSonido, { capture: true, passive: true }));
+
+  function pitidoWebAudio() {
+    try {
+      const ctx = estado.ctx; if (!ctx) return;
+      const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'square'; o.frequency.setValueAtTime(2700, t);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+      o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.14);
+    } catch (_) {}
+  }
   function pitido() {
     try { bip.currentTime = 0; } catch (_) {}
-    bip.play().catch(() => {});
+    bip.play().catch(() => {
+      pitidoWebAudio();
+      // Si el navegador bloqueó el sonido, volver a pedir un toque.
+      estado.sonidoListo = false; mostrarSonido();
+    });
   }
   function mostrarSonido() {
     const s = document.querySelector('#lector-vivo-sonido');
