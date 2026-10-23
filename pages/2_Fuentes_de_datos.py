@@ -13,6 +13,41 @@ import streamlit as st
 st.title('Fuentes de datos')
 st.caption('Configura y detecta servidores sin modificar el verificador de Supabase.')
 
+# ---------------- Clave de Supabase del conector (cambio a distancia) ----------------
+from auth_usuarios import current_user as _usuario_actual, es_admin as _es_admin
+if _es_admin(_usuario_actual()):
+    import conector_clave as _cc
+    with st.expander('🔑 Cambiar la clave de Supabase del conector (sin ir a la PC)'):
+        st.markdown(
+            '1. En Supabase > **Project Settings > API Keys** crea una *secret key* para el conector '
+            '(nombre, por ejemplo, `conector_windows`) y cópiala.\n'
+            '2. Pégala aquí y pulsa **Enviar al conector**.\n'
+            '3. El conector la recoge en **menos de 5 minutos** (si está encendido), la prueba y la empieza a usar. '
+            'Aquí verás la confirmación.\n\n'
+            'Hazlo **antes** de desactivar las claves antiguas en Supabase: el conector usa su clave actual para '
+            'recoger la nueva.')
+        _e = _cc.estado()
+        if _e['confirmada']:
+            _c = _e['confirmada']
+            st.success(f"✅ El conector **{_c.get('equipo', '')}** adoptó una clave nueva el "
+                       f"{str(_c.get('fecha', ''))[:16].replace('T', ' ')} UTC"
+                       + ("." if _c.get('guardada_en_bridge_env', True) else
+                          " (no pudo guardarla en bridge.env: revisa los permisos de la carpeta)."))
+        if _e['pendiente']:
+            st.info('⏳ Hay una clave nueva esperando a que el conector la recoja (enviada el '
+                    + str(_e['pendiente'])[:16].replace('T', ' ') + ' UTC).')
+            if st.button('Cancelar el envío', key='cancelar_clave_conector'):
+                _cc.cancelar()
+                st.rerun()
+        with st.form('clave_conector', clear_on_submit=True):
+            _nueva = st.text_input('Clave secreta nueva para el conector (sb_secret_…)', type='password')
+            if st.form_submit_button('Enviar al conector', type='primary'):
+                try:
+                    _cc.enviar(_nueva)
+                    st.success('Clave comprobada y enviada. El conector la tomará en menos de 5 minutos.')
+                except Exception as _exc:
+                    st.error(str(_exc))
+
 # Acceso por permisos del usuario que inició sesión (sin contraseña aparte).
 from auth_usuarios import require
 from supabase_cliente import cabeceras, clave_servidor, clave_publica

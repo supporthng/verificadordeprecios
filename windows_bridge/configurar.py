@@ -32,7 +32,7 @@ def save():
         messagebox.showerror("Validación", "La URL de Supabase debe comenzar por https://")
         return
     if not key:
-        messagebox.showerror("Validación", "Introduce la clave de servicio de Supabase.")
+        messagebox.showerror("Validación", "Introduce la clave secreta de Supabase.")
         return
     if len(pwd) < 12 or pwd != confirm:
         messagebox.showerror("Validación", "La contraseña debe tener 12 o más caracteres y coincidir.")
@@ -48,9 +48,10 @@ def save():
         return
     # Conservar ajustes no gestionados por esta pantalla.
     cfg = existing()
+    cfg.pop("SUPABASE_SERVICE_ROLE_KEY", None)   # una sola clave: la que se escribe aquí
     cfg.update({
         "SUPABASE_URL": url,
-        "SUPABASE_SERVICE_ROLE_KEY": key,
+        "SUPABASE_SECRET_KEY": key,
         "BRIDGE_PASSWORD": pwd,
         "ALLOWED_NETWORKS": networks,
         "BRIDGE_HOST": "0.0.0.0",
@@ -93,13 +94,13 @@ ttk.Label(frame, text="Configurar Conector Windows", font=("Segoe UI", 17, "bold
 ttk.Label(frame, text="Los datos se guardan únicamente en este equipo. No los compartas.").pack(anchor="w", pady=(2, 15))
 previous = existing()
 url_var = tk.StringVar(value=previous.get("SUPABASE_URL", ""))
-key_var = tk.StringVar(value=previous.get("SUPABASE_SERVICE_ROLE_KEY", ""))
+key_var = tk.StringVar(value=previous.get("SUPABASE_SECRET_KEY", "") or previous.get("SUPABASE_SERVICE_ROLE_KEY", ""))
 pwd_var = tk.StringVar(value=previous.get("BRIDGE_PASSWORD", ""))
 confirm_var = tk.StringVar(value=previous.get("BRIDGE_PASSWORD", ""))
 networks_var = tk.StringVar(value=previous.get("ALLOWED_NETWORKS", "192.168.1.0/24"))
 for label, var, secret in [
     ("URL de Supabase (https://...supabase.co)", url_var, False),
-    ("Clave service_role (solo en Windows)", key_var, True),
+    ("Clave secreta de Supabase (sb_secret_... o service_role)", key_var, True),
     ("Contraseña para entrar al buscador", pwd_var, True),
     ("Confirmar contraseña", confirm_var, True),
     ("Red local autorizada (ej.: 10.0.0.0/24)", networks_var, False),

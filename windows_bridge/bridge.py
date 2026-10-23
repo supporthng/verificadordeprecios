@@ -89,7 +89,7 @@ try:
 except OSError:
     # El conector sigue funcionando si no tiene permiso para crear el registro.
     pass
-logger.info('Conector v5 iniciado; pid=%s; origen de configuración: %s; registro=%s', os.getpid(), CONFIG_SOURCE, LOG_FILE)
+logger.info('Conector v5.2 iniciado; pid=%s; origen de configuración: %s; registro=%s', os.getpid(), CONFIG_SOURCE, LOG_FILE)
 SESSIONS = set()
 DB_RESULTS = {}  # session-token -> (request id, accessible database names)
 WIZARD_REQUESTS = {}  # db request id -> discovery request id
@@ -139,6 +139,8 @@ def page(body):
 def health():
     return {'ok': True, 'version': 'asistente-universal-v5',
             'catalogo_equipos': {'cada_minutos': SYNC_MINUTES, **SYNC_LAST},
+            'tipo_clave': ('nueva (sb_secret)' if KEY.startswith('sb_secret_') else
+                           'antigua (legacy JWT)' if KEY.startswith('eyJ') else 'desconocida'),
             'worker_age_seconds': (round(time.monotonic() - WORKER_LAST_POLL, 1)
                                    if WORKER_LAST_POLL else None),
             'worker_job_count': WORKER_JOB_COUNT,
@@ -886,6 +888,90 @@ def _sincronizar_catalogo():
     return f'{len(productos)} productos publicados para los equipos ({time.monotonic() - inicio:.1f} s)'
 
 
+# ---------------------------------------------------------------- cambio de clave a distancia
+ARCHIVO_CLAVE = 'logo-negocio/conector-clave.json'
+ARCHIVO_CLAVE_OK = 'logo-negocio/conector-clave-ok.json'
+
+
+def _ruta_env():
+    if CONFIG_SOURCE and CONFIG_SOURCE != 'variables de entorno':
+        return Path(CONFIG_SOURCE)
+    return Path(os.environ.get('PROGRAMDATA', str(Path.home()))) / 'ConsultaPrecios' / 'bridge.env'
+
+
+def _guardar_clave_en_env(nueva):
+    """Escribe SUPABASE_SECRET_KEY=nueva en bridge.env y quita la clave legacy."""
+    ruta = _ruta_env()
+    lineas = ruta.read_text(encoding='utf-8-sig').splitlines() if ruta.exists() else []
+    salida, escrita = [], False
+    for linea in lineas:
+        nombre = linea.split('=', 1)[0].strip() if '=' in linea and not linea.lstrip().startswith('#') else ''
+        if nombre == 'SUPABASE_SECRET_KEY':
+            if not escrita:
+                salida.append(f'SUPABASE_SECRET_KEY={nueva}')
+                escrita = True
+        elif nombre == 'SUPABASE_SERVICE_ROLE_KEY':
+            continue   # la legacy ya no hace falta
+        else:
+            salida.append(linea)
+    if not escrita:
+        salida.append(f'SUPABASE_SECRET_KEY={nueva}')
+    temporal = ruta.with_suffix('.tmp')
+    temporal.write_text('\n'.join(salida) + '\n', encoding='utf-8')
+    os.replace(temporal, ruta)
+    return ruta
+
+
+def _revisar_clave_nueva():
+    """Si el administrador dejó una clave nueva para el conector en la app, probarla y adoptarla."""
+    global KEY
+    r = _storage('GET', ARCHIVO_CLAVE, timeout=15)
+    if r.status_code != 200:
+        return None
+    nueva = str(r.json().get('clave') or '').strip()
+    if not nueva or nueva == KEY or not nueva.startswith(('sb_secret_', 'eyJ')):
+        return None
+    # Probar la clave nueva antes de adoptarla.
+    prueba = requests.get(f'{URL}/rest/v1/price_source_settings', params={'select': 'id', 'limit': '1'},
+                          headers={'apikey': nueva, **({'Authorization': f'Bearer {nueva}'} if nueva.startswith('eyJ') else {})},
+                          timeout=12)
+    if not prueba.ok:
+        logger.error('Clave nueva del conector rechazada por Supabase (HTTP %s); se sigue con la actual', prueba.status_code)
+        return None
+    KEY = nueva
+    try:
+        ruta = _guardar_clave_en_env(nueva)
+        guardada = True
+        logger.info('Clave nueva del conector adoptada y guardada en %s', ruta)
+    except OSError as exc:
+        guardada = False
+        logger.error('Clave nueva adoptada, pero no se pudo guardar en bridge.env: %s', type(exc).__name__)
+    # Confirmar a la app y borrar la copia de la clave que se dejó para el conector.
+    try:
+        _storage('POST', ARCHIVO_CLAVE_OK, data=json.dumps({
+            'fecha': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'guardada_en_bridge_env': guardada, 'equipo': socket.gethostname()[:60],
+            'tipo': 'sb_secret' if nueva.startswith('sb_secret_') else 'legacy'}).encode('utf-8'),
+            headers={'Content-Type': 'application/json', 'x-upsert': 'true'}, timeout=15)
+        _storage('DELETE', 'logo-negocio', json={'prefixes': ['conector-clave.json']},
+                 headers={'Content-Type': 'application/json'}, timeout=15)
+    except Exception as exc:
+        logger.error('No se pudo confirmar la clave nueva a la app: %s', type(exc).__name__)
+    return 'clave nueva adoptada' + (' y guardada' if guardada else ' (sin guardar en bridge.env)')
+
+
+def _clave_worker():
+    time.sleep(10)
+    while True:
+        try:
+            resultado = _revisar_clave_nueva()
+            if resultado:
+                SYNC_LAST['clave'] = resultado + ' · ' + datetime.now(timezone.utc).isoformat(timespec='seconds')
+        except Exception as exc:
+            logger.error('Revisión de clave nueva: %s', type(exc).__name__)
+        time.sleep(300)   # cada 5 minutos
+
+
 def _sync_worker():
     if not SYNC_MINUTES:
         logger.info('Sincronización de catálogo para equipos desactivada (SYNC_MINUTES=0)')
@@ -983,6 +1069,7 @@ def _start_external_worker():
     threading.Thread(target=_price_worker, name='price-jobs', daemon=True).start()
     threading.Thread(target=_external_worker, name='external-jobs', daemon=True).start()
     threading.Thread(target=_sync_worker, name='catalogo-equipos', daemon=True).start()
+    threading.Thread(target=_clave_worker, name='clave-conector', daemon=True).start()
     logger.info('Procesadores de precios, catálogos externos y catálogo para equipos iniciados')
 
 
