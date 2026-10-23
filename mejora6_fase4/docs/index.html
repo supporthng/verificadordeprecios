@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0757d4">
+<meta name="color-scheme" content="light">
+<meta name="robots" content="noindex">
+<title>Consulta de Precios</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icono.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icono-192.png">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<!-- Cuadro del escáner: siempre activo y con el cursor, visible u oculto según Apariencia. -->
+<input id="lector" class="lector oculto" type="text" inputmode="none" autocomplete="off"
+       autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"
+       aria-label="Código de barras" placeholder="Escanea o escribe el código y pulsa Enter">
+
+<main id="espera" class="pantalla-espera" hidden>
+  <div class="main-header"><h1>🏷️ CONSULTA DE PRECIOS</h1><p>Consulta rápida de productos y precios</p></div>
+  <div id="tarjeta-codigo" class="animated-barcode-card" aria-hidden="true">
+    <div class="animated-bars"><div class="animated-scan-line"></div></div>
+    <div class="animated-barcode-caption">PRECIO &nbsp;•&nbsp; RD$</div>
+  </div>
+  <div class="espera-textos">
+    <div id="titulo" class="scan-title">ESCANEA TU CÓDIGO AQUÍ</div>
+    <div id="pista" class="scan-hint">El precio se mostrará automáticamente</div>
+  </div>
+  <div id="imagenes" class="verif-imagenes">
+    <img id="logo" class="verif-logo" alt="Logo de la empresa" hidden>
+    <div id="qr" class="verif-qr" hidden>
+      <img id="qr-img" alt="Código QR para consultar desde el celular"><span>📱 Consulta desde tu celular</span>
+    </div>
+  </div>
+</main>
+
+<main id="resultado" class="resultado-pantalla" hidden>
+  <div class="resultado-datos">
+    <div class="resultado-etiqueta">PRODUCTO</div>
+    <div id="nombre" class="resultado-nombre"></div>
+    <div class="resultado-codigo">Código consultado: <strong id="codigo"></strong></div>
+  </div>
+  <div class="resultado-precio-panel">
+    <div class="resultado-precio-etiqueta">PRECIO DE VENTA</div>
+    <div id="precio" class="resultado-precio"></div>
+  </div>
+</main>
+
+<!-- Primera vez: vincular el equipo, descargar precios, o avisar que falta internet. -->
+<section id="aviso" class="aviso" hidden>
+  <div class="aviso-caja">
+    <div class="aviso-icono" id="aviso-icono">⏳</div>
+    <h2 id="aviso-titulo"></h2>
+    <p id="aviso-texto"></p>
+    <form id="form-vincular" hidden>
+      <input id="enlace" type="url" placeholder="Pega aquí el enlace de instalación" autocomplete="off">
+      <button type="submit">Vincular este equipo</button>
+      <p id="enlace-error" class="error"></p>
+    </form>
+  </div>
+</section>
+
+<button id="boton-salida" class="boton-esquina" type="button" aria-label="Administración del verificador">✕</button>
+<div id="estado-red" class="estado-red" aria-live="polite"></div>
+
+<dialog id="dlg-clave">
+  <form id="form-clave" method="dialog">
+    <h2>🔐 Clave de administrador</h2>
+    <p class="suave">Escribe la clave de salida del verificador.</p>
+    <input id="clave" type="password" autocomplete="off" aria-label="Clave de salida">
+    <p id="clave-error" class="error"></p>
+    <div class="botones">
+      <button type="button" id="clave-cancelar" class="secundario">Cancelar</button>
+      <button type="submit" id="clave-entrar">Entrar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-menu">
+  <h2>⚙️ Verificador sin internet</h2>
+  <p id="menu-aviso" class="aviso-amarillo" hidden></p>
+  <dl id="menu-estado" class="estado-lista"></dl>
+  <form id="form-nombre" class="fila-nombre">
+    <input id="nombre-equipo" type="text" maxlength="40" autocomplete="off" aria-label="Nombre de este equipo"
+           placeholder="Nombre de este equipo (ej.: Pasillo 3)">
+    <button type="submit" class="secundario">Guardar</button>
+  </form>
+  <div class="botones-menu">
+    <button type="button" id="m-actualizar">🔄 Buscar actualización ahora</button>
+    <button type="button" id="m-completa">⛶ Pantalla completa y volver</button>
+    <a id="m-en-linea" class="boton" target="_blank" rel="noopener" hidden>🌐 Abrir la app en línea</a>
+    <button type="button" id="m-desvincular" class="peligro">🔗 Desvincular este equipo</button>
+    <button type="button" id="m-volver" class="principal">🏷️ Volver al verificador</button>
+  </div>
+  <p id="menu-mensaje" class="suave"></p>
+</dialog>
+
+<script src="config.js"></script>
+<script src="codigos.js"></script>
+<script src="datos.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

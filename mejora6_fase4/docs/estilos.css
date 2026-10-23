@@ -1,0 +1,189 @@
+/* Mismo diseño que la Consulta de Precios de la app en línea (modo verificador),
+   sin depender de Streamlit: todo se ajusta solo al alto y ancho de la pantalla. */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body {
+  background: #f4f8ff; color: #102b50;
+  font-family: "Source Sans Pro", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none;
+  overscroll-behavior: none;
+}
+[hidden] { display: none !important; }
+
+/* ---------- Cuadro del escáner ---------- */
+.lector {
+  position: fixed; z-index: 60; left: 50%; transform: translateX(-50%);
+  bottom: max(12px, env(safe-area-inset-bottom));
+  width: min(520px, 70vw); height: 46px; padding: 0 14px;
+  border: 2px solid #16823c; border-radius: 10px; background: #fff;
+  font: inherit; font-size: 20px; letter-spacing: 1px; color: #102b50; outline: none;
+  user-select: text; -webkit-user-select: text;
+}
+/* Oculto pero ACTIVO: sigue recibiendo lo que escribe el escáner. */
+.lector.oculto {
+  opacity: 0; pointer-events: none; width: 2px; height: 2px; padding: 0; border: 0;
+  bottom: 0; caret-color: transparent;
+}
+
+/* ---------- Pantalla de espera ---------- */
+.pantalla-espera {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; flex-direction: column; align-items: center;
+  gap: clamp(8px, 2.4dvh, 26px);
+  padding: clamp(8px, 2dvh, 22px) clamp(10px, 2vw, 28px) clamp(10px, 2.4dvh, 26px);
+  background: #f4f8ff;
+}
+.pantalla-espera > * { flex: 0 0 auto; }
+.main-header {
+  width: 100%; text-align: center; color: #fff;
+  background: linear-gradient(110deg, #0b315f, #0757d4);
+  border-radius: 14px; box-shadow: 0 5px 14px rgba(8, 60, 130, .10);
+  padding: clamp(8px, 2.6dvh, 28px) 40px;
+}
+.main-header h1 { margin: 0; font-size: clamp(18px, 6.2dvh, 46px); line-height: 1.15; font-weight: 800; }
+.main-header p { margin: .5dvh 0 0; color: #dceaff; font-size: clamp(11px, 2.8dvh, 20px); }
+
+.animated-barcode-card {
+  width: min(560px, 60vw); background: #fff; border-radius: 16px; text-align: center;
+  padding: 1.4dvh 18px 1dvh; box-shadow: 0 6px 18px rgba(17, 54, 98, .10);
+}
+.animated-bars {
+  position: relative; overflow: hidden; height: clamp(34px, 17dvh, 160px);
+  background: repeating-linear-gradient(90deg,
+    #102b50 0px, #102b50 2px, #fff 2px, #fff 5px,
+    #102b50 5px, #102b50 9px, #fff 9px, #fff 12px,
+    #102b50 12px, #102b50 13px, #fff 13px, #fff 17px,
+    #102b50 17px, #102b50 22px, #fff 22px, #fff 26px);
+}
+.animated-scan-line {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 4px;
+  background: #ff9d20; box-shadow: 0 0 9px 3px rgba(255, 157, 32, .7);
+  animation: barrido 2.4s ease-in-out infinite alternate;
+}
+@keyframes barrido { from { left: 0; } to { left: calc(100% - 4px); } }
+.animated-barcode-caption { color: #102b50; font-size: clamp(10px, 2.2dvh, 16px); margin-top: .6dvh; }
+.barcode-not-found { background: #fff1f2; }
+.barcode-not-found .animated-bars {
+  background: repeating-linear-gradient(90deg, #b91c1c 0px, #b91c1c 3px, transparent 3px, transparent 6px,
+    #dc2626 6px, #dc2626 8px, transparent 8px, transparent 12px);
+}
+.barcode-not-found .animated-scan-line { display: none; }
+@media (prefers-reduced-motion: reduce) { .animated-scan-line { animation: none; left: 50%; } }
+
+.espera-textos { text-align: center; }
+.scan-title { font-size: clamp(16px, 5.8dvh, 42px); line-height: 1.1; font-weight: 700; color: #102b50; }
+.scan-title.no-encontrado { color: #b91c1c; font-weight: 800; }
+.scan-hint { color: #7c8ca6; font-size: clamp(11px, 2.8dvh, 20px); margin-top: .4dvh; font-weight: 500; }
+.scan-hint.no-encontrado { color: #b91c1c; font-weight: 700; }
+
+/* Logo y QR usan todo el alto que queda. */
+.verif-imagenes {
+  flex: 1 1 0; min-height: 0; width: 100%;
+  display: flex; justify-content: center; align-items: center; gap: clamp(18px, 6vw, 80px);
+}
+.verif-logo { display: block; object-fit: contain; max-width: min(34vw, 320px); max-height: min(100%, 260px); }
+.verif-qr {
+  height: 100%; min-height: 0; max-height: 300px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .8dvh;
+}
+.verif-qr img {
+  display: block; flex: 0 1 auto; min-height: 0; object-fit: contain;
+  max-height: calc(100% - 2.6em); max-width: min(30vw, 240px);
+  background: #fff; padding: 4px; border-radius: 8px;
+}
+.verif-qr span {
+  flex: 0 0 auto; background: #0757d4; color: #fff; font-weight: 800; white-space: nowrap;
+  font-size: clamp(12px, 2.8dvh, 20px); line-height: 1.15; padding: .6dvh 12px; border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(7, 87, 212, .25);
+}
+
+/* ---------- Pantalla del precio ---------- */
+.resultado-pantalla {
+  position: fixed; z-index: 50;
+  inset: clamp(6px, 1.5dvh, 16px) clamp(8px, 1.5vw, 20px);
+  border-radius: 15px; overflow: hidden; background: #f6faff; text-align: center;
+  display: flex; flex-direction: column; box-shadow: 0 4px 18px rgba(14, 49, 101, .07);
+}
+.resultado-datos {
+  flex: 1 1 53%; min-height: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: clamp(8px, 2dvh, 16px); padding: clamp(10px, 2dvh, 22px) clamp(14px, 3vw, 40px);
+}
+.resultado-etiqueta { color: #8799b4; letter-spacing: .15em; font-weight: 800; font-size: clamp(15px, 1.8vw, 23px); }
+.resultado-nombre {
+  color: #0d2d58; font-weight: 900; font-size: clamp(31px, 4.6vw, 72px); line-height: 1.12;
+  max-width: 96%; overflow-wrap: anywhere; text-wrap: balance;
+}
+.resultado-codigo { color: #8497b2; font-size: clamp(17px, 2.1vw, 27px); }
+.resultado-precio-panel {
+  flex: 0 0 42%; min-height: 0; color: #fff;
+  background: linear-gradient(105deg, #0860e8, #0851d3);
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  gap: clamp(5px, 1.2dvh, 14px); padding: 8px 18px;
+}
+.resultado-precio-etiqueta { font-weight: 800; letter-spacing: .05em; white-space: nowrap; font-size: clamp(17px, 2.2vw, 27px); }
+.resultado-precio {
+  font-weight: 900; font-size: clamp(64px, 9.5vw, 136px); line-height: 1.05;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+@media (orientation: landscape) and (max-height: 550px) {
+  .resultado-datos { padding: 5px 14px; gap: 6px; }
+  .resultado-nombre { font-size: clamp(29px, 4.2vw, 58px); }
+  .resultado-precio-panel { flex-basis: 43%; }
+  .resultado-precio { font-size: clamp(59px, 8.7vw, 112px); }
+}
+@media (max-width: 650px) { .resultado-precio { font-size: clamp(44px, 13vw, 80px); } }
+
+/* ---------- Avisos de primera vez ---------- */
+.aviso { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 20px; background: #f4f8ff; }
+.aviso-caja { max-width: 560px; width: 100%; text-align: center; background: #fff; border-radius: 16px; padding: 28px 24px; box-shadow: 0 6px 18px rgba(17, 54, 98, .10); }
+.aviso-icono { font-size: 46px; }
+.aviso h2 { margin: 8px 0; font-size: 24px; }
+.aviso p { color: #475569; font-size: 17px; line-height: 1.4; margin: 6px 0; }
+#form-vincular { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+/* ---------- Botón de la esquina e indicador ---------- */
+.boton-esquina {
+  position: fixed; z-index: 80; left: 12px; bottom: max(14px, env(safe-area-inset-bottom));
+  width: 44px; height: 44px; padding: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, .92); border: 1px solid #d5e1f1; color: #12376b;
+  box-shadow: 0 2px 6px rgba(16, 43, 80, .12); font-size: 22px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.estado-red {
+  position: fixed; z-index: 80; right: 12px; bottom: max(10px, env(safe-area-inset-bottom));
+  font-size: 12px; color: #7c8ca6; background: rgba(255, 255, 255, .85);
+  padding: 3px 9px; border-radius: 999px; pointer-events: none;
+}
+.estado-red::before { content: "●"; margin-right: 5px; color: var(--punto, #16a34a); }
+
+/* ---------- Diálogos ---------- */
+dialog {
+  border: 0; border-radius: 16px; padding: 22px; width: min(460px, 92vw);
+  max-height: 92dvh; overflow: auto; box-shadow: 0 12px 40px rgba(10, 30, 60, .3); color: #102b50;
+  user-select: text; -webkit-user-select: text;
+}
+dialog::backdrop { background: rgba(10, 30, 60, .45); }
+dialog h2 { margin: 0 0 6px; font-size: 21px; }
+input[type=password], input[type=url], #nombre-equipo {
+  width: 100%; font: inherit; font-size: 19px; padding: 11px 12px;
+  border: 2px solid #cbd5e1; border-radius: 10px; color: #102b50; background: #fff;
+}
+input[type=password]:focus, input[type=url]:focus { border-color: #0757d4; outline: none; }
+button, .boton {
+  font: inherit; font-size: 17px; font-weight: 700; padding: 11px 14px; border-radius: 10px;
+  border: 1px solid #0757d4; background: #0757d4; color: #fff; cursor: pointer; text-align: center; text-decoration: none;
+}
+button:disabled { opacity: .6; }
+.secundario, .botones-menu button, .botones-menu .boton { background: #fff; color: #0757d4; }
+.botones-menu .principal { background: #0757d4; color: #fff; }
+.peligro { border-color: #dc2626 !important; color: #b91c1c !important; }
+.botones { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
+.botones-menu { display: grid; gap: 9px; margin-top: 12px; }
+.suave { color: #64748b; font-size: 15px; margin: 6px 0; }
+.error { color: #b91c1c; font-weight: 700; min-height: 1.2em; margin: 6px 0 0; }
+.aviso-amarillo { background: #fef3c7; color: #92400e; border-radius: 10px; padding: 9px 12px; font-size: 15px; }
+.estado-lista { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0; font-size: 15px; }
+.estado-lista dt { color: #64748b; }
+.estado-lista dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.fila-nombre { display: flex; gap: 8px; margin: 4px 0 2px; }
+.fila-nombre input { flex: 1; min-width: 0; font-size: 17px !important; padding: 9px 11px !important; }
