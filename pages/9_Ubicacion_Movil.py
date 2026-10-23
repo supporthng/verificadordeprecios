@@ -7,7 +7,6 @@ from urllib.parse import unquote, urlsplit
 import pandas as pd
 import requests
 import streamlit as st
-from streamlit_geolocation import streamlit_geolocation
 
 from auth_usuarios import require_admin
 from mobile_geofence import get_settings, save_settings
@@ -228,12 +227,23 @@ with st.expander("📡 3. O detecta tu ubicación actual (estando en el establec
         st.session_state.geo_detecting = True
     if st.session_state.geo_detecting:
         st.caption("Solicitando ubicación al navegador… Acepta el permiso cuando aparezca.")
+        # El mismo componente que usa la Consulta Móvil (navigator.geolocation del navegador).
+        from streamlit_js_eval import get_geolocation
         try:
-            ubic = streamlit_geolocation(key=f"geo_permission_{st.session_state.geo_attempt}")
-        except Exception:
+            try:
+                respuesta = get_geolocation(component_key=f"geo_admin_{st.session_state.geo_attempt}")
+            except TypeError:
+                respuesta = get_geolocation()
+        except Exception as exc:
             st.session_state.geo_detecting = False
+            respuesta = None
+            st.error("No se pudo iniciar la solicitud de ubicación del navegador: " + type(exc).__name__)
+        if isinstance(respuesta, dict) and respuesta.get("error"):
+            ubic = {"error": respuesta["error"]}
+        elif isinstance(respuesta, dict):
+            ubic = respuesta.get("coords", respuesta)
+        else:
             ubic = None
-            st.error("No se pudo iniciar la solicitud de ubicación del navegador.")
         if isinstance(ubic, dict) and ubic.get("latitude") is not None and ubic.get("longitude") is not None:
             try:
                 lat, lon = float(ubic["latitude"]), float(ubic["longitude"])
@@ -248,7 +258,8 @@ with st.expander("📡 3. O detecta tu ubicación actual (estando en el establec
                 st.error("El navegador devolvió coordenadas inválidas.")
         elif isinstance(ubic, dict) and ubic.get("error"):
             st.session_state.geo_detecting = False
-            st.error("El navegador no pudo obtener la ubicación: " + str(ubic["error"]))
+            st.error("El navegador no pudo obtener la ubicación: " + str(ubic["error"])
+                     + ". Revisa que la ubicación esté permitida para este sitio (candado de la barra de direcciones).")
         else:
             st.caption("Si no aparece el permiso, revisa los ajustes de ubicación del navegador.")
 
