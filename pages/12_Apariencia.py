@@ -352,8 +352,8 @@ with pestana_fotos:
                     st.error("Las bases de fotos no respondieron desde el servidor. Vuelve a intentar en unos minutos.")
                 else:
                     st.warning("Ninguna base de internet tiene foto de este código. Súbela a mano abajo.")
-                st.dataframe([{"Base": b, "Código probado": c, "Respuesta": t} for b, c, t in r.get("informe", [])],
-                             hide_index=True, use_container_width=True)
+                # En lista (no en tabla): en el celular la tabla corta los textos largos.
+                st.markdown("\n".join(f"- **{b}**{' · ' + c if c else ''}: {t}" for b, c, t in r.get("informe", [])))
 
     st.markdown("#### Fotos guardadas")
     filtro = st.text_input("Buscar por código", key="filtro_fotos", placeholder="Ej.: 7501055363063").strip()
