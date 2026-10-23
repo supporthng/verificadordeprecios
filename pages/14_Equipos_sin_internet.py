@@ -281,10 +281,28 @@ Se instala con el APK de [GitHub](https://github.com/RushB-fr/freekiosk/releases
 - **Sin internet**: apaga el Wi-Fi, reinicia el equipo y escanea: debe dar el precio.
 - Vuelve el Wi-Fi: abajo a la derecha debe decir **Precios al día**, y en **Inicio** el equipo aparece en 🟢.
 
-**3. Bloqueo completo (opcional)**
-- Para que nadie pueda salir, FreeKiosk usa el modo *Device Owner*. Se activa una vez desde una PC con
-  **ADB** y cable USB, con el equipo **sin cuentas de Google**:
-  `adb shell dpm set-device-owner com.freekiosk/.DeviceAdminReceiver`
+**3. Bloqueo completo (opcional, pendiente)**
+
+Requisitos: el equipo **sin cuentas** (*Ajustes > Cuentas*: quitar todas, también Google) y las
+*Opciones de desarrollador* activas (*Acerca del dispositivo* → tocar 7 veces *Número de compilación*).
+En la PC: **Android SDK Platform-Tools** (buscar "platform-tools" en developer.android.com) en `C:\\platform-tools`.
+
+*Opción A — Android 11 o más nuevo, por Wi-Fi (sin USB)*
+1. *Opciones de desarrollador* → **Depuración inalámbrica** → **Vincular dispositivo con código**.
+2. En la PC (mismo Wi-Fi), en el Símbolo del sistema: `cd C:\\platform-tools` y `adb pair IP:PUERTO` (pegar el código).
+3. `adb connect IP:PUERTO` (la IP y el puerto de la pantalla principal de *Depuración inalámbrica*: es otro puerto).
+4. `adb shell dpm set-device-owner com.freekiosk/.DeviceAdminReceiver` → debe responder **Success**.
+5. En FreeKiosk, activar el modo quiosco y definir el PIN de salida.
+
+Algunos equipos con Android 10 o anterior traen *Depuración ADB por red* (*ADB over network*): activarla y usar
+`adb connect IP:5555`, luego el paso 4. Con cable USB es igual, sin los pasos 1 a 3.
+
+*Opción B — cualquier Android, sin PC: Fijar pantalla*
+1. *Ajustes > Seguridad* → **Fijar pantalla / Fijar aplicación**: activarlo junto con **Pedir PIN para dejar de fijar**.
+2. Abrir FreeKiosk → botón **■** (recientes) → ícono de FreeKiosk → **Fijar**.
+3. Para salir: mantener **◀ y ■** a la vez y poner el PIN del equipo. *Tras reiniciar hay que volver a fijarlo.*
+
+Si responde *"there are already some accounts"*: queda una cuenta en el equipo (quitarla o restablecer de fábrica).
 
 **Botón "Cerrar aplicación"** del menú ✕: con FreeKiosk no puede cerrar la app; se sale con el **PIN** de FreeKiosk.
 """)
