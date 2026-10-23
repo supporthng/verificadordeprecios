@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Firma: GitHub Actions deja el keystore en ANDROID_KEYSTORE_PATH (desde el secreto ANDROID_KEYSTORE_B64).
+// Con la MISMA llave siempre, el APK nuevo se instala encima del anterior sin borrar nada.
+def keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+
+android {
+    namespace 'com.supporthng.consultaprecios'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.supporthng.consultaprecios'
+        minSdk 21
+        targetSdk 34
+        versionCode((System.getenv("VERSION_CODE") ?: "1").toInteger())
+        versionName '1.0.0'
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias(System.getenv("ANDROID_KEY_ALIAS") ?: "consultaprecios")
+                keyPassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (keystorePath) { signingConfig signingConfigs.release }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

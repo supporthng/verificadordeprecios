@@ -176,3 +176,16 @@ En **Equipos y pantallas > Ubicación y acceso** se elige cómo entran los verif
 con usuario, por la ubicación del local (sin usuario, dentro de la zona autorizada) o cualquiera de los dos.
 Con acceso por ubicación, el personal entra con su usuario en `/?personal=1`. Salir del verificador sigue
 pidiendo la clave de un administrador.
+
+## Apps propias: Android (APK) y Windows (.exe)
+
+- `apps/android`: app "Consulta de Precios" (WebView) a pantalla completa, pantalla de inicio de Android,
+  arranca al encender, sin botón Atrás; bloqueo total opcional (Device Owner:
+  `adb shell dpm set-device-owner com.supporthng.consultaprecios/.AdminReceiver`).
+  Workflow *Construir app Android*. Secretos: `ANDROID_KEYSTORE_B64` y `ANDROID_KEYSTORE_PASSWORD`
+  (siempre la misma llave, para que cada APK se instale encima del anterior).
+  Descarga fija: `https://github.com/supporthng/verificadordeprecios/releases/download/android/ConsultaPrecios.apk`
+- `apps/windows`: app WebView2 a pantalla completa, siempre encima, bloquea Alt+Tab / Windows / Alt+F4,
+  arranca con Windows. Workflow *Construir app Windows*.
+  Descarga fija: `https://github.com/supporthng/verificadordeprecios/releases/download/windows/Instalador_Consulta_de_Precios.exe`
+- En las dos, se sale desde el menú ✕ con la clave de salida del verificador.

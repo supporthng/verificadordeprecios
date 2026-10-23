@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.3.3";
+  const APP_VERSION = "1.4.0";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -315,7 +315,9 @@
       const r = await conTiempo(destino.url + "/rest/v1/rpc/equipo_reporta", { method: "POST", headers: cabeceras,
         body: JSON.stringify({ p_id: equipo.id, p_nombre: nombreEquipo(), p_tipo: "verificador",
           p_app: APP_VERSION, p_precios: estado.version, p_productos: productos.size,
-          p_pendientes: pendientesN, p_navegador: navigator.userAgent.slice(0, 160) }) }, 15000);
+          p_pendientes: pendientesN,
+          p_navegador: ((nativo() && nativo().tipo === "windows" ? "ConsultaPreciosApp (Windows) " : "")
+                        + navigator.userAgent).slice(0, 160) }) }, 15000);
       if (r.ok) {
         resultadoReporte = "✅ " + fecha(Date.now());
       } else {
@@ -384,7 +386,9 @@
       ["Consultas por subir", String(pendientesN)],
       ["Equipo", nombreEquipo()],
       ["Reporte al panel", resultadoReporte],
-      ["App", "versión " + APP_VERSION + (versionNueva ? " (instalando la " + versionNueva + "…)" : "")],
+      ["App", "versión " + APP_VERSION + (versionNueva ? " (instalando la " + versionNueva + "…)" : "")
+              + (nativo() ? " · app " + (nativo().tipo === "android" ? "Android" : "Windows")
+                 + (nativo().bloqueoTotal() ? " (bloqueo total)" : "") : "")],
     ];
     if (ultimoError) filas.push(["Último aviso", ultimoError]);
     const dl = $("menu-estado");
@@ -397,9 +401,16 @@
     const sinClave = !(estado && estado.salida);
     $("menu-aviso").hidden = !sinClave;
     $("menu-aviso").textContent = "Todavía no hay clave de salida: defínela en la app en línea, en Equipos sin internet.";
+    const app = nativo();
     const enLinea = estado && estado.app_en_linea;
-    $("m-en-linea").hidden = !enLinea;
+    // Dentro de las apps, abrir la web en línea sacaría al equipo del verificador.
+    $("m-en-linea").hidden = !enLinea || !!app;
     if (enLinea) $("m-en-linea").href = enLinea;
+    $("m-completa").hidden = !!app;               // las apps ya están a pantalla completa
+    $("m-fijar").hidden = !(app && app.tipo === "android" && !app.bloqueoTotal());
+    $("m-inicio").hidden = !(app && app.tipo === "android");
+    $("m-cerrar").textContent = app && app.tipo === "android" ? "⏻ Salir del verificador (abre Ajustes)"
+                                                              : "⏻ Cerrar aplicación";
   }
 
   $("boton-salida").addEventListener("click", function () {
@@ -482,9 +493,30 @@
     } catch (e) { return false; }
   }
 
+  /* ------------------------------------------------------------ apps Android / Windows
+     Dentro de la app "Consulta de Precios" para Android (window.AndroidKiosco) o Windows
+     (window.pywebview.api) se usa su puente para salir del quiosco. */
+  function nativo() {
+    if (window.AndroidKiosco && typeof window.AndroidKiosco.salir === "function") {
+      const a = window.AndroidKiosco;
+      return { tipo: "android", salir: function () { a.salir(); },
+               bloqueoTotal: function () { try { return !!a.bloqueoTotal(); } catch (e) { return false; } },
+               version: function () { try { return a.version(); } catch (e) { return ""; } },
+               fijar: function () { a.fijar(); }, cambiarInicio: function () { a.cambiarInicio(); } };
+    }
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.salir === "function") {
+      const w = window.pywebview.api;
+      return { tipo: "windows", salir: function () { w.salir(); }, bloqueoTotal: function () { return false; },
+               version: function () { return ""; } };
+    }
+    return null;
+  }
+
   /* ------------------------------------------------------------ cerrar la app */
   $("m-cerrar").addEventListener("click", function () {
     cerrarMenu();
+    const app = nativo();
+    if (app) { app.salir(); return; }   // Android: abre Ajustes · Windows: cierra la app
     try {
       // Fully Kiosk (con "Enable JavaScript Interface" activado) expone fully.exit().
       if (window.fully && typeof window.fully.exit === "function") { window.fully.exit(); return; }
@@ -499,6 +531,8 @@
     }, 600);
   });
 
+  $("m-fijar").addEventListener("click", function () { cerrarMenu(); const a = nativo(); if (a && a.fijar) a.fijar(); });
+  $("m-inicio").addEventListener("click", function () { cerrarMenu(); const a = nativo(); if (a && a.cambiarInicio) a.cambiarInicio(); });
   $("m-volver").addEventListener("click", cerrarMenu);
   $("m-actualizar").addEventListener("click", async function () {
     $("menu-mensaje").textContent = "Buscando…";

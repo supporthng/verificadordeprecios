@@ -133,7 +133,9 @@ elif lista:
             modelo = _re.search(r"Android [^;)]*; ([^;)]+?)(?: Build|\))", ua)
             if modelo and modelo.group(1).strip() not in ("K", "wv"):
                 sistema += " · " + modelo.group(1).strip()
-        if "; wv)" in ua or " wv)" in ua or "Version/4.0 Chrome" in ua:
+        if "ConsultaPreciosApp" in ua:
+            navegador = "📲 App Consulta de Precios"
+        elif "; wv)" in ua or " wv)" in ua or "Version/4.0 Chrome" in ua:
             navegador = "App de quiosco (WebView)"
         elif "Edg/" in ua:
             navegador = "Edge"
@@ -262,7 +264,50 @@ Si la revisión falla (por ejemplo, si Google pide reconectar la cuenta), GitHub
 # ---------------- Guía Fully Kiosk ----------------
 with st.expander("🔒 Guía: dejar el verificador fijo como quiosco"):
     direccion_app = guardada or "https://tuusuario.github.io/verificadordeprecios/"
-    tab_free, tab_fully = st.tabs(["FreeKiosk (gratis, recomendado)", "Fully Kiosk"])
+    tab_apps, tab_free, tab_fully = st.tabs(["📲 Apps Consulta de Precios (recomendado)", "FreeKiosk", "Fully Kiosk"])
+    with tab_apps:
+        _repo = "https://github.com/supporthng/verificadordeprecios/releases/download"
+        _apk, _exe = f"{_repo}/android/ConsultaPrecios.apk", f"{_repo}/windows/Instalador_Consulta_de_Precios.exe"
+        st.markdown(f"""
+Apps propias que muestran el verificador a **pantalla completa**, **funcionan sin internet**, se abren solas al
+encender y solo se salen con la **clave de salida** (menú ✕). Se actualizan solas: la app abre siempre la
+versión más reciente del verificador.
+
+#### Android (2connect y tabletas)
+1. En el equipo, abre el navegador y entra a la dirección de abajo (o escanea el QR). Descarga **ConsultaPrecios.apk**.
+2. Ábrelo e **instálalo**. Si Android lo pide, permite *Instalar apps desconocidas* para el navegador.
+3. Abre **Consulta de Precios**: descarga los precios y queda lista.
+4. Pulsa el botón **Inicio** de Android: elige **Consulta de Precios** y **Siempre**. Desde ahí, Inicio vuelve al
+   verificador y se abre sola al encender.
+5. En el menú ✕: ponle **nombre** al equipo. Si usabas FreeKiosk, puedes desinstalarlo.
+
+**Bloqueo:** el menú ✕ trae **📌 Fijar la app en pantalla** (Android pide confirmar). Para el bloqueo total
+(sin Inicio, sin barra de Android), como en la guía de FreeKiosk pero con este comando:
+`adb shell dpm set-device-owner com.supporthng.consultaprecios/.AdminReceiver`
+
+**Salir:** menú ✕ → clave → **Salir del verificador** (abre los Ajustes de Android) o
+**Cambiar la pantalla de inicio**.
+
+`{_apk}`
+
+#### Windows (PC o pantalla táctil con lector)
+1. Descarga e instala: `{_exe}`
+   Windows puede avisar "Windows protegió su PC": **Más información → Ejecutar de todas formas**.
+2. Deja marcado **Abrir automáticamente al iniciar Windows**.
+3. Queda a pantalla completa, siempre encima, sin Alt+Tab, tecla Windows ni Alt+F4.
+4. **Salir:** menú ✕ → clave → **Cerrar aplicación**. Para volver a abrirla: icono *Consulta de Precios*.
+5. Emergencia: **Ctrl+Alt+Supr → Administrador de tareas → ConsultaPrecios → Finalizar tarea**
+   (Windows no permite bloquear Ctrl+Alt+Supr). Recomendado: un **usuario de Windows solo para el verificador**,
+   sin permisos de administrador y con inicio de sesión automático.
+""")
+        try:
+            import io as _io
+            import segno as _segno
+            _img = _io.BytesIO()
+            _segno.make(_apk, error="m").save(_img, kind="png", scale=5, border=3)
+            st.image(_img.getvalue(), caption="Escanéalo con el equipo Android para descargar el APK", width=200)
+        except Exception:
+            pass
     with tab_free:
         st.markdown(f"""
 **FreeKiosk** es gratis y de código abierto. Requiere **Android 8 o más nuevo**.
