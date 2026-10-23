@@ -1,4 +1,3 @@
-
 name: Mantener al día los equipos sin internet
 # Cada 30 minutos revisa la fuente de precios (Excel o Google) y, SOLO si cambió,
 # publica la versión nueva para los verificadores. Necesita el secreto STREAMLIT_SECRETS
@@ -32,6 +31,6 @@ jobs:
           python-version: "3.12"
       - name: Instalar
         if: hashFiles('.streamlit/secrets.toml') != ''
-        run: pip install --quiet "streamlit>=1.47,<2" "pandas>=2.1,<3" "requests>=2.31,<3" "openpyxl>=3.1,<4" "cryptography>=42,<48"
+        run: pip install --quiet "streamlit>=1.47,<2" "pandas>=2.1,<3" "requests>=2.31,<3" "openpyxl>=3.1,<4" "cryptography>=42,<48" "Pillow>=10,<13"
       - name: Revisar y publicar
         run: python publicar_automatico.py
