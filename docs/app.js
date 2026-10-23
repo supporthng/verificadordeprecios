@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.3.1";
+  const APP_VERSION = "1.3.2";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -258,7 +258,10 @@
       if (nuevoCatalogo) productos = new Map(nuevoCatalogo.map(function (p) { return [String(p[0]), p]; }));
       Object.keys(nuevasImagenes).forEach(function (k) { ponerImagen(k, nuevasImagenes[k]); });
       ultimaRevisionOk = Date.now();
-      reportar();
+      // Reportar YA si llegaron precios nuevos o si acaba de volver la conexión;
+      // si no, basta un reporte cada 5 minutos.
+      reportar(!!nuevoCatalogo || !!ultimoError || !reportadoAlguna);
+      reportadoAlguna = true;
       ultimoError = "";
       aplicarApariencia();
       if (!$("aviso").hidden) mostrarEspera(false);
@@ -292,7 +295,7 @@
   function nombreEquipo() { return equipo.nombre || "Verificador " + equipo.id.slice(0, 4).toUpperCase(); }
 
   /* Avisa a la app en línea que este equipo está encendido y qué precios tiene. */
-  let ultimoReporte = 0;
+  let ultimoReporte = 0, reportadoAlguna = false;
   let resultadoReporte = "todavía no se ha intentado";
   async function reportar(ahora) {
     const destino = estado && estado.registro;
@@ -552,7 +555,10 @@
       if ($("resultado").hidden && !dialogoAbierto()) location.reload();
     });
   }
-  window.addEventListener("online", function () { revisar(false); });
+  // Al volver internet: revisar enseguida y de nuevo a los 5 y 20 s (el Wi-Fi tarda en estar listo).
+  window.addEventListener("online", function () {
+    [0, 5000, 20000].forEach(function (ms) { setTimeout(function () { revisar(false); }, ms); });
+  });
 
   /* ------------------------------------------------------------ inicio */
   async function iniciar() {
