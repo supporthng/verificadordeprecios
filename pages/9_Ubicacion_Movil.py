@@ -298,8 +298,17 @@ else:
 <script>
   const d = """ + _datos + """;
   const mapa = L.map('mapa', { scrollWheelZoom: false }).setView([d.lat, d.lon], 16);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(mapa);
+  // Calles de OpenStreetMap (sin clave). Si no cargan, se usa el mapa de Esri.
+  let fallos = 0, cambiado = false;
+  const calles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(mapa);
+  calles.on('tileerror', function () {
+    if (cambiado || ++fallos < 3) return;
+    cambiado = true;
+    mapa.removeLayer(calles);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19, attribution: 'Mapa &copy; Esri' }).addTo(mapa);
+  });
   const zona = L.circle([d.lat, d.lon], { radius: d.radio, color: '#0757d4', weight: 2,
                                          fillColor: '#0757d4', fillOpacity: 0.12 }).addTo(mapa);
   L.circleMarker([d.lat, d.lon], { radius: 7, color: '#ffffff', weight: 2, fillColor: '#dc2626',
