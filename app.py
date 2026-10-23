@@ -103,6 +103,13 @@ def _recover(token):
     except (ValueError, KeyError, TypeError):
         return "invalida", None
 
+@st.cache_resource
+def _codigos_oauth_usados():
+    """Huellas de los códigos OAuth ya canjeados (compartido entre sesiones del servidor)."""
+    import threading
+    return {"lock": threading.Lock(), "codigos": set()}
+
+
 # Procesar el retorno OAuth en la raíz ANTES del login y de st.navigation.
 # El regreso desde accounts.google.com crea una sesión nueva de Streamlit:
 # st.session_state NO es una ubicación fiable para retener el código OAuth.
@@ -117,7 +124,8 @@ if "code" in st.query_params or "error" in st.query_params:
         if _oauth_error == "access_denied":
             raise RuntimeError(
                 "Google no dio acceso (access_denied). Pasa por una de estas dos razones: "
-                "1) se pulsó Cancelar o no se marcaron los permisos de Drive y Sheets; o "
+                "1) en la pantalla de permisos no se marcó «Seleccionar todos» (las casillas de Drive y "
+                "Hojas de cálculo) o se pulsó Cancelar; o "
                 "2) la app de Google Cloud está en modo Prueba y esa cuenta no es usuario de prueba: "
                 "agrega el correo en Google Cloud > Google Auth Platform > Público (Usuarios de prueba) "
                 "o pulsa Publicar app. Luego vuelve a Conectar con Google.")
@@ -127,7 +135,21 @@ if "code" in st.query_params or "error" in st.query_params:
             raise RuntimeError("Autorización inválida o vencida. Inicia nuevamente desde Administración.")
         # No depende del login de Streamlit. El state firmado fue emitido
         # únicamente desde la página administrativa protegida.
-        connect(exchange_code(_oauth_code))
+        # El código de Google sirve UNA vez. Si Streamlit procesa el regreso dos veces
+        # (dos ejecuciones o dos sesiones seguidas), la segunda no debe volver a canjearlo.
+        import hashlib as _hashlib
+        _usados = _codigos_oauth_usados()
+        _huella = _hashlib.sha256(_oauth_code.encode()).hexdigest()
+        with _usados["lock"]:
+            _ya = _huella in _usados["codigos"]
+            _usados["codigos"].add(_huella)
+        if not _ya:
+            try:
+                connect(exchange_code(_oauth_code))
+            except Exception:
+                with _usados["lock"]:
+                    _usados["codigos"].discard(_huella)
+                raise
         st.session_state["google_oauth_notice"] = (
             "success", "Cuenta de Google conectada correctamente. Inicia sesión como administrador para continuar."
         )

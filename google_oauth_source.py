@@ -97,6 +97,15 @@ def exchange_code(code):
     data = r.json()
     if "access_token" not in data:
         raise RuntimeError("Google no devolvió un token de acceso válido.")
+    # Google permite desmarcar permisos: sin los dos, no se puede leer el archivo de precios.
+    concedidos = str(data.get("scope", ""))
+    faltan = [nombre for permiso, nombre in (
+        ("drive.readonly", "Ver y descargar tus archivos de Google Drive"),
+        ("spreadsheets.readonly", "Ver tus archivos de Hojas de cálculo de Google"))
+        if concedidos and permiso not in concedidos]
+    if faltan:
+        raise RuntimeError("Falta marcar en Google: " + " y ".join(f"«{f}»" for f in faltan)
+                           + ". Vuelve a Conectar con Google y marca «Seleccionar todos».")
     return data
 
 def save_token(data,old=None):
@@ -157,6 +166,49 @@ def cuenta_conectada(_marca=None):
     return {"nombre": datos.get("displayName") or "", "correo": datos.get("emailAddress") or ""}
 
 
+TIPOS_DRIVE = {"excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+               "sheets": "application/vnd.google-apps.spreadsheet"}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def listar_archivos(kind, buscar="", _marca=None):
+    """Archivos de Drive del tipo pedido (Excel .xlsx o Google Sheets), los más recientes primero.
+    Incluye los propios, los compartidos y los de unidades compartidas."""
+    q = f"mimeType='{TIPOS_DRIVE[kind]}' and trashed=false"
+    buscar = str(buscar or "").strip().replace("\\", "").replace("'", "\\'")
+    if buscar:
+        q += f" and name contains '{buscar}'"
+    archivos, pagina = [], None
+    for _ in range(3):   # hasta 300 archivos
+        params = {"q": q, "orderBy": "modifiedTime desc", "pageSize": 100,
+                  "fields": "nextPageToken,files(id,name,modifiedTime,owners(displayName),size)",
+                  "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"}
+        if pagina:
+            params["pageToken"] = pagina
+        datos = google_get("https://www.googleapis.com/drive/v3/files", params).json()
+        archivos += datos.get("files", [])
+        pagina = datos.get("nextPageToken")
+        if not pagina:
+            break
+    return archivos
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def pestanas(kind, fid):
+    """Nombres de las hojas/pestañas del archivo, en orden."""
+    if kind == "sheets":
+        meta = google_get("https://sheets.googleapis.com/v4/spreadsheets/" + fid,
+                          {"fields": "sheets(properties(title))"}).json()
+        return [h["properties"]["title"] for h in meta.get("sheets", [])]
+    meta = google_get("https://www.googleapis.com/drive/v3/files/" + fid,
+                      {"fields": "size", "supportsAllDrives": "true"}).json()
+    if int(meta.get("size") or 0) > 20 * 1024 * 1024:
+        raise ValueError("El archivo supera el límite de 20 MB.")
+    contenido = google_get("https://www.googleapis.com/drive/v3/files/" + fid,
+                           {"alt": "media", "supportsAllDrives": "true"}).content
+    return pd.ExcelFile(io.BytesIO(contenido), engine="openpyxl").sheet_names
+
+
 def file_id(raw):
     raw=str(raw).strip()
     m=re.search(r"/(?:file/d|spreadsheets/d)/([\w-]+)",raw)
@@ -172,12 +224,12 @@ def file_id(raw):
 def read_file(kind,fid,sheet):
     if kind=="excel":
         meta=google_get("https://www.googleapis.com/drive/v3/files/"+fid,
-                        {"fields":"id,name,mimeType,size"}).json()
+                        {"fields":"id,name,mimeType,size","supportsAllDrives":"true"}).json()
         if meta.get("mimeType")!="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
             raise ValueError("El archivo seleccionado no es Excel .xlsx.")
         if int(meta.get("size") or 0)>20*1024*1024:
             raise ValueError("El archivo supera el límite de 20 MB.")
-        content=google_get("https://www.googleapis.com/drive/v3/files/"+fid,{"alt":"media"}).content
+        content=google_get("https://www.googleapis.com/drive/v3/files/"+fid,{"alt":"media","supportsAllDrives":"true"}).content
         if len(content)>20*1024*1024:raise ValueError("El archivo supera el límite de 20 MB.")
         return pd.read_excel(io.BytesIO(content),sheet_name=sheet or 0,dtype=str).fillna("")
     if kind=="sheets":

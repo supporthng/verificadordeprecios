@@ -89,12 +89,52 @@ except Exception as _exc:
 kind=st.radio("Formato del archivo",["Excel (.xlsx) en Google Drive","Google Sheets"],
               index=1 if cfg.get("kind")=="sheets" else 0)
 kind="sheets" if kind=="Google Sheets" else "excel"
-link=st.text_input("Enlace del archivo",value=cfg.get("file_id") or "")
-sheet=st.text_input("Pestaña u hoja (vacío = primera)",value=cfg.get("sheet_name") or "")
+from datetime import datetime as _dt
+from google_oauth_source import listar_archivos, pestanas
+modo=st.radio("¿Cómo eliges el archivo?",["Elegir de mi Google Drive","Pegar el enlace"],horizontal=True)
 fid=None
-if link:
-    try:fid=file_id(link)
-    except ValueError as e:st.warning(str(e))
+if modo=="Elegir de mi Google Drive":
+    buscar=st.text_input("Buscar por nombre (opcional)",placeholder="Ej.: precios")
+    try:
+        with st.spinner("Buscando archivos en tu Drive…"):
+            archivos=listar_archivos(kind,buscar,str(cfg.get("refresh_token_encrypted",""))[-16:])
+    except Exception as e:
+        archivos=[]
+        st.error("No se pudo leer la lista de archivos de Drive: "+str(e))
+    if not archivos:
+        st.info("No se encontraron archivos "+("de Excel (.xlsx)" if kind=="excel" else "de Google Sheets")
+                +(" con ese nombre." if buscar else " en esta cuenta.")
+                +" Prueba el otro formato, o pega el enlace.")
+    else:
+        def _etiqueta(a):
+            try:fecha=_dt.fromisoformat(a["modifiedTime"].replace("Z","+00:00")).strftime("%d/%m/%Y")
+            except (KeyError,ValueError):fecha=""
+            dueno=(a.get("owners") or [{}])[0].get("displayName","")
+            return a["name"]+(f"  ·  modificado {fecha}" if fecha else "")+(f"  ·  {dueno}" if dueno else "")
+        ids=[a["id"] for a in archivos]
+        por_id={a["id"]:a for a in archivos}
+        inicial=ids.index(cfg["file_id"]) if cfg.get("file_id") in ids else 0
+        fid=st.selectbox(f"Archivo ({len(archivos)} encontrados, los más recientes primero)",ids,
+                         index=inicial,format_func=lambda i:_etiqueta(por_id[i]))
+else:
+    link=st.text_input("Enlace del archivo",value=cfg.get("file_id") or "",
+                       help="En Drive: clic derecho sobre el archivo > Compartir > Copiar enlace. Pulsa Enter al pegar.")
+    if link:
+        try:fid=file_id(link)
+        except ValueError as e:st.warning(str(e))
+sheet=""
+if fid:
+    try:
+        with st.spinner("Leyendo las pestañas…"):
+            hojas=pestanas(kind,fid)
+        if len(hojas)>1:
+            inicial=hojas.index(cfg["sheet_name"]) if cfg.get("sheet_name") in hojas else 0
+            sheet=st.selectbox("Pestaña con los precios",hojas,index=inicial)
+        elif hojas:
+            sheet=hojas[0]
+            st.caption(f"Pestaña: **{sheet}** (la única del archivo)")
+    except Exception as e:
+        st.warning("No se pudieron leer las pestañas ("+str(e)[:120]+"). Se usará la primera.")
 if st.button("Leer archivo",disabled=not bool(fid)):
     try:
         df=read_file(kind,fid,sheet)
