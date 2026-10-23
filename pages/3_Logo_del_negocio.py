@@ -75,6 +75,8 @@ def guardar_qr(datos_png, origen, enlace=None):
                       data=json.dumps(info).encode("utf-8"), timeout=15)
     except requests.RequestException:
         pass
+    import publicar_equipos
+    publicar_equipos.actualizar_si_publicado()   # los equipos sin internet reciben el QR nuevo
 
 
 def mostrar_qr_actual():
@@ -269,6 +271,9 @@ if archivo is not None:
                 )
                 st.stop()
             st.success("Logo guardado. Aparecera en Consulta de precios (puede tardar hasta un minuto).")
+            import publicar_equipos
+            if publicar_equipos.actualizar_si_publicado()[0]:
+                st.caption("📴 También se envió a los equipos sin internet.")
         except requests.RequestException as exc:
             st.error(f"No se pudo guardar el logo en Supabase: {exc}")
 

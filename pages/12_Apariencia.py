@@ -26,6 +26,12 @@ if guardar:
         apariencia.guardar({"mostrar_logo": mostrar_logo, "mostrar_qr": mostrar_qr,
                             "mostrar_cuadro": mostrar_cuadro})
         st.success("Apariencia guardada. Las pantallas de consulta la aplicarán en unos segundos.")
+        import publicar_equipos
+        ok, res = publicar_equipos.actualizar_si_publicado()
+        if ok:
+            st.caption("📴 También se envió a los equipos sin internet.")
+        elif isinstance(res, str):
+            st.warning("No se pudo enviar a los equipos sin internet: " + res)
     except Exception as exc:
         st.error("No se pudo guardar la apariencia: " + str(exc))
 

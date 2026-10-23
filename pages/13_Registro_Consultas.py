@@ -11,7 +11,8 @@ import registro_consultas as registro
 usuario = require("consultar_base")
 ZONA = ZoneInfo("America/Santo_Domingo")
 CANALES = {"verificador": "Verificador (pantalla)", "movil-camara": "Celular · cámara en vivo",
-           "movil-manual": "Celular · manual / Bluetooth", "movil-foto": "Celular · foto", "movil": "Celular"}
+           "movil-manual": "Celular · manual / Bluetooth", "movil-foto": "Celular · foto", "movil": "Celular",
+           "offline-verificador": "Verificador sin internet", "offline-movil": "Celular sin internet"}
 FUENTES = {"local": "Excel (inventario)", "google": "Google Drive / Sheets", "external": "SQL Server"}
 
 st.title("📊 Registro de consultas")

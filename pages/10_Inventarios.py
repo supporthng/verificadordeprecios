@@ -9,6 +9,17 @@ if not user or not allowed(user,'cargar_archivo'):
     st.error('Sin permiso de administración de inventarios.');st.stop()
 st.title('📚 Inventarios independientes')
 st.caption('Cada archivo Excel se carga en un inventario seleccionado. No se mezclan los catálogos.')
+
+
+def _equipos():
+    """Si hay equipos sin internet en uso, enviarles el inventario activo nuevo."""
+    import publicar_equipos
+    ok,res=publicar_equipos.actualizar_si_publicado()
+    if ok:st.session_state['aviso_equipos_inv']=f"Equipos sin internet: {res['productos']:,} productos publicados."
+    elif isinstance(res,str):st.session_state['aviso_equipos_inv']='⚠️ No se pudo actualizar los equipos sin internet: '+res
+
+
+if 'aviso_equipos_inv' in st.session_state:st.info(st.session_state.pop('aviso_equipos_inv'))
 try: items=all_inventories()
 except Exception as e:
     st.error('Ejecuta INSTALAR_INVENTARIOS.sql en Supabase antes de continuar.');st.code(str(e));st.stop()
@@ -25,7 +36,9 @@ selected=st.selectbox('Inventario de destino',list(names),format_func=lambda i:n
 active=next((i for i in items if i['is_active']),None)
 st.info('Activo en Consulta de Precios: '+(active['name'] if active else 'Ninguno'))
 if st.button('Activar inventario seleccionado',disabled=bool(active and int(active['id'])==selected)):
-    try:api('POST','rpc/activate_price_inventory',data={'target_id':selected});st.rerun()
+    try:
+        api('POST','rpc/activate_price_inventory',data={'target_id':selected})
+        _equipos();st.rerun()
     except Exception as e:st.error(str(e))
 st.subheader('Importar Excel')
 file=st.file_uploader('Selecciona archivo .xlsx',type='xlsx')
@@ -61,6 +74,7 @@ if file:
                     for n in range(0,len(rows),200):
                         api('POST','price_inventory_items',{'on_conflict':'inventory_id,barcode'},[dict(r,inventory_id=selected) for r in rows[n:n+200]],prefer='resolution=merge-duplicates,return=minimal')
                 st.success('Inventario publicado. Los otros inventarios no fueron modificados.')
+                if active and int(active['id'])==selected:_equipos()
             except Exception as e:st.error(str(e))
     except Exception as e:st.error('Error al leer Excel: '+str(e))
 st.divider();st.subheader('Eliminar inventario')

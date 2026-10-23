@@ -494,6 +494,7 @@ config = [
     ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
     ("usuarios", "pages/5_Administrador_Usuarios.py", "Administrador de Usuarios", "👥"),
     ("ubicacion_movil", "pages/9_Ubicacion_Movil.py", "Ubicación Consulta Móvil", "📍"),
+    ("ubicacion_movil", "pages/14_Equipos_sin_internet.py", "Equipos sin internet", "📴"),
 ]
 habilitadas = [st.Page(path, title=title, icon=icon)
                 for perm, path, title, icon in config if (es_administrador_autenticado if perm == "ubicacion_movil" else allowed(user, perm))]

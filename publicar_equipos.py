@@ -1,0 +1,231 @@
+"""Publicación para los equipos sin internet (verificador y celulares con la app offline).
+
+Los equipos NO consultan Supabase en cada escaneo: guardan una copia del catálogo
+y la renuevan solo cuando cambia. Para eso se publican archivos en el bucket
+PÚBLICO 'equipos' de Supabase Storage:
+
+    estado.json               pequeño (~1 KB): versión vigente, apariencia, logo, QR,
+                              verificación de la clave de salida. Los equipos lo
+                              revisan cada pocos minutos cuando hay internet.
+    catalogo-<version>.json   el catálogo completo. Su nombre cambia con el contenido,
+                              así que un equipo lo descarga UNA vez por cambio de precios.
+    logo.png / qr.png         copias públicas del logo y del QR.
+
+La versión es una huella del contenido: publicar dos veces el mismo catálogo no
+obliga a los equipos a descargar nada.
+
+Nada de esto es secreto: el inventario activo ya es legible con la clave pública.
+La clave de salida se publica solo como verificación PBKDF2 (no la clave misma);
+por eso es una clave PROPIA del verificador, distinta de cualquier contraseña de usuario.
+"""
+import hashlib
+import json
+import os
+from datetime import datetime, timezone
+
+import requests
+
+from supabase_cliente import cabeceras, clave_publica, clave_servidor, url
+
+BUCKET = "equipos"
+PRIVADO = "logo-negocio"
+CLAVE_SALIDA = f"{PRIVADO}/clave-salida.json"
+ITERACIONES = 210_000          # PBKDF2-SHA256: también lo calcula el navegador (WebCrypto)
+LARGO_MINIMO_CLAVE = 6
+FORMATO = 1                    # sube si cambia la estructura de los archivos
+
+
+def _conexion():
+    base, clave = url(), clave_servidor()
+    if not base or not clave:
+        raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SECRET_KEY (o SUPABASE_SERVICE_ROLE_KEY) en Secrets.")
+    return base, cabeceras(clave)
+
+
+def url_publica(nombre=""):
+    return f"{url()}/storage/v1/object/public/{BUCKET}/{nombre}"
+
+
+# ---------------------------------------------------------------- almacenamiento
+def _asegurar_bucket(base, headers):
+    r = requests.get(f"{base}/storage/v1/bucket/{BUCKET}", headers=headers, timeout=15)
+    if r.status_code == 200:
+        if not r.json().get("public"):
+            requests.put(f"{base}/storage/v1/bucket/{BUCKET}",
+                         headers={**headers, "Content-Type": "application/json"},
+                         json={"public": True}, timeout=15)
+        return
+    creado = requests.post(f"{base}/storage/v1/bucket", headers={**headers, "Content-Type": "application/json"},
+                           json={"id": BUCKET, "name": BUCKET, "public": True}, timeout=15)
+    if not creado.ok and "already exists" not in creado.text.lower():
+        raise RuntimeError(f"No se pudo crear el almacenamiento público (HTTP {creado.status_code}): {creado.text[:300]}")
+
+
+def _subir(base, headers, nombre, datos, tipo, cache):
+    r = requests.post(f"{base}/storage/v1/object/{BUCKET}/{nombre}",
+                      headers={**headers, "Content-Type": tipo, "x-upsert": "true", "cache-control": cache},
+                      data=datos, timeout=120)
+    if not r.ok:
+        raise RuntimeError(f"No se pudo subir {nombre} (HTTP {r.status_code}): {r.text[:300]}")
+
+
+def _leer_privado(base, headers, ruta):
+    r = requests.get(f"{base}/storage/v1/object/{ruta}", headers=headers, timeout=20)
+    return r.content if r.status_code == 200 and r.content else None
+
+
+def _borrar_catalogos_viejos(base, headers, conservar):
+    try:
+        r = requests.post(f"{base}/storage/v1/object/list/{BUCKET}",
+                          headers={**headers, "Content-Type": "application/json"},
+                          json={"prefix": "", "limit": 1000}, timeout=20)
+        viejos = [o["name"] for o in (r.json() if r.ok else [])
+                  if o.get("name", "").startswith("catalogo-") and o["name"] not in conservar]
+        if viejos:
+            requests.delete(f"{base}/storage/v1/object/{BUCKET}",
+                            headers={**headers, "Content-Type": "application/json"},
+                            json={"prefixes": viejos}, timeout=30)
+    except (requests.RequestException, ValueError):
+        pass   # limpieza opcional: si falla, solo quedan archivos de más
+
+
+# ---------------------------------------------------------------- lectura
+def estado():
+    """estado.json publicado, o None si nunca se publicó."""
+    try:
+        r = requests.get(url_publica("estado.json"), params={"t": datetime.now().timestamp()}, timeout=10)
+        return r.json() if r.status_code == 200 else None
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def _catalogo_activo(base, headers):
+    """(nombre del inventario, [[código, nombre, precio], ...]) del inventario activo."""
+    inv = requests.get(f"{base}/rest/v1/price_inventories", headers=headers, timeout=20,
+                       params={"select": "id,name", "is_active": "eq.true", "limit": 1})
+    if not inv.ok:
+        raise RuntimeError(f"Supabase {inv.status_code}: {inv.text[:300]}")
+    if not inv.json():
+        raise RuntimeError("No hay un inventario activo. Activa uno en Inventarios independientes.")
+    inventario = inv.json()[0]
+    filas, desde = [], 0
+    while True:
+        r = requests.get(f"{base}/rest/v1/price_inventory_items", headers=headers, timeout=60,
+                         params={"select": "barcode,name,price", "inventory_id": f"eq.{inventario['id']}",
+                                 "order": "barcode.asc", "limit": 1000, "offset": desde})
+        if not r.ok:
+            raise RuntimeError(f"Supabase {r.status_code}: {r.text[:300]}")
+        lote = r.json()
+        if not lote:
+            break
+        filas += [[str(f["barcode"]), str(f["name"] or ""), round(float(f["price"] or 0), 2)] for f in lote]
+        desde += len(lote)
+    return inventario["name"], filas
+
+
+# ---------------------------------------------------------------- clave de salida
+def _verificacion(clave):
+    sal = os.urandom(16)
+    huella = hashlib.pbkdf2_hmac("sha256", clave.encode("utf-8"), sal, ITERACIONES)
+    return {"algoritmo": "PBKDF2-SHA256", "iteraciones": ITERACIONES, "sal": sal.hex(), "hash": huella.hex()}
+
+
+def comprobar_clave(clave, verificacion):
+    """Misma comprobación que hará el equipo sin internet (útil para pruebas)."""
+    if not verificacion:
+        return False
+    huella = hashlib.pbkdf2_hmac("sha256", clave.encode("utf-8"), bytes.fromhex(verificacion["sal"]),
+                                 int(verificacion["iteraciones"]))
+    return huella.hex() == verificacion["hash"]
+
+
+def hay_clave_salida():
+    base, headers = _conexion()
+    return _leer_privado(base, headers, CLAVE_SALIDA) is not None
+
+
+def guardar_clave_salida(clave):
+    clave = str(clave or "")
+    if len(clave) < LARGO_MINIMO_CLAVE:
+        raise ValueError(f"La clave de salida debe tener al menos {LARGO_MINIMO_CLAVE} caracteres.")
+    base, headers = _conexion()
+    datos = json.dumps({**_verificacion(clave),
+                        "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds")}).encode("utf-8")
+    r = requests.post(f"{base}/storage/v1/object/{CLAVE_SALIDA}",
+                      headers={**headers, "Content-Type": "application/json", "x-upsert": "true"},
+                      data=datos, timeout=15)
+    if not r.ok and "bucket" in r.text.lower() and "not found" in r.text.lower():
+        requests.post(f"{base}/storage/v1/bucket", headers={**headers, "Content-Type": "application/json"},
+                      json={"id": PRIVADO, "name": PRIVADO, "public": False}, timeout=15)
+        r = requests.post(f"{base}/storage/v1/object/{CLAVE_SALIDA}",
+                          headers={**headers, "Content-Type": "application/json", "x-upsert": "true"},
+                          data=datos, timeout=15)
+    if not r.ok:
+        raise RuntimeError(f"No se pudo guardar la clave de salida (HTTP {r.status_code}): {r.text[:300]}")
+
+
+# ---------------------------------------------------------------- publicar
+def publicar(apariencia_actual=None):
+    """Publica catálogo, apariencia, logo, QR y clave de salida. Devuelve el estado publicado."""
+    base, headers = _conexion()
+    _asegurar_bucket(base, headers)
+    anterior = estado() or {}
+
+    inventario, productos = _catalogo_activo(base, headers)
+    contenido = json.dumps(productos, ensure_ascii=False, separators=(",", ":"))
+    version = hashlib.sha256((inventario + "\n" + contenido).encode("utf-8")).hexdigest()[:16]
+    archivo = f"catalogo-{version}.json"
+    if anterior.get("version") != version:
+        catalogo = ('{"formato":%d,"version":"%s","inventario":%s,"productos":%s}'
+                    % (FORMATO, version, json.dumps(inventario, ensure_ascii=False), contenido))
+        _subir(base, headers, archivo, catalogo.encode("utf-8"), "application/json",
+               "max-age=31536000")   # nombre único por versión: se puede guardar para siempre
+
+    imagenes = {}
+    for clave, origen, destino in (("logo", f"{PRIVADO}/logo.png", "logo.png"),
+                                   ("qr", f"{PRIVADO}/qr-movil.png", "qr.png")):
+        datos = _leer_privado(base, headers, origen)
+        if datos:
+            huella = hashlib.sha256(datos).hexdigest()[:12]
+            if not str(anterior.get(clave) or "").endswith(huella):
+                _subir(base, headers, destino, datos, "image/png", "max-age=60")
+            imagenes[clave] = f"{destino}?v={huella}"
+        else:
+            imagenes[clave] = None
+
+    if apariencia_actual is None:
+        import apariencia
+        apariencia_actual = apariencia.obtener()
+    salida = _leer_privado(base, headers, CLAVE_SALIDA)
+    salida = {k: v for k, v in json.loads(salida).items() if k != "fecha"} if salida else None
+
+    publicado = {
+        "formato": FORMATO,
+        "version": version,
+        "catalogo": archivo,
+        "inventario": inventario,
+        "productos": len(productos),
+        "publicado": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "apariencia": dict(apariencia_actual),
+        "logo": imagenes["logo"],
+        "qr": imagenes["qr"],
+        "salida": salida,
+        # Para que los equipos suban su registro de consultas hechas sin internet.
+        # La clave pública solo permite AGREGAR filas 'offline-*' (ver MIGRACION_004).
+        "registro": {"url": base, "clave": clave_publica()} if clave_publica() else None,
+    }
+    _subir(base, headers, "estado.json", json.dumps(publicado, ensure_ascii=False).encode("utf-8"),
+           "application/json", "no-cache")
+    _borrar_catalogos_viejos(base, headers, {archivo, anterior.get("catalogo")})
+    return publicado
+
+
+def actualizar_si_publicado():
+    """Tras cambiar precios, logo, QR o apariencia: si los equipos ya están en uso,
+    republicar. Devuelve (True, estado) | (False, None si nunca se publicó) | (False, 'error')."""
+    if estado() is None:
+        return False, None
+    try:
+        return True, publicar()
+    except Exception as exc:  # nunca debe romper la página que llamó
+        return False, str(exc)
