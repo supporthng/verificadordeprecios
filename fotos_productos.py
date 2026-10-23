@@ -226,8 +226,32 @@ def _descargar_imagen(direccion, motivo=None):
 
 
 UPCITEMDB = "https://api.upcitemdb.com/prod/trial/lookup"   # gratis: 100 consultas al día
+BRAVE_IMAGENES = "https://api.search.brave.com/res/v1/images/search"   # opcional: BRAVE_SEARCH_KEY
+
+
+def _clave_brave():
+    """Clave del buscador de imágenes de Brave (Secrets: BRAVE_SEARCH_KEY), o vacío si no hay."""
+    try:
+        import streamlit as st
+        return str(st.secrets.get("BRAVE_SEARCH_KEY", "") or "").strip()
+    except Exception:
+        import os
+        return os.environ.get("BRAVE_SEARCH_KEY", "").strip()
+
+
+def _nombre_consultado(codigo):
+    """Nombre del producto según el registro de consultas (para buscar su foto por nombre)."""
+    try:
+        base, headers = _conexion()
+        r = requests.get(f"{base}/rest/v1/price_lookup_log", headers=headers, timeout=10,
+                         params={"select": "product_name", "barcode": f"eq.{codigo}", "found": "eq.true",
+                                 "product_name": "not.is.null", "order": "created_at.desc", "limit": 1})
+        filas = r.json() if r.ok else []
+        return str(filas[0]["product_name"]).strip() if filas else ""
+    except (requests.RequestException, ValueError, KeyError, RuntimeError):
+        return ""
 FONDO_MINIMO = 0.55     # parte del borde que debe ser fondo blanco/claro (foto de catálogo)
-MAX_CANDIDATAS = 12
+MAX_CANDIDATAS = 20
 
 
 def _abrir_rgb(datos):
@@ -311,6 +335,8 @@ def _candidatas(codigo, informe, estado):
             except ValueError:
                 items = []
         fotos = [u for it in items for u in (it.get("images") or []) if str(u).startswith("http")]
+        if items and items[0].get("title") and not estado.get("titulo"):
+            estado["titulo"] = str(items[0]["title"])[:120]
         anotar("UPCitemdb", forma, f"{len(fotos)} foto(s)" if fotos else "no lo tiene")
         for u in fotos:
             yield "UPCitemdb", u, True
@@ -320,7 +346,7 @@ def _candidatas(codigo, informe, estado):
         for forma in formas[:3]:
             try:
                 r = requests.get(f"{sitio}/api/v2/product/{forma}.json",
-                                 params={"fields": ",".join(("code", "images", "selected_images") + CAMPOS_IMAGEN)},
+                                 params={"fields": ",".join(("code", "product_name", "images", "selected_images") + CAMPOS_IMAGEN)},
                                  headers={"User-Agent": AGENTE}, timeout=12)
             except requests.RequestException as exc:
                 anotar(nombre, forma, f"sin respuesta ({type(exc).__name__})")
@@ -338,10 +364,39 @@ def _candidatas(codigo, informe, estado):
                     producto = {}
             urls = list(dict.fromkeys(_fotos_open_facts(producto, sitio)))
             anotar(nombre, forma, f"{len(urls)} foto(s)" if urls else "no lo tiene")
+            if producto.get("product_name") and not estado.get("titulo"):
+                estado["titulo"] = str(producto["product_name"])[:120]
             for u in urls:
                 yield nombre, u, False
             if urls:
                 break
+    # Último recurso (si hay clave): buscador de imágenes de Brave, con el nombre del producto.
+    clave = _clave_brave()
+    if clave:
+        nombre_producto = estado.get("titulo") or _nombre_consultado(codigo)
+        consulta = f"{nombre_producto} {codigo}".strip() if nombre_producto else codigo
+        try:
+            r = requests.get(BRAVE_IMAGENES, params={"q": consulta, "count": 20, "safesearch": "strict"},
+                             headers={"Accept": "application/json", "X-Subscription-Token": clave}, timeout=15)
+        except requests.RequestException as exc:
+            anotar("Buscador Brave", consulta, f"sin respuesta ({type(exc).__name__})")
+            return
+        if r.status_code in (401, 403):
+            anotar("Buscador Brave", consulta, "clave inválida o sin crédito")
+            return
+        if r.status_code == 429:
+            anotar("Buscador Brave", consulta, "límite alcanzado (se reintenta después)")
+            return
+        estado["respondio"] = estado["respondio"] or r.ok
+        try:
+            resultados = (r.json() or {}).get("results") or [] if r.ok else []
+        except ValueError:
+            resultados = []
+        anotar("Buscador Brave", consulta, f"{len(resultados)} imagen(es)" if resultados else "sin resultados")
+        for res in resultados:
+            u = ((res.get("properties") or {}).get("url") or (res.get("thumbnail") or {}).get("src") or "")
+            if u:
+                yield "Buscador Brave", u, False
 
 
 def _carpeta_open_facts(codigo):
@@ -365,7 +420,7 @@ def _fotos_open_facts(producto, sitio):
     carpeta = _carpeta_open_facts(producto.get("code"))
     numeros = sorted((k for k in imagenes if str(k).isdigit()), key=int)
     urls += [f"{servidor}/images/products/{carpeta}/{n}.400.jpg" for n in numeros]
-    return [u for u in urls if u]
+    return [u for u in urls if u][:8]
 
 
 def buscar_en_internet(codigo, informe=None):
@@ -407,6 +462,10 @@ def buscar_en_internet(codigo, informe=None):
                 from urllib.parse import urlsplit
                 sitio = urlsplit(direccion).netloc or direccion[:40]
                 informe.append((fuente, "", f"foto {probadas} ({sitio}): no se pudo abrir ({motivo[0] if motivo else '?'})"))
+            continue
+        if min(im.size) < 150:
+            if informe is not None:
+                informe.append((fuente, "", f"foto {probadas}: descartada, muy pequeña ({im.width}×{im.height})"))
             continue
         puntaje = calidad_fondo(im)
         if puntaje >= FONDO_MINIMO:
