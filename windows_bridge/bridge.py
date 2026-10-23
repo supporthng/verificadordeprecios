@@ -776,7 +776,7 @@ def _execute_catalog(job):
     return {'total': total, 'products': products, 'page': page, 'page_size': size}
 
 # ---------------------------------------------------------------- catálogo para los equipos
-SYNC_LAST = {'cuando': None, 'productos': None, 'version': None, 'error': None}
+SYNC_LAST = {'cuando': None, 'productos': None, 'version': None, 'error': None, 'estado': 'todavía no revisa'}
 
 
 def _storage(method, ruta, **kwargs):
@@ -892,13 +892,19 @@ def _sync_worker():
         return
     time.sleep(20)   # dejar que el conector termine de iniciar
     while True:
+        espera = SYNC_MINUTES * 60
         try:
-            logger.info('Catálogo para equipos: %s', _sincronizar_catalogo())
+            resultado = _sincronizar_catalogo()
+            SYNC_LAST['estado'] = resultado
+            logger.info('Catálogo para equipos: %s', resultado)
+            if resultado == 'fuente activa no es SQL Server':
+                espera = 60   # revisar seguido: empezar apenas se active SQL Server
         except Exception as exc:
             SYNC_LAST['error'] = type(exc).__name__ + ': ' + str(exc)[:200]
             logger.error('Catálogo para equipos: %s\n%s', type(exc).__name__,
                          ''.join(traceback.format_tb(exc.__traceback__)))
-        time.sleep(SYNC_MINUTES * 60)
+            espera = min(espera, 120)   # tras un error, reintentar en 2 minutos
+        time.sleep(espera)
 
 
 def _process_external_queue(table, select, execute):
