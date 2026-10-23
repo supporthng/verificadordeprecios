@@ -88,7 +88,12 @@ if st.button('Guardar fuente seleccionada', type='primary', disabled=not ready):
         if not verify or verify[0]['source_type'] != selected:
             raise RuntimeError('La fuente seleccionada no quedó guardada.')
         st.success('Fuente seleccionada y guardada correctamente.')
-        st.rerun()
+        import publicar_equipos
+        ok, res = publicar_equipos.actualizar_si_publicado()
+        if isinstance(res, str):
+            st.warning('Los equipos sin internet no se pudieron actualizar: ' + res)
+        else:
+            st.rerun()
     except Exception as exc:
         st.error('No se pudo guardar la fuente seleccionada.')
         st.code(str(exc))

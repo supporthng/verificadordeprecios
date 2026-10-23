@@ -12,6 +12,22 @@ if not allowed(user,"configurar"):
 st.caption("Cada instalación puede conectar la cuenta Google de su cliente. No se solicita contraseña de Google.")
 
 from google_oauth_source import faltantes
+
+
+def _equipos():
+    """Si Google es la fuente activa, enviar los precios a los equipos sin internet."""
+    try:
+        import publicar_equipos
+        if publicar_equipos.fuente_activa() != "google":
+            return
+        ok, res = publicar_equipos.actualizar_si_publicado()
+        if ok:
+            st.caption(f"📴 Equipos sin internet: {res['productos']:,} productos de Google publicados.")
+        elif isinstance(res, str):
+            st.warning("No se pudo actualizar los equipos sin internet: " + res)
+    except Exception as exc:
+        st.warning("No se pudo actualizar los equipos sin internet: " + str(exc))
+
 _faltan = faltantes()
 if _faltan:
     st.info("Google Drive / Sheets no está configurado. Es **opcional**: si tus precios "
@@ -95,6 +111,7 @@ if preview and preview[:3]==(kind,fid,sheet):
                  "code_column":code_col,"name_column":name_col,"price_column":price_col})
             st.cache_data.clear()
             st.success(f"Configuración de Google guardada: {len(df)} productos. Actívala en la pestaña Selección.")
+            _equipos()
         except Exception as e:
             st.error("No se pudo activar: "+str(e))
 st.caption("El catálogo se vuelve a consultar al caducar la caché de 5 minutos. No se copian productos a Supabase.")
@@ -102,6 +119,7 @@ if st.button("Actualizar ahora"):
     read_file.clear()
     catalog.clear()
     st.success("Caché borrada. La próxima consulta leerá los datos actualizados.")
+    _equipos()
 st.divider()
 if st.button("Desconectar cuenta de Google"):
     try:

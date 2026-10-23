@@ -145,7 +145,16 @@ La app del verificador sin internet está en la carpeta `docs/` y se publica con
 4. En cada equipo, abre ese enlace **una vez con internet**. Descarga los precios y queda vinculado.
    En Chrome para Android: menú ⋮ > **Instalar aplicación**.
 5. Desde ese momento, activar o publicar el inventario activo, o cambiar el logo, el QR o la apariencia,
-   actualiza solo a los equipos. Revisan cada 5 minutos con internet y descargan el catálogo solo si cambió.
+   actualiza solo a los equipos. Revisan cada minuto con internet y descargan el catálogo solo si cambió.
+   La fuente puede ser el Excel o Google Drive / Sheets (SQL Server todavía no).
+
+6. Ejecuta `sql/MIGRACION_005_estado_equipos.sql`: cada equipo reporta (con internet) que está encendido y
+   qué precios tiene; se ve en **Equipos sin internet > Estado de los equipos**. El nombre de cada equipo
+   se pone desde su menú ✕.
+7. Si cambias precios directamente en Google, crea el secreto `STREAMLIT_SECRETS` en GitHub
+   (Settings > Secrets and variables > Actions) con el contenido de los Secrets de Streamlit:
+   `.github/workflows/publicar-equipos.yml` revisa cada 30 minutos y publica solo si cambió.
+8. Para dejarlo fijo como quiosco con Fully Kiosk Browser, sigue la guía de la misma página.
 
 Al cambiar cualquier archivo de `docs/`, sube `VERSION` en `docs/sw.js`: así los equipos instalan la app nueva.
 La carpeta `pwa_offline/` es el prototipo anterior y ya no se usa: puedes borrarla.

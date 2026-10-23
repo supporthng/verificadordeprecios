@@ -6,7 +6,7 @@ PÚBLICO 'equipos' de Supabase Storage:
 
     estado.json               pequeño (~1 KB): versión vigente, apariencia, logo, QR,
                               verificación de la clave de salida. Los equipos lo
-                              revisan cada pocos minutos cuando hay internet.
+                              revisan cada minuto cuando hay internet.
     catalogo-<version>.json   el catálogo completo. Su nombre cambia con el contenido,
                               así que un equipo lo descarga UNA vez por cambio de precios.
     logo.png / qr.png         copias públicas del logo y del QR.
@@ -99,7 +99,47 @@ def estado():
         return None
 
 
+def fuente_activa(base=None, headers=None):
+    """'local' (Excel / inventario), 'google' o 'external' (SQL Server)."""
+    if base is None:
+        base, headers = _conexion()
+    r = requests.get(f"{base}/rest/v1/price_source_settings", headers=headers, timeout=20,
+                     params={"id": "eq.1", "select": "source_type"})
+    if not r.ok:
+        raise RuntimeError(f"Supabase {r.status_code}: {r.text[:300]}")
+    return (r.json() or [{"source_type": "local"}])[0]["source_type"]
+
+
+def _catalogo_google():
+    """Catálogo desde el archivo de Google Drive / Sheets configurado."""
+    import google_oauth_source as g
+    cfg = g.config()
+    if not cfg or not cfg.get("file_id"):
+        raise RuntimeError("Configura el archivo de Google en Conexión Google Drive / Sheets.")
+    g.read_file.clear()   # leer SIEMPRE la versión actual del archivo
+    g.catalog.clear()
+    df = g.catalog(cfg["kind"], cfg["file_id"], cfg.get("sheet_name") or "",
+                   cfg["code_column"], cfg["name_column"], cfg["price_column"])
+    filas = sorted([str(b), str(n), round(float(p), 2)]
+                   for b, n, p in df[["barcode", "name", "price"]].itertuples(index=False))
+    nombre = "Google " + ("Sheets" if cfg["kind"] == "sheets" else "Drive")
+    if cfg.get("sheet_name"):
+        nombre += " · " + str(cfg["sheet_name"])
+    return nombre, filas
+
+
 def _catalogo_activo(base, headers):
+    """(nombre, [[código, nombre, precio], ...]) de la fuente activa: Excel o Google."""
+    fuente = fuente_activa(base, headers)
+    if fuente == "google":
+        return _catalogo_google()
+    if fuente == "external":
+        raise RuntimeError("La fuente activa es SQL Server: los equipos sin internet todavía no pueden "
+                           "recibir sus precios. Usa el inventario de Excel o Google.")
+    return _catalogo_local(base, headers)
+
+
+def _catalogo_local(base, headers):
     """(nombre del inventario, [[código, nombre, precio], ...]) del inventario activo."""
     inv = requests.get(f"{base}/rest/v1/price_inventories", headers=headers, timeout=20,
                        params={"select": "id,name", "is_active": "eq.true", "limit": 1})
@@ -251,7 +291,9 @@ def publicar(apariencia_actual=None):
         "catalogo": archivo,
         "inventario": inventario,
         "productos": len(productos),
-        "publicado": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        # Fecha del último CAMBIO de precios (no de la última revisión).
+        "publicado": (anterior.get("publicado") if anterior.get("version") == version
+                      else datetime.now(timezone.utc).isoformat(timespec="seconds")),
         "apariencia": dict(apariencia_actual),
         "logo": imagenes["logo"],
         "qr": imagenes["qr"],
@@ -261,6 +303,8 @@ def publicar(apariencia_actual=None):
         # La clave pública solo permite AGREGAR filas 'offline-*' (ver MIGRACION_004).
         "registro": {"url": base, "clave": clave_publica()} if clave_publica() else None,
     }
+    if publicado == anterior:
+        return anterior          # nada cambió: no se reescribe nada
     _subir(base, headers, "estado.json", json.dumps(publicado, ensure_ascii=False).encode("utf-8"),
            "application/json", "no-cache")
     _borrar_catalogos_viejos(base, headers, {archivo, anterior.get("catalogo")})
@@ -276,3 +320,22 @@ def actualizar_si_publicado():
         return True, publicar()
     except Exception as exc:  # nunca debe romper la página que llamó
         return False, str(exc)
+
+
+# ---------------------------------------------------------------- estado de los equipos
+def equipos():
+    """Equipos que reportaron (tabla device_status, MIGRACION_005), más recientes primero."""
+    base, headers = _conexion()
+    r = requests.get(f"{base}/rest/v1/device_status", headers=headers, timeout=20,
+                     params={"select": "*", "order": "ultima_vez.desc", "limit": 200})
+    if not r.ok:
+        raise RuntimeError(f"Supabase {r.status_code}: {r.text[:300]}")
+    return r.json()
+
+
+def olvidar_equipo(device_id):
+    base, headers = _conexion()
+    r = requests.delete(f"{base}/rest/v1/device_status", headers=headers, timeout=20,
+                        params={"device_id": f"eq.{device_id}"})
+    if not r.ok:
+        raise RuntimeError(f"Supabase {r.status_code}: {r.text[:300]}")

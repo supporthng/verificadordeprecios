@@ -1,13 +1,13 @@
 /* Verificador de precios sin internet.
    - Guarda una copia del catálogo en el equipo y consulta SIEMPRE esa copia (instantáneo).
-   - Cuando hay internet revisa estado.json cada 5 minutos y descarga el catálogo SOLO si cambió.
+   - Cuando hay internet revisa estado.json cada minuto y descarga el catálogo SOLO si cambió.
    - Anota cada consulta y la sube al Registro de consultas cuando vuelve la conexión.
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.0.4";
+  const APP_VERSION = "1.2.0";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
-  const REVISAR_CADA = 5 * 60 * 1000;      // revisar si hay precios nuevos
+  const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
   const MAX_REGISTRO = 20000, LOTE_REGISTRO = 200, DIAS_REGISTRO = 55;
   const INTENTOS_CLAVE = 5, BLOQUEO_CLAVE = 60 * 1000;
@@ -119,7 +119,7 @@
     const el = $("estado-red");
     if (!estado) { el.textContent = ""; el.hidden = true; return; }
     el.hidden = false;
-    const reciente = Date.now() - ultimaRevisionOk < 2 * REVISAR_CADA + 60000;
+    const reciente = Date.now() - ultimaRevisionOk < 5 * 60 * 1000;
     el.style.setProperty("--punto", reciente ? "#16a34a" : "#94a3b8");
     el.textContent = reciente ? "Precios al día" : "Sin conexión · precios del " + fecha(estado.publicado).split(",")[0];
   }
@@ -251,6 +251,7 @@
       if (nuevoCatalogo) productos = new Map(nuevoCatalogo.map(function (p) { return [String(p[0]), p]; }));
       Object.keys(nuevasImagenes).forEach(function (k) { ponerImagen(k, nuevasImagenes[k]); });
       ultimaRevisionOk = Date.now();
+      reportar();
       ultimoError = "";
       aplicarApariencia();
       if (!$("aviso").hidden) mostrarEspera(false);
@@ -266,6 +267,48 @@
       indicador();
     }
   }
+
+  /* ------------------------------------------------------------ estado del equipo */
+  let equipo = { id: "", nombre: "" };
+  function nuevoId() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  }
+  async function cargarEquipo(guardado) {
+    equipo.id = guardado.equipo_id || local("equipo_id") || nuevoId();
+    equipo.nombre = guardado.equipo_nombre || local("equipo_nombre") || "";
+    local("equipo_id", equipo.id);
+    if (!guardado.equipo_id) await BD.guardar({ equipo_id: equipo.id }).catch(function () {});
+  }
+  function nombreEquipo() { return equipo.nombre || "Verificador " + equipo.id.slice(0, 4).toUpperCase(); }
+
+  /* Avisa a la app en línea que este equipo está encendido y qué precios tiene. */
+  let ultimoReporte = 0;
+  async function reportar(ahora) {
+    const destino = estado && estado.registro;
+    if (!destino || !destino.url || !destino.clave || !equipo.id) return;
+    if (!ahora && Date.now() - ultimoReporte < 5 * 60 * 1000) return;   // basta cada 5 minutos
+    ultimoReporte = Date.now();
+    try {
+      const cabeceras = { "apikey": destino.clave, "Content-Type": "application/json" };
+      if (String(destino.clave).indexOf("eyJ") === 0) cabeceras["Authorization"] = "Bearer " + destino.clave;
+      const pendientesN = await BD.contar().catch(function () { return 0; });
+      await conTiempo(destino.url + "/rest/v1/rpc/equipo_reporta", { method: "POST", headers: cabeceras,
+        body: JSON.stringify({ p_id: equipo.id, p_nombre: nombreEquipo(), p_tipo: "verificador",
+          p_app: APP_VERSION, p_precios: estado.version, p_productos: productos.size,
+          p_pendientes: pendientesN, p_navegador: navigator.userAgent.slice(0, 160) }) }, 15000);
+    } catch (e) { /* sin internet o sin la migración 005: no afecta al verificador */ }
+  }
+
+  $("form-nombre").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    equipo.nombre = $("nombre-equipo").value.trim().slice(0, 40);
+    local("equipo_nombre", equipo.nombre);
+    await BD.guardar({ equipo_nombre: equipo.nombre || null }).catch(function () {});
+    $("menu-mensaje").textContent = "✅ Nombre guardado: " + nombreEquipo();
+    reportar(true);
+  });
 
   /* ------------------------------------------------------------ clave y menú */
   function hexABytes(h) { return new Uint8Array(h.match(/../g).map(function (x) { return parseInt(x, 16); })); }
@@ -286,6 +329,7 @@
     $("menu-mensaje").textContent = "";
     $("m-desvincular").dataset.confirmar = "";
     $("m-desvincular").textContent = "🔗 Desvincular este equipo";
+    $("nombre-equipo").value = equipo.nombre;
     $("dlg-menu").showModal();
     reiniciarCierreMenu();
   }
@@ -310,6 +354,7 @@
       ["Precios publicados", estado ? fecha(estado.publicado) : "—"],
       ["Última revisión", ultimaRevisionOk ? fecha(ultimaRevisionOk) : "sin conexión desde que se abrió"],
       ["Consultas por subir", String(pendientesN)],
+      ["Equipo", nombreEquipo()],
       ["App", "versión " + APP_VERSION],
     ];
     if (ultimoError) filas.push(["Último aviso", ultimoError]);
@@ -445,8 +490,10 @@
     const params = new URLSearchParams(location.search);
     const desdeEnlace = validarOrigen(params.get("estado") ? location.href : "");
     let guardado = {};
-    try { guardado = await BD.leer(["origen", "estado", "catalogo", "img_logo", "img_qr", "revisado"]); }
+    try { guardado = await BD.leer(["origen", "estado", "catalogo", "img_logo", "img_qr", "revisado",
+                                    "equipo_id", "equipo_nombre"]); }
     catch (e) { guardado = {}; }
+    await cargarEquipo(guardado);
     origen = desdeEnlace || guardado.origen || validarOrigen(local("origen")) ||
              validarOrigen((self.CONFIG_EQUIPOS || {}).estado);
     if (desdeEnlace) {
@@ -473,13 +520,13 @@
       mostrarAviso("⏳", "Conectando…", "Buscando los precios publicados.", false);
       await revisar(true);
     }
-    setInterval(function () { revisar(false); }, REVISAR_CADA + Math.floor(Math.random() * 30000));
+    setInterval(function () { revisar(false); }, REVISAR_CADA + Math.floor(Math.random() * 10000));
     setInterval(indicador, 60000);
     enfocar();
   }
 
   /* Para pruebas automáticas. */
   window.__verificador = { buscar: buscar, revisar: revisar, estado: function () { return estado; },
-                           cantidad: function () { return productos.size; }, subirRegistro: subirRegistro };
+                           cantidad: function () { return productos.size; }, equipo: function () { return equipo; }, subirRegistro: subirRegistro };
   iniciar();
 })();
