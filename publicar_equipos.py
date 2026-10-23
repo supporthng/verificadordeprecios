@@ -134,9 +134,36 @@ def _catalogo_activo(base, headers):
     if fuente == "google":
         return _catalogo_google()
     if fuente == "external":
-        raise RuntimeError("La fuente activa es SQL Server: los equipos sin internet todavía no pueden "
-                           "recibir sus precios. Usa el inventario de Excel o Google.")
+        return _catalogo_externo(base, headers)
     return _catalogo_local(base, headers)
+
+
+def catalogo_externo_info():
+    """Fecha y tamaño del último catálogo que envió el conector de Windows, o None."""
+    try:
+        base, headers = _conexion()
+        datos = _leer_privado(base, headers, f"{PRIVADO}/catalogo-externo.json")
+        if not datos:
+            return None
+        d = json.loads(datos)
+        return {"generado": d.get("generado"), "productos": len(d.get("productos") or []),
+                "inventario": d.get("inventario")}
+    except (RuntimeError, ValueError, requests.RequestException):
+        return None
+
+
+def _catalogo_externo(base, headers):
+    """SQL Server: el conector de Windows envía la tabla completa cada pocos minutos
+    (logo-negocio/catalogo-externo.json). La app no llega a la red del negocio."""
+    datos = _leer_privado(base, headers, f"{PRIVADO}/catalogo-externo.json")
+    if not datos:
+        raise RuntimeError("El conector de Windows todavía no envió el catálogo de SQL Server. Actualízalo a "
+                           "la versión 5 y déjalo encendido: lo envía cada 15 minutos.")
+    d = json.loads(datos)
+    productos = d.get("productos") or []
+    if not productos:
+        raise RuntimeError("El catálogo que envió el conector está vacío.")
+    return d.get("inventario") or "SQL Server", productos
 
 
 def _catalogo_local(base, headers):

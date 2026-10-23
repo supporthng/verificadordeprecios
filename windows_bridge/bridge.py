@@ -1,4 +1,6 @@
 """Puente de descubrimiento LAN, sin credenciales SQL ni escritura en facturación."""
+import hashlib
+import json
 import asyncio
 import html
 import ipaddress
@@ -47,6 +49,17 @@ def load_env():
 
 
 load_env()
+
+# Formas equivalentes de un código (UPC-E/UPC-A/EAN-13/sin ceros): el mismo módulo de la app.
+try:
+    from codigos_barras import variantes_codigo
+except ModuleNotFoundError:   # ejecutando bridge.py desde su carpeta, sin compilar
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from codigos_barras import variantes_codigo
+
+# Cada cuántos minutos se envía el catálogo completo a los equipos sin internet
+# (solo si la fuente activa es SQL Server y solo si cambió). 0 = no enviar.
+SYNC_MINUTES = max(0, int(os.getenv('SYNC_MINUTES', '15') or 0))
 URL = os.getenv('SUPABASE_URL', '').rstrip('/')
 KEY = (os.getenv('SUPABASE_SECRET_KEY', '') or os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')).strip()
 PASSWORD = os.getenv('BRIDGE_PASSWORD', '')
@@ -76,7 +89,7 @@ try:
 except OSError:
     # El conector sigue funcionando si no tiene permiso para crear el registro.
     pass
-logger.info('Conector v4 iniciado; pid=%s; origen de configuración: %s; registro=%s', os.getpid(), CONFIG_SOURCE, LOG_FILE)
+logger.info('Conector v5 iniciado; pid=%s; origen de configuración: %s; registro=%s', os.getpid(), CONFIG_SOURCE, LOG_FILE)
 SESSIONS = set()
 DB_RESULTS = {}  # session-token -> (request id, accessible database names)
 WIZARD_REQUESTS = {}  # db request id -> discovery request id
@@ -124,7 +137,8 @@ def page(body):
 
 @app.get('/health')
 def health():
-    return {'ok': True, 'version': 'asistente-universal-v4',
+    return {'ok': True, 'version': 'asistente-universal-v5',
+            'catalogo_equipos': {'cada_minutos': SYNC_MINUTES, **SYNC_LAST},
             'worker_age_seconds': (round(time.monotonic() - WORKER_LAST_POLL, 1)
                                    if WORKER_LAST_POLL else None),
             'worker_job_count': WORKER_JOB_COUNT,
@@ -665,9 +679,12 @@ def _execute_price(job):
     barcode = str(job['barcode']).strip()
     if not barcode or len(barcode) > 256:
         raise ValueError('Código de barras inválido')
-    # Los identificadores se escapan y el código de barras siempre es un parámetro.
-    sql = (f'SELECT TOP (1) {code}, {description}, {price} '
-           f'FROM {schema}.{table} WHERE {code} = ?')
+    # Todas las formas equivalentes (UPC-E impreso, UPC-A, EAN-13, sin ceros) en UNA consulta.
+    # Los identificadores se escapan y los códigos siempre van como parámetros.
+    formas = variantes_codigo(barcode)[:12]
+    marcas = ','.join('?' * len(formas))
+    sql = (f'SELECT TOP ({len(formas)}) {code}, {description}, {price} '
+           f'FROM {schema}.{table} WHERE {code} IN ({marcas})')
     logger.info('Consulta SQL: preparando conexión (sin mostrar credenciales)')
     connect_started = time.monotonic()
     with _external_connection(config['host'], config['port'], config['database']) as cn:
@@ -677,8 +694,19 @@ def _execute_price(job):
         # El tiempo de conexión se configura en _external_connection.
         logger.info('Consulta SQL: ejecutando SELECT parametrizado')
         select_started = time.monotonic()
-        cur.execute(sql, barcode)
-        row = cur.fetchone()
+        try:
+            cur.execute(sql, *formas)
+            filas = cur.fetchall()
+        except Exception:
+            # Columna numérica y una forma no numérica: volver a la búsqueda exacta.
+            cur.execute(f'SELECT TOP (1) {code}, {description}, {price} FROM {schema}.{table} WHERE {code} = ?',
+                        barcode)
+            filas = cur.fetchall()
+        # Gana la forma más parecida a la leída (la exacta primero).
+        def _orden(r):
+            texto = str(r[0]).strip()
+            return formas.index(texto) if texto in formas else len(formas)
+        row = min(filas, key=_orden) if filas else None
         logger.info('Consulta SQL: SELECT finalizado en %.3f s; encontrado=%s; total=%.3f s',
                     time.monotonic() - select_started, row is not None,
                     time.monotonic() - price_started)
@@ -746,6 +774,132 @@ def _execute_catalog(job):
                      'price': str(r[2]) if r[2] is not None else None}
                     for r in cur.fetchall()]
     return {'total': total, 'products': products, 'page': page, 'page_size': size}
+
+# ---------------------------------------------------------------- catálogo para los equipos
+SYNC_LAST = {'cuando': None, 'productos': None, 'version': None, 'error': None}
+
+
+def _storage(method, ruta, **kwargs):
+    auth = {'apikey': KEY}
+    if KEY.startswith('eyJ'):
+        auth['Authorization'] = f'Bearer {KEY}'
+    headers = {**auth, **kwargs.pop('headers', {})}
+    return requests.request(method, f'{URL}/storage/v1/object/{ruta}', headers=headers,
+                            timeout=kwargs.pop('timeout', 60), **kwargs)
+
+
+def _leer_catalogo_sql(cfg):
+    """Tabla completa de precios: [[código, nombre, precio], ...] ordenada por código."""
+    schema = _sql_identifier(cfg.get('schema_name') or 'dbo')
+    table = _sql_identifier(cfg['table_name'])
+    code = _sql_identifier(cfg['code_column'])
+    description = _sql_identifier(cfg['description_column'])
+    price = _sql_identifier(cfg['price_column'])
+    filas, vistos = [], set()
+    with _external_connection(cfg['host'], cfg['port'], cfg['database']) as cn:
+        cur = cn.cursor()
+        cur.execute(f'SELECT {code}, {description}, {price} FROM {schema}.{table} '
+                    f'WHERE {code} IS NOT NULL AND {price} IS NOT NULL')
+        while True:
+            lote = cur.fetchmany(5000)
+            if not lote:
+                break
+            for c, n, p in lote:
+                c = str(c).strip()
+                if c.endswith('.0') and c[:-2].isdigit():
+                    c = c[:-2]
+                try:
+                    precio = round(float(p), 2)
+                except (TypeError, ValueError):
+                    continue
+                if not c or c in vistos or precio < 0:
+                    continue
+                vistos.add(c)
+                filas.append([c, str(n or '').strip(), precio])
+            if len(filas) > 300_000:
+                raise ValueError('La tabla tiene demasiados productos para los equipos (más de 300.000)')
+    filas.sort()
+    return filas
+
+
+def _sincronizar_catalogo():
+    """Si SQL Server es la fuente activa: leer la tabla y, si cambió, publicarla para los equipos.
+    Misma versión (huella) que calcula la app al publicar, así nunca se descarga dos veces."""
+    fuente = supabase('GET', 'price_source_settings', params={'id': 'eq.1', 'select': 'source_type'})
+    if not fuente or fuente[0].get('source_type') != 'external':
+        return 'fuente activa no es SQL Server'
+    cfgs = supabase('GET', 'external_price_sources', params={
+        'enabled': 'eq.true', 'limit': '2',
+        'select': 'id,engine,host,port,database,schema_name,table_name,code_column,description_column,price_column'})
+    if len(cfgs) != 1 or cfgs[0]['engine'] != 'SQL Server':
+        raise ValueError('Debe haber exactamente una configuración de SQL Server habilitada')
+    cfg = cfgs[0]
+    inicio = time.monotonic()
+    productos = _leer_catalogo_sql(cfg)
+    inventario = f"SQL Server · {cfg['database']}.{cfg.get('schema_name') or 'dbo'}.{cfg['table_name']}"
+    contenido = json.dumps(productos, ensure_ascii=False, separators=(',', ':'))
+    version = hashlib.sha256((inventario + '\n' + contenido).encode('utf-8')).hexdigest()[:16]
+    ahora = datetime.now(timezone.utc).isoformat(timespec='seconds')
+    # Copia privada para la app (la usa al pulsar "Publicar" con SQL Server activo).
+    privado = json.dumps({'inventario': inventario, 'generado': ahora, 'version': version,
+                          'productos': productos}, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    r = _storage('POST', 'logo-negocio/catalogo-externo.json', data=privado,
+                 headers={'Content-Type': 'application/json', 'x-upsert': 'true'})
+    if not r.ok:
+        raise RuntimeError(f'No se pudo guardar el catálogo (HTTP {r.status_code})')
+    SYNC_LAST.update(cuando=ahora, productos=len(productos), version=version, error=None)
+    # Equipos: solo si ya se publicó alguna vez (estado.json existe) y la versión cambió.
+    e = requests.get(f'{URL}/storage/v1/object/public/equipos/estado.json',
+                     params={'t': str(time.time())}, timeout=15)
+    if e.status_code != 200:
+        return f'{len(productos)} productos leídos; los equipos aún no están en uso'
+    estado = e.json()
+    if estado.get('version') == version:
+        return f'{len(productos)} productos; sin cambios ({time.monotonic() - inicio:.1f} s)'
+    archivo = f'catalogo-{version}.json'
+    catalogo = ('{"formato":1,"version":"%s","inventario":%s,"productos":%s}'
+                % (version, json.dumps(inventario, ensure_ascii=False), contenido)).encode('utf-8')
+    r = _storage('POST', f'equipos/{archivo}', data=catalogo,
+                 headers={'Content-Type': 'application/json', 'x-upsert': 'true',
+                          'cache-control': 'max-age=31536000'}, timeout=180)
+    if not r.ok:
+        raise RuntimeError(f'No se pudo subir el catálogo para los equipos (HTTP {r.status_code})')
+    anterior = estado.get('catalogo')
+    estado.update(version=version, catalogo=archivo, inventario=inventario,
+                  productos=len(productos), publicado=ahora)
+    r = _storage('POST', 'equipos/estado.json', data=json.dumps(estado, ensure_ascii=False).encode('utf-8'),
+                 headers={'Content-Type': 'application/json', 'x-upsert': 'true', 'cache-control': 'no-cache'})
+    if not r.ok:
+        raise RuntimeError(f'No se pudo actualizar estado.json (HTTP {r.status_code})')
+    # Borrar catálogos viejos (se conservan el nuevo y el anterior).
+    try:
+        lista = requests.post(f'{URL}/storage/v1/object/list/equipos', timeout=20,
+                              headers={'apikey': KEY, **({'Authorization': f'Bearer {KEY}'} if KEY.startswith('eyJ') else {}),
+                                       'Content-Type': 'application/json'},
+                              json={'prefix': '', 'limit': 1000}).json()
+        viejos = [o['name'] for o in lista if o.get('name', '').startswith('catalogo-')
+                  and o['name'] not in (archivo, anterior)]
+        if viejos:
+            _storage('DELETE', 'equipos', json={'prefixes': viejos}, headers={'Content-Type': 'application/json'})
+    except Exception:
+        pass
+    return f'{len(productos)} productos publicados para los equipos ({time.monotonic() - inicio:.1f} s)'
+
+
+def _sync_worker():
+    if not SYNC_MINUTES:
+        logger.info('Sincronización de catálogo para equipos desactivada (SYNC_MINUTES=0)')
+        return
+    time.sleep(20)   # dejar que el conector termine de iniciar
+    while True:
+        try:
+            logger.info('Catálogo para equipos: %s', _sincronizar_catalogo())
+        except Exception as exc:
+            SYNC_LAST['error'] = type(exc).__name__ + ': ' + str(exc)[:200]
+            logger.error('Catálogo para equipos: %s\n%s', type(exc).__name__,
+                         ''.join(traceback.format_tb(exc.__traceback__)))
+        time.sleep(SYNC_MINUTES * 60)
+
 
 def _process_external_queue(table, select, execute):
     global WORKER_LAST_JOB, WORKER_LAST_ERROR, WORKER_JOB_COUNT
@@ -822,7 +976,8 @@ def _external_worker():
 def _start_external_worker():
     threading.Thread(target=_price_worker, name='price-jobs', daemon=True).start()
     threading.Thread(target=_external_worker, name='external-jobs', daemon=True).start()
-    logger.info('Procesadores de precios y catálogos externos iniciados')
+    threading.Thread(target=_sync_worker, name='catalogo-equipos', daemon=True).start()
+    logger.info('Procesadores de precios, catálogos externos y catálogo para equipos iniciados')
 
 
 

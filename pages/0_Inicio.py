@@ -65,8 +65,17 @@ def resumen():
     except Exception:
         d["equipos"] = None
     if d["fuente"] == "external" and d["estado"]:
-        d["avisos"].append(("warning", "La fuente activa es SQL Server: los equipos sin internet siguen "
-                                       "con los últimos precios que recibieron."))
+        info = pe.catalogo_externo_info()
+        try:
+            atraso = (datetime.now(timezone.utc) - datetime.fromisoformat(info["generado"])).total_seconds() / 60
+        except (TypeError, ValueError, KeyError):
+            atraso = None
+        if atraso is None:
+            d["avisos"].append(("warning", "SQL Server: el conector de Windows todavía no envió el catálogo a los "
+                                           "equipos. Actualízalo a la versión 5."))
+        elif atraso > 60:
+            d["avisos"].append(("warning", f"SQL Server: el conector no envía el catálogo desde hace "
+                                           f"{int(atraso // 60)} h. Revisa que la PC del conector esté encendida."))
     if d["estado"] and not d["estado"].get("salida"):
         d["avisos"].append(("warning", "Falta la clave de salida del verificador (Equipos sin internet)."))
     return d

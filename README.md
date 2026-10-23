@@ -160,3 +160,12 @@ Al cambiar cualquier archivo de `docs/`, sube la versión en los TRES lugares: `
 `VERSION` en `docs/sw.js` y `docs/version.txt`. Los equipos ven `version.txt` y se actualizan solos
 (si no lo logran en 2 minutos, se reinstalan sin borrar los precios).
 La carpeta `pwa_offline/` es el prototipo anterior y ya no se usa: puedes borrarla.
+
+## Conector de Windows (SQL Server) — versión 5
+
+- Busca cada código con **todas sus formas equivalentes** (UPC-E impreso, UPC-A, EAN-13, sin ceros),
+  igual que el Excel y Google (`codigos_barras.py`, compartido con la app).
+- Si la fuente activa es **SQL Server**, cada `SYNC_MINUTES` minutos (15 por defecto, en `bridge.env`)
+  lee la tabla completa y la publica para los **equipos sin internet**, solo si cambió.
+- Actualizar: GitHub > **Actions** > *Construir conector Windows* > descargar el artefacto e instalarlo
+  en la PC de la tienda (reemplaza al anterior). Estado: `http://localhost:8765/health`.

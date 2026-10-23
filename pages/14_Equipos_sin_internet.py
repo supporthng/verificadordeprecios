@@ -53,8 +53,21 @@ except Exception:
 NOMBRE_FUENTE = {"local": "Excel (Inventarios)", "google": "Google Drive / Sheets",
                  "external": "SQL Server"}
 if fuente == "external":
-    st.error("La fuente activa es **SQL Server**: los equipos sin internet no pueden recibir esos precios y "
-             "siguen con los últimos que tienen. Usa el Excel o Google, o pide la mejora del conector.")
+    info = pe.catalogo_externo_info()
+    if not info:
+        st.warning("La fuente activa es **SQL Server**. El conector de Windows envía el catálogo a los equipos "
+                   "cada 15 minutos, pero todavía no lo ha enviado: actualiza el conector a la **versión 5** "
+                   "y déjalo encendido en la PC de la tienda.")
+    else:
+        try:
+            minutos = (datetime.now(ZONA) - datetime.fromisoformat(info["generado"]).astimezone(ZONA)).total_seconds() / 60
+        except (TypeError, ValueError):
+            minutos = 1e9
+        texto = (f"Fuente de precios para los equipos: **SQL Server** ({info['productos']:,} productos). "
+                 f"El conector envió el catálogo por última vez el **{_fecha(info['generado'])}** y lo reenvía "
+                 "cada 15 minutos si cambia.")
+        (st.warning if minutos > 60 else st.caption)(
+            texto + (" ⚠️ Hace más de una hora: revisa que la PC con el conector esté encendida." if minutos > 60 else ""))
 else:
     st.caption(f"Fuente de precios para los equipos: **{NOMBRE_FUENTE.get(fuente, fuente)}**. "
                "Los cambios hechos en la app (inventario, Google, logo, QR, apariencia) se envían solos. "
