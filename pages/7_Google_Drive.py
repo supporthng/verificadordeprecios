@@ -77,7 +77,15 @@ if not cfg.get("refresh_token_encrypted"):
     st.info("Autoriza el acceso en Google. Si debes iniciar sesión nuevamente en el verificador al regresar, hazlo como administrador.")
     st.stop()
 
-st.success("Cuenta de Google conectada.")
+try:
+    from google_oauth_source import cuenta_conectada
+    _cuenta = cuenta_conectada(str(cfg.get("refresh_token_encrypted", ""))[-16:])
+    _quien = " · ".join(x for x in (_cuenta["nombre"], _cuenta["correo"]) if x) or "cuenta sin nombre"
+    st.success(f"Cuenta de Google conectada: **{_quien}**")
+    st.caption("Para usar otra cuenta: **Desconectar cuenta de Google** (abajo) y vuelve a conectar.")
+except Exception as _exc:
+    st.success("Cuenta de Google conectada.")
+    st.caption("No se pudo leer el nombre de la cuenta: " + str(_exc)[:150])
 kind=st.radio("Formato del archivo",["Excel (.xlsx) en Google Drive","Google Sheets"],
               index=1 if cfg.get("kind")=="sheets" else 0)
 kind="sheets" if kind=="Google Sheets" else "excel"
@@ -114,7 +122,7 @@ if preview and preview[:3]==(kind,fid,sheet):
             _equipos()
         except Exception as e:
             st.error("No se pudo activar: "+str(e))
-st.caption("El catálogo se vuelve a consultar al caducar la caché de 5 minutos. No se copian productos a Supabase.")
+st.caption("La app vuelve a leer el archivo de Google cada 30 segundos. No se copian productos a Supabase.")
 if st.button("Actualizar ahora"):
     read_file.clear()
     catalog.clear()

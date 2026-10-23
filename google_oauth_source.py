@@ -148,6 +148,15 @@ def google_get(url,params=None):
     r.raise_for_status()
     return r
 
+@st.cache_data(ttl=600, show_spinner=False)
+def cuenta_conectada(_marca=None):
+    """Nombre y correo de la cuenta de Google conectada (Drive 'about', con el permiso de solo lectura).
+    _marca cambia cuando se reconecta, para no mostrar la cuenta anterior."""
+    datos = google_get("https://www.googleapis.com/drive/v3/about",
+                       {"fields": "user(displayName,emailAddress)"}).json().get("user", {})
+    return {"nombre": datos.get("displayName") or "", "correo": datos.get("emailAddress") or ""}
+
+
 def file_id(raw):
     raw=str(raw).strip()
     m=re.search(r"/(?:file/d|spreadsheets/d)/([\w-]+)",raw)

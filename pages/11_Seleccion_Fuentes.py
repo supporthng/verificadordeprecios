@@ -72,7 +72,12 @@ if selected == 'google':
             google_listo = all(cfg.get(k) for k in ('refresh_token_encrypted', 'kind', 'file_id',
                                                     'code_column', 'name_column', 'price_column'))
             if google_listo:
-                st.success('Archivo de Google configurado.')
+                try:
+                    from google_oauth_source import cuenta_conectada
+                    _c = cuenta_conectada(str(cfg.get('refresh_token_encrypted', ''))[-16:])
+                    st.success('Archivo de Google configurado · cuenta: ' + (_c['correo'] or _c['nombre'] or '—'))
+                except Exception:
+                    st.success('Archivo de Google configurado.')
             else:
                 st.warning('Conecta la cuenta y elige archivo y columnas en Precios > Google Drive / Sheets.')
     except Exception as exc:
