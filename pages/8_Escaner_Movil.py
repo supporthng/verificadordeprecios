@@ -101,6 +101,21 @@ def consultar(code, canal='movil'):
         return
     code=str(code).strip()
     if not code:return
+    # Protección del enlace público (QR): códigos razonables y límite de consultas.
+    from limites import codigo_valido, permitir_consulta
+    motivo=''
+    if not codigo_valido(code):
+        motivo='El código leído no es válido. Vuelve a escanearlo.'
+    elif st.session_state.get('mobile_public_access'):
+        permitido,motivo=permitir_consulta()
+    if motivo:
+        st.session_state.movil_mostrar_resultado=True
+        st.session_state.movil_ultimo=code[:64]
+        st.session_state.movil_producto=None
+        st.session_state.movil_job=None
+        st.session_state.movil_error=motivo
+        st.session_state.movil_resultado_desde=time.monotonic()   # vuelve solo al lector
+        return
     st.session_state.movil_mostrar_resultado=True
     st.session_state.movil_ultimo=code
     st.session_state.movil_producto=None
