@@ -286,6 +286,25 @@ with pestana_fotos:
     m3.metric("Sin foto en internet", f"{len(sin_foto):,}")
     m4.metric("Por buscar", f"{len(indice['pendientes']):,}")
 
+    if fp._clave_brave():
+        st.success("🔎 **Búsqueda ampliada activa:** si las bases de productos no tienen una foto de catálogo, "
+                   "se busca sola en internet por el nombre del producto (buscador de Brave).")
+    else:
+        with st.expander("🔎 Activar la búsqueda ampliada (recomendado: encuentra muchas más fotos)"):
+            st.markdown(
+                "Las bases gratuitas de productos tienen pocas fotos de catálogo. Con una clave del buscador "
+                "de **Brave**, el sistema busca la foto en todo internet por el nombre del producto, solo, sin "
+                "que tengas que hacer nada.\n\n"
+                "1. Entra a **api-dashboard.search.brave.com**, crea la cuenta y elige el plan **Search** "
+                "(incluye **5 US$ de crédito gratis cada mes ≈ 1.000 búsquedas**; pide tarjeta, pero no cobra "
+                "mientras no pases ese crédito).\n"
+                "2. En **API Keys**, copia la clave.\n"
+                "3. En Streamlit: **Manage app → Settings → Secrets**, agrega una línea:\n"
+                "   `BRAVE_SEARCH_KEY = \"tu-clave\"` y guarda.\n"
+                "4. En GitHub: **Settings → Secrets → Actions → STREAMLIT_SECRETS**, agrega la misma línea "
+                "(para la búsqueda automática de los equipos sin internet).\n\n"
+                "Cada producto se busca una sola vez, así que 1.000 búsquedas al mes alcanzan de sobra.")
+
     if st.button("🔎 Buscar fotos ahora", type="primary", key="buscar_fotos",
                  help="Busca las fotos de los productos consultados que todavía no tienen. "
                       "Igual se hace sola cada 30 minutos."):
@@ -317,9 +336,9 @@ with pestana_fotos:
                "en la tienda o con la mano se descartan solas.")
     st.caption("Se buscan solas: al consultar en la Consulta en línea (al instante) y cada 30 minutos para "
                "lo consultado en los equipos sin internet. Los equipos descargan las fotos nuevas solos. "
-               "Fuentes: UPCitemdb (fotos de tiendas en línea, 100 búsquedas gratis al día) y Open Food Facts "
-               "(licencia libre CC BY-SA). Muchos productos locales "
-               "no aparecen en internet: súbeles la foto a mano.")
+               "Fuentes: UPCitemdb (fotos de tiendas en línea, 100 búsquedas gratis al día), Open Food Facts "
+               "(licencia libre CC BY-SA) y, si la activas, la búsqueda ampliada de Brave. A los productos que "
+               "no estén en internet, súbeles la foto a mano.")
 
     with st.expander("🧪 Probar con un código", expanded=not fotos):
         st.caption("Busca ahora mismo la foto de un código en internet y muestra qué respondió cada base.")
