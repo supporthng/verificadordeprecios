@@ -31,7 +31,7 @@ BUCKET = "equipos"
 PRIVADO = "logo-negocio"
 CLAVE_SALIDA = f"{PRIVADO}/clave-salida.json"
 ITERACIONES = 210_000          # PBKDF2-SHA256: también lo calcula el navegador (WebCrypto)
-LARGO_MINIMO_CLAVE = 6
+LARGO_MINIMO_CLAVE = 4
 FORMATO = 1                    # sube si cambia la estructura de los archivos
 
 

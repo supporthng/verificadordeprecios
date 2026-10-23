@@ -68,7 +68,7 @@ st.markdown(
     "Se pide para salir del verificador o cambiar al modo celular, **también sin internet**. "
     "Por eso el equipo guarda una verificación cifrada de esta clave: usa una clave **distinta "
     "de tu contraseña de administrador** y de al menos "
-    f"{pe.LARGO_MINIMO_CLAVE} caracteres (mejor con letras y números)."
+    f"{pe.LARGO_MINIMO_CLAVE} caracteres."
 )
 try:
     tiene = pe.hay_clave_salida()

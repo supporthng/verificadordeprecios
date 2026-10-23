@@ -12,6 +12,10 @@ from supabase_cliente import cabeceras, clave_servidor, clave_publica
 
 URL = str(st.secrets.get("SUPABASE_URL", "")).rstrip("/")
 KEY = clave_servidor()
+# Largo mínimo de las contraseñas de usuario. El bloqueo tras 5 intentos fallidos
+# (5 minutos) protege contra quien pruebe claves al azar.
+LARGO_MINIMO_PASSWORD = 4
+
 PERMISOS = {
     "cargar_archivo": "Cargar Archivo Local",
     "consultar_base": "Consulta de Base de Datos",
@@ -212,8 +216,8 @@ def require_admin():
 
 
 def cambiar_password(user, nueva):
-    if len(nueva) < 8:
-        raise ValueError("La nueva contraseña debe tener al menos 8 caracteres.")
+    if len(nueva) < LARGO_MINIMO_PASSWORD:
+        raise ValueError(f"La nueva contraseña debe tener al menos {LARGO_MINIMO_PASSWORD} caracteres.")
     if verificar(nueva, user["password_hash"]):
         raise ValueError("La nueva contraseña debe ser distinta de la actual.")
     cambios = {"password_hash": hash_password(nueva), "must_change_password": False}
