@@ -56,7 +56,8 @@ def resumen():
         inicio = datetime.combine(datetime.now(ZONA).date() - timedelta(days=6), hora.min, tzinfo=ZONA)
         filas = registro_consultas.leer(inicio.astimezone(timezone.utc), limite=60000)
         d["consultas"] = [{"t": f["created_at"], "codigo": f["barcode"], "ok": f["found"],
-                           "producto": f.get("product_name"), "canal": f.get("channel")} for f in filas]
+                           "producto": f.get("product_name"), "precio": f.get("price"),
+                           "canal": f.get("channel")} for f in filas]
     except Exception:
         d["consultas"] = None
     d["estado"] = pe.estado()
@@ -103,7 +104,7 @@ with st.spinner("Cargando el panel…"):
 
 ahora = datetime.now(ZONA)
 hoy = ahora.date()
-df = pd.DataFrame(d["consultas"] or [], columns=["t", "codigo", "ok", "producto", "canal"])
+df = pd.DataFrame(d["consultas"] or [], columns=["t", "codigo", "ok", "producto", "precio", "canal"])
 if not df.empty:
     df["fecha"] = pd.to_datetime(df["t"], utc=True).dt.tz_convert(ZONA)
     df["dia"] = df["fecha"].dt.date
@@ -158,6 +159,19 @@ st.markdown("""
 .insignia.ok { background: #ecfdf3; color: #166534; }
 .punto { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; }
 .vacio { color: #7c8ca6; font-size: 14px; padding: 8px 0; }
+.top-fila { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center;
+            padding: 9px 0; border-top: 1px solid #f0f4fa; }
+.top-fila:first-of-type { border-top: 0; }
+.top-n { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+         background: #eef4ff; color: #0757d4; font-weight: 800; font-size: 13px; }
+.top-fila:first-of-type .top-n { background: #0757d4; color: #fff; }
+.top-nombre { font-weight: 700; color: #0d2d58; font-size: 14px; line-height: 1.25;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-detalle { color: #7c8ca6; font-size: 12.5px; }
+.top-barra { height: 5px; border-radius: 3px; background: #eef2f8; margin-top: 5px; overflow: hidden; }
+.top-barra span { display: block; height: 100%; border-radius: 3px; background: #0757d4; }
+.top-veces { text-align: right; font-weight: 800; color: #0d2d58; font-size: 15px; font-variant-numeric: tabular-nums; }
+.top-veces small { display: block; color: #7c8ca6; font-weight: 600; font-size: 11.5px; }
 /* El gráfico con el mismo estilo de tarjeta */
 .st-key-tarjeta_grafico { background: #fff; border: 1px solid #e3eaf5; border-radius: 16px;
   padding: 16px 18px 6px; box-shadow: 0 2px 10px rgba(16, 43, 80, .05); }
@@ -286,6 +300,41 @@ if ve_registro:
                     unsafe_allow_html=True)
         st.page_link("pages/13_Registro_Consultas.py", label="Ver el registro completo", icon="📊")
 
+# ---------------------------------------------------------------- más consultados
+def _mas_consultados():
+    encontrados = df[df["ok"]] if not df.empty else df
+    if encontrados.empty:
+        cuerpo = '<div class="vacio">Todavía no hay productos consultados en los últimos 7 días.</div>'
+    else:
+        top = (encontrados.sort_values("fecha").groupby("codigo")
+               .agg(veces=("codigo", "size"), producto=("producto", "last"), precio=("precio", "last"))
+               .sort_values("veces", ascending=False).head(5))
+        maximo = int(top["veces"].max()) or 1
+        filas = []
+        for n, (codigo, r) in enumerate(top.iterrows(), start=1):
+            try:
+                precio = f"RD$ {float(r.precio):,.2f}"
+            except (TypeError, ValueError):
+                precio = ""
+            filas.append(
+                f'<div class="top-fila"><span class="top-n">{n}</span><div style="min-width:0">'
+                f'<div class="top-nombre" title="{html.escape(str(r.producto or ""))}">{html.escape(str(r.producto or "—"))}</div>'
+                f'<div class="top-detalle">{html.escape(str(codigo))}{" · " + precio if precio else ""}</div>'
+                f'<div class="top-barra"><span style="width:{max(6, round(100 * r.veces / maximo))}%"></span></div></div>'
+                f'<div class="top-veces">{int(r.veces):,}<small>{"consulta" if r.veces == 1 else "consultas"}</small></div></div>')
+        cuerpo = "".join(filas)
+    st.markdown(f'<div class="tarjeta" style="margin-top:14px"><h3>🔝 Productos más consultados (7 días)</h3>{cuerpo}</div>',
+                unsafe_allow_html=True)
+
+
+if ve_registro and admin and d["equipos"] is not None:
+    col_top, col_equipos = st.columns(2, gap="medium")
+else:
+    col_top = col_equipos = st.container()
+if ve_registro:
+    with col_top:
+        _mas_consultados()
+
 # ---------------------------------------------------------------- equipos
 if admin and d["equipos"] is not None:
     if equipos:
@@ -304,8 +353,9 @@ if admin and d["equipos"] is not None:
     else:
         cuerpo = ('<div class="vacio">Ningún verificador ha reportado todavía. Aparecen al abrir la app sin '
                   'internet versión 1.1.0 o más nueva.</div>')
-    st.markdown(f'<div class="tarjeta" style="margin-top:14px"><h3>📴 Verificadores</h3>{cuerpo}</div>',
-                unsafe_allow_html=True)
+    with col_equipos:
+        st.markdown(f'<div class="tarjeta" style="margin-top:14px"><h3>📴 Verificadores</h3>{cuerpo}</div>',
+                    unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- accesos directos
 st.markdown("#### Accesos directos")
