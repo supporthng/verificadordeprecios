@@ -82,10 +82,16 @@
   <h2>⚙️ Verificador sin internet</h2>
   <p id="menu-aviso" class="aviso-amarillo" hidden></p>
   <dl id="menu-estado" class="estado-lista"></dl>
+  <form id="form-nombre" class="fila-nombre">
+    <input id="nombre-equipo" type="text" maxlength="40" autocomplete="off" aria-label="Nombre de este equipo"
+           placeholder="Nombre de este equipo (ej.: Pasillo 3)">
+    <button type="submit" class="secundario">Guardar</button>
+  </form>
   <div class="botones-menu">
     <button type="button" id="m-actualizar">🔄 Buscar actualización ahora</button>
     <button type="button" id="m-completa">⛶ Pantalla completa y volver</button>
     <a id="m-en-linea" class="boton" target="_blank" rel="noopener" hidden>🌐 Abrir la app en línea</a>
+    <button type="button" id="m-cerrar" class="peligro">⏻ Cerrar aplicación</button>
     <button type="button" id="m-desvincular" class="peligro">🔗 Desvincular este equipo</button>
     <button type="button" id="m-volver" class="principal">🏷️ Volver al verificador</button>
   </div>

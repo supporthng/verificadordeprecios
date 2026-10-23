@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.2.2";
+  const APP_VERSION = "1.3.0";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -263,6 +263,7 @@
       aplicarApariencia();
       if (!$("aviso").hidden) mostrarEspera(false);
       subirRegistro();
+      revisarApp(false);
     } catch (e) {
       ultimoError = e && e.name === "AbortError" ? "Sin respuesta (¿hay internet?)." : String(e && e.message || e);
       if (!productos.size) {
@@ -378,7 +379,7 @@
       ["Consultas por subir", String(pendientesN)],
       ["Equipo", nombreEquipo()],
       ["Reporte al panel", resultadoReporte],
-      ["App", "versión " + APP_VERSION],
+      ["App", "versión " + APP_VERSION + (versionNueva ? " (instalando la " + versionNueva + "…)" : "")],
     ];
     if (ultimoError) filas.push(["Último aviso", ultimoError]);
     const dl = $("menu-estado");
@@ -437,9 +438,56 @@
     }
   });
 
+  /* ------------------------------------------------------------ actualizar la app
+     version.txt (en GitHub Pages) dice cuál es la versión vigente. Si el equipo tiene otra,
+     se pide la nueva; si a los 2 minutos sigue sin instalarse, se reinstala desde cero
+     (los precios guardados NO se borran: están en IndexedDB, no en la caché de la app). */
+  let versionNueva = "", nuevaDesde = 0;
+  async function reinstalarApp() {
+    try {
+      const regs = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations() : [];
+      for (const r of regs) await r.unregister();
+      if (self.caches) for (const k of await caches.keys()) await caches.delete(k);
+    } catch (e) { /* se recarga igual */ }
+    location.reload();
+  }
+  async function revisarApp(ahora) {
+    try {
+      const r = await conTiempo("version.txt?t=" + Date.now(), { cache: "no-store" }, 8000);
+      if (!r.ok) return false;
+      const v = (await r.text()).trim();
+      if (!/^\d+\.\d+\.\d+$/.test(v) || v === APP_VERSION) { versionNueva = ""; nuevaDesde = 0; return false; }
+      versionNueva = v;
+      if (!nuevaDesde) nuevaDesde = Date.now();
+      const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+      if (reg) await reg.update().catch(function () {});
+      const libre = $("resultado").hidden && !dialogoAbierto();
+      if (ahora || (libre && Date.now() - nuevaDesde > 2 * 60 * 1000)) await reinstalarApp();
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /* ------------------------------------------------------------ cerrar la app */
+  $("m-cerrar").addEventListener("click", function () {
+    cerrarMenu();
+    try {
+      // Fully Kiosk (con "Enable JavaScript Interface" activado) expone fully.exit().
+      if (window.fully && typeof window.fully.exit === "function") { window.fully.exit(); return; }
+    } catch (e) { /* sigue con el cierre normal */ }
+    window.close();   // funciona en la app instalada (pantalla de inicio)
+    setTimeout(function () {
+      if (document.visibilityState === "visible") {
+        abrirMenu();
+        $("menu-mensaje").textContent = "Este navegador no deja cerrar la página. Usa el botón de inicio " +
+          "o el gesto de salida de Fully. (En Fully: activa Advanced Web Settings > Enable JavaScript Interface.)";
+      }
+    }, 600);
+  });
+
   $("m-volver").addEventListener("click", cerrarMenu);
   $("m-actualizar").addEventListener("click", async function () {
     $("menu-mensaje").textContent = "Buscando…";
+    if (await revisarApp(true)) return;    // había app nueva: se reinstala y recarga
     const antes = estado && estado.version;
     await revisar(false);
     $("menu-mensaje").textContent = ultimoError ? "No se pudo: " + ultimoError
@@ -550,6 +598,6 @@
 
   /* Para pruebas automáticas. */
   window.__verificador = { buscar: buscar, revisar: revisar, estado: function () { return estado; },
-                           cantidad: function () { return productos.size; }, equipo: function () { return equipo; }, subirRegistro: subirRegistro };
+                           cantidad: function () { return productos.size; }, equipo: function () { return equipo; }, subirRegistro: subirRegistro, revisarApp: revisarApp };
   iniciar();
 })();

@@ -234,15 +234,18 @@ Los nombres pueden variar un poco según la versión y el idioma.
 - *Toolbars & Appearance*: **desactivar** *Show Address Bar*, *Show Status Bar* y *Show Navigation Bar*
   (activar *Fullscreen Mode* si aparece).
 
-**4. Siempre encendido**
+**4. Botón "Cerrar aplicación" del menú ✕**
+- *Advanced Web Settings* → activar **Enable JavaScript Interface**. Así el botón puede cerrar Fully.
+
+**5. Siempre encendido**
 - *Device Management*: activar **Launch on Boot** y **Keep Screen On**.
 - *Screen orientation*: **Landscape** (horizontal).
 
-**5. Que no se pueda salir** (*Kiosk Mode*, requiere la licencia **Fully PLUS**)
+**6. Que no se pueda salir** (*Kiosk Mode*, requiere la licencia **Fully PLUS**)
 - *Kiosk Mode* → **Enable Kiosk Mode** y define un **Kiosk Exit PIN**.
 - Sin licencia PLUS se puede probar, pero muestra una marca de agua.
 
-**6. Probar**
+**7. Probar**
 - Reinicia el 2connect: debe abrir solo la consulta de precios.
 - Desconecta el Wi-Fi y escanea: debe dar el precio.
 - Toca ✕ → clave de salida → ponle **nombre** al equipo (ej.: *Pasillo 3*). Aparecerá arriba, en
