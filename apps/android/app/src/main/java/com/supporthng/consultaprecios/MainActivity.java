@@ -43,7 +43,9 @@ import java.io.OutputStream;
  * - Pantalla siempre encendida, sin barras de Android, sin botón Atrás.
  * - Es también pantalla de inicio (HOME): el botón Inicio vuelve aquí.
  * - Con Device Owner (ver guía) bloquea por completo el equipo (lock task).
- * - Se sale SOLO desde el menú ✕ de la app, con la clave de salida del verificador.
+ * - Sin Device Owner: si alguien abre Recientes, la barra de notificaciones u otra app, vuelve sola
+ *   al frente (necesita el permiso "Mostrar sobre otras apps" en Android 10 o más nuevo).
+ * - Se sale SOLO con ⚙ (configuración) o ✕ (cerrar), con la clave de salida del verificador.
  */
 public class MainActivity extends Activity {
 
@@ -58,6 +60,12 @@ public class MainActivity extends Activity {
     private boolean saliendo = false;
     private long descargaId = -1;
     private BroadcastReceiver alTerminarDescarga;
+    /** Vuelve a poner la app al frente si alguien salió sin la clave (Recientes, notificaciones…). */
+    private final Runnable traerAlFrente = this::volverAlFrente;
+    /** Pausa breve de la vigilancia (p. ej. mientras Android pregunta si fijar la app). */
+    private long libreHasta = 0;
+
+    private boolean vigilar() { return !saliendo && System.currentTimeMillis() > libreHasta; }
 
     @Override
     protected void onCreate(Bundle guardado) {
@@ -236,8 +244,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        if (vigilar()) hilo.postDelayed(traerAlFrente, 400);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
+        hilo.removeCallbacks(traerAlFrente);
         saliendo = false;
         ocultarBarras();
         activarBloqueo();
@@ -247,7 +262,37 @@ public class MainActivity extends Activity {
     @Override
     public void onWindowFocusChanged(boolean conFoco) {
         super.onWindowFocusChanged(conFoco);
-        if (conFoco) ocultarBarras();
+        if (conFoco) {
+            ocultarBarras();
+        } else if (vigilar()) {
+            // Bajaron la barra de notificaciones o abrieron un menú del sistema: cerrarlo.
+            cerrarMenusDelSistema();
+            hilo.postDelayed(() -> { if (vigilar() && !hasWindowFocus()) cerrarMenusDelSistema(); }, 300);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void cerrarMenusDelSistema() {
+        if (Build.VERSION.SDK_INT < 31) {   // desde Android 12 solo lo puede hacer el sistema
+            try { sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)); } catch (RuntimeException ignorado) { }
+        }
+    }
+
+    /** ¿Puede la app volver sola al frente? (Android 10+ lo permite con "Mostrar sobre otras apps"). */
+    private boolean puedeVolverAlFrente() {
+        return Build.VERSION.SDK_INT < 29 || Settings.canDrawOverlays(this);
+    }
+
+    private void volverAlFrente() {
+        if (!vigilar() || isFinishing()) return;
+        try {
+            ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (am != null) am.moveTaskToFront(getTaskId(), 0);
+        } catch (RuntimeException ignorado) { }
+        try {
+            startActivity(new Intent(this, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        } catch (RuntimeException ignorado) { }
     }
 
     @Override
@@ -314,6 +359,18 @@ public class MainActivity extends Activity {
         @JavascriptInterface public String version() { return versionApp(); }
         @JavascriptInterface public boolean bloqueoTotal() { return esDeviceOwner(); }
 
+        /** Botones de Android bloqueados (la app vuelve sola al frente si alguien sale). */
+        @JavascriptInterface public boolean botonesBloqueados() { return esDeviceOwner() || puedeVolverAlFrente(); }
+
+        /** Abrir el permiso "Mostrar sobre otras apps" (una sola vez por equipo). */
+        @JavascriptInterface public void bloquearBotones() {
+            hilo.post(() -> {
+                saliendo = true;
+                Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()));
+                abrir(i);
+            });
+        }
+
         /** Salir del quiosco: quitar el bloqueo y abrir los Ajustes de Android (mantenimiento). */
         @JavascriptInterface public void salir() {
             hilo.post(() -> {
@@ -334,7 +391,10 @@ public class MainActivity extends Activity {
 
         /** Sin Device Owner: fijar la app en pantalla (Android pide confirmar una vez). */
         @JavascriptInterface public void fijar() {
-            hilo.post(() -> { try { startLockTask(); } catch (RuntimeException ignorado) { } });
+            hilo.post(() -> {
+                libreHasta = System.currentTimeMillis() + 20000;   // dejar responder la pregunta de Android
+                try { startLockTask(); } catch (RuntimeException ignorado) { }
+            });
         }
 
         /** Descargar e instalar la versión nueva de la app (solo desde el repositorio del negocio). */

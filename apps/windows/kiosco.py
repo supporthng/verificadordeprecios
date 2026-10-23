@@ -3,8 +3,9 @@
 - Abre la app sin internet (GitHub Pages) a pantalla completa, siempre encima, sin bordes.
 - Usa WebView2 (el motor de Microsoft Edge, ya incluido en Windows 10/11): los precios
   quedan guardados en el equipo y funciona SIN internet.
-- Bloquea Alt+Tab, Alt+Esc, Ctrl+Esc, Alt+F4, Alt+Espacio y la tecla Windows.
-- No se puede cerrar ni minimizar: se sale SOLO desde el menú ✕ de la app, con la clave de salida.
+- Bloquea Alt+Tab, Alt+Esc, Ctrl+Esc, Ctrl+Shift+Esc, Alt+F4, Alt+Espacio y la tecla Windows.
+- Oculta la barra de tareas (Inicio) mientras está abierta; vuelve a aparecer al cerrar la app.
+- No se puede cerrar ni minimizar: se sale SOLO con ⚙ o ✕ de la app, con la clave de salida.
 - Una sola copia abierta a la vez.
 
 Ctrl+Alt+Supr no se puede bloquear desde un programa (es una protección de Windows). Para un
@@ -23,7 +24,7 @@ from ctypes import wintypes
 import webview
 
 DIRECCION = "https://supporthng.github.io/verificadordeprecios/"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 # Solo se aceptan actualizaciones publicadas en el repositorio del negocio.
 ORIGEN_ACTUALIZACION = "https://github.com/supporthng/verificadordeprecios/releases/download/"
 DATOS = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ConsultaPrecios", "WebView")
@@ -43,7 +44,7 @@ def ya_abierta():
 WH_KEYBOARD_LL = 13
 LLKHF_ALTDOWN = 0x20
 VK_TAB, VK_ESCAPE, VK_SPACE, VK_F4 = 0x09, 0x1B, 0x20, 0x73
-VK_LWIN, VK_RWIN, VK_APPS, VK_CONTROL = 0x5B, 0x5C, 0x5D, 0x11
+VK_LWIN, VK_RWIN, VK_APPS, VK_CONTROL, VK_SHIFT = 0x5B, 0x5C, 0x5D, 0x11, 0x10
 WM_QUIT = 0x0012
 
 
@@ -67,14 +68,14 @@ kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
 
-def tecla_bloqueada(vk, flags, ctrl_presionado):
+def tecla_bloqueada(vk, flags, ctrl_presionado, shift_presionado=False):
     """True si la combinación debe ignorarse (sacaría al cliente de la app)."""
     alt = bool(flags & LLKHF_ALTDOWN)
     if vk in (VK_LWIN, VK_RWIN, VK_APPS):
         return True
     if alt and vk in (VK_TAB, VK_ESCAPE, VK_F4, VK_SPACE):
         return True
-    if ctrl_presionado and vk == VK_ESCAPE:
+    if ctrl_presionado and vk == VK_ESCAPE:   # Ctrl+Esc (Inicio) y Ctrl+Shift+Esc (Administrador de tareas)
         return True
     return False
 
@@ -89,7 +90,8 @@ class Teclado:
         if codigo == 0:
             datos = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
             ctrl = bool(user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
-            if tecla_bloqueada(datos.vkCode, datos.flags, ctrl):
+            shift = bool(user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
+            if tecla_bloqueada(datos.vkCode, datos.flags, ctrl, shift):
                 return 1
         return user32.CallNextHookEx(self._gancho, codigo, wparam, lparam)
 
@@ -112,6 +114,65 @@ class Teclado:
 
 
 teclado = Teclado()
+
+
+# --------------------------------------------------------------------------- barra de tareas
+SW_HIDE, SW_SHOW = 0, 5
+user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+user32.FindWindowW.restype = wintypes.HWND
+user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
+user32.FindWindowExW.restype = wintypes.HWND
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
+
+
+def _barras_de_tareas():
+    """La barra principal y las de otros monitores."""
+    barras = []
+    principal = user32.FindWindowW("Shell_TrayWnd", None)
+    if principal:
+        barras.append(principal)
+    otra = None
+    while True:
+        otra = user32.FindWindowExW(None, otra, "Shell_SecondaryTrayWnd", None)
+        if not otra:
+            break
+        barras.append(otra)
+    return barras
+
+
+class BarraDeTareas:
+    """Oculta la barra de tareas (y el botón Inicio) mientras la app está abierta."""
+
+    def __init__(self):
+        self._oculta = False
+        self._hilo = None
+
+    def ocultar(self):
+        self._oculta = True
+        for b in _barras_de_tareas():
+            user32.ShowWindow(b, SW_HIDE)
+        if not self._hilo:
+            # Si Windows la vuelve a mostrar (reinicio del Explorador, otro monitor), ocultarla otra vez.
+            self._hilo = threading.Thread(target=self._vigilar, name="barra-tareas", daemon=True)
+            self._hilo.start()
+
+    def _vigilar(self):
+        while self._oculta:
+            time.sleep(2)
+            if self._oculta:
+                for b in _barras_de_tareas():
+                    if user32.IsWindowVisible(b):
+                        user32.ShowWindow(b, SW_HIDE)
+
+    def mostrar(self):
+        self._oculta = False
+        for b in _barras_de_tareas():
+            user32.ShowWindow(b, SW_SHOW)
+
+
+barra = BarraDeTareas()
 
 
 # --------------------------------------------------------------------------- puente con la app web
@@ -137,6 +198,7 @@ class Kiosco:
     def salir(self):
         self._permitir_cierre = True
         teclado.quitar()
+        barra.mostrar()
         if self._ventana:
             self._ventana.destroy()
         return True
@@ -203,9 +265,15 @@ def main():
     ventana.events.closing += al_cerrar
     ventana.events.minimized += al_minimizar
     teclado.poner()
+    barra.ocultar()
+    import atexit
+    atexit.register(barra.mostrar)      # pase lo que pase, la barra de tareas vuelve al salir
     # private_mode=False + storage_path: los precios guardados sobreviven al cerrar y reiniciar.
-    webview.start(gui="edgechromium", private_mode=False, storage_path=DATOS, debug=False)
-    teclado.quitar()
+    try:
+        webview.start(gui="edgechromium", private_mode=False, storage_path=DATOS, debug=False)
+    finally:
+        teclado.quitar()
+        barra.mostrar()
 
 
 if __name__ == "__main__":

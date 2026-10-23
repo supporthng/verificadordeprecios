@@ -164,7 +164,7 @@ elif lista:
     st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
     st.caption("🟢 conectado en los últimos 15 min · 🟡 hoy · 🔴 más de un día sin conexión (apagado o sin "
                "internet: sigue funcionando con los precios que tiene). Ponle nombre a cada equipo desde su "
-               "menú ✕.")
+               "menú ⚙.")
     with st.expander("Quitar un equipo de la lista"):
         nombres = {e["device_id"]: f"{e.get('nombre')} · {_dispositivo(e.get('navegador'))} · {_hace(e.get('ultima_vez'))[0]}"
                    for e in lista}
@@ -270,7 +270,7 @@ with st.expander("🔒 Guía: dejar el verificador fijo como quiosco"):
         _apk, _exe = f"{_repo}/android/ConsultaPrecios.apk", f"{_repo}/windows/Instalador_Consulta_de_Precios.exe"
         st.markdown(f"""
 Apps propias que muestran el verificador a **pantalla completa**, **funcionan sin internet**, se abren solas al
-encender y solo se salen con la **clave de salida** (menú ✕). Se actualizan solas: la app abre siempre la
+encender y solo se salen con la **clave de salida**: **⚙** abre la configuración y **✕** cierra la app. Se actualizan solas: la app abre siempre la
 versión más reciente del verificador.
 
 #### Android (2connect y tabletas)
@@ -279,14 +279,16 @@ versión más reciente del verificador.
 3. Abre **Consulta de Precios**: descarga los precios y queda lista.
 4. Pulsa el botón **Inicio** de Android: elige **Consulta de Precios** y **Siempre**. Desde ahí, Inicio vuelve al
    verificador y se abre sola al encender.
-5. En el menú ✕: ponle **nombre** al equipo. Si usabas FreeKiosk, puedes desinstalarlo.
+5. En **⚙**: ponle **nombre** al equipo y toca **🔒 Bloquear los botones de Android** → activa
+   *Mostrar sobre otras apps* para Consulta de Precios → vuelve con Inicio. Desde ese momento, si alguien abre
+   Recientes, la barra de notificaciones u otra app, el verificador vuelve solo al frente. Si usabas FreeKiosk,
+   puedes desinstalarlo.
 
-**Bloqueo:** el menú ✕ trae **📌 Fijar la app en pantalla** (Android pide confirmar). Para el bloqueo total
-(sin Inicio, sin barra de Android), como en la guía de FreeKiosk pero con este comando:
-`adb shell dpm set-device-owner com.supporthng.consultaprecios/.AdminReceiver`
+**Bloqueo total** (los botones de Android desaparecen por completo): como en la guía de FreeKiosk pero con
+`adb shell dpm set-device-owner com.supporthng.consultaprecios/.AdminReceiver`. Otra opción: **⚙ → 📌 Fijar la app**.
 
-**Salir:** menú ✕ → clave → **Salir del verificador** (abre los Ajustes de Android) o
-**Cambiar la pantalla de inicio**.
+**Salir:** **✕** → clave (abre los Ajustes de Android para mantenimiento), o **⚙** → clave →
+**Cambiar la pantalla de inicio**. Al pulsar Inicio, el verificador vuelve y se bloquea otra vez.
 
 `{_apk}`
 
@@ -294,8 +296,9 @@ versión más reciente del verificador.
 1. Descarga e instala: `{_exe}`
    Windows puede avisar "Windows protegió su PC": **Más información → Ejecutar de todas formas**.
 2. Deja marcado **Abrir automáticamente al iniciar Windows**.
-3. Queda a pantalla completa, siempre encima, sin Alt+Tab, tecla Windows ni Alt+F4.
-4. **Salir:** menú ✕ → clave → **Cerrar aplicación**. Para volver a abrirla: icono *Consulta de Precios*.
+3. Queda a pantalla completa, siempre encima, **sin barra de tareas ni botón Inicio**, sin Alt+Tab, tecla Windows,
+   Ctrl+Shift+Esc ni Alt+F4. La barra de tareas vuelve al cerrar la app.
+4. **Salir:** **✕** → clave → se cierra. Para volver a abrirla: icono *Consulta de Precios*.
 5. Emergencia: **Ctrl+Alt+Supr → Administrador de tareas → ConsultaPrecios → Finalizar tarea**
    (Windows no permite bloquear Ctrl+Alt+Supr). Recomendado: un **usuario de Windows solo para el verificador**,
    sin permisos de administrador y con inicio de sesión automático.
@@ -322,7 +325,7 @@ Se instala con el APK de [GitHub](https://github.com/RushB-fr/freekiosk/releases
 - **Nunca** activar opciones de *borrar caché* o *borrar datos* al iniciar o recargar: se borrarían los precios.
 
 **2. Probar**
-- Con internet: menú ✕ → debe decir la versión más nueva y **Reporte al panel: ✅**. Ponle **nombre** al equipo.
+- Con internet: menú ⚙ → debe decir la versión más nueva y **Reporte al panel: ✅**. Ponle **nombre** al equipo.
 - **Sin internet**: apaga el Wi-Fi, reinicia el equipo y escanea: debe dar el precio.
 - Vuelve el Wi-Fi: abajo a la derecha debe decir **Precios al día**, y en **Inicio** el equipo aparece en 🟢.
 
@@ -349,7 +352,7 @@ Algunos equipos con Android 10 o anterior traen *Depuración ADB por red* (*ADB 
 
 Si responde *"there are already some accounts"*: queda una cuenta en el equipo (quitarla o restablecer de fábrica).
 
-**Botón "Cerrar aplicación"** del menú ✕: con FreeKiosk no puede cerrar la app; se sale con el **PIN** de FreeKiosk.
+**Botón "Cerrar aplicación"** del menú ⚙: con FreeKiosk no puede cerrar la app; se sale con el **PIN** de FreeKiosk.
 """)
     with tab_fully:
         st.markdown(f"""
@@ -368,7 +371,7 @@ Los nombres pueden variar un poco según la versión y el idioma.
 - *Toolbars & Appearance*: **desactivar** *Show Address Bar*, *Show Status Bar* y *Show Navigation Bar*
   (activar *Fullscreen Mode* si aparece).
 
-**4. Botón "Cerrar aplicación" del menú ✕**
+**4. Botón "Cerrar aplicación" del menú ⚙**
 - *Advanced Web Settings* → activar **Enable JavaScript Interface**. Así el botón puede cerrar Fully.
 
 **5. Siempre encendido**
@@ -382,11 +385,11 @@ Los nombres pueden variar un poco según la versión y el idioma.
 **7. Probar**
 - Reinicia el 2connect: debe abrir solo la consulta de precios.
 - Desconecta el Wi-Fi y escanea: debe dar el precio.
-- Toca ✕ → clave de salida → ponle **nombre** al equipo (ej.: *Pasillo 3*). Aparecerá arriba, en
+- Toca ⚙ → clave de salida → ponle **nombre** al equipo (ej.: *Pasillo 3*). Aparecerá arriba, en
   *Estado de los equipos*.
 
 **Dos claves distintas**
-- **Clave de salida del verificador** (botón ✕): menú de la app (actualizar, nombre del equipo).
+- **Clave de salida del verificador** (botones ⚙ y ✕): menú de la app (actualizar, nombre del equipo).
 - **PIN de Fully**: salir de Fully a Android (configurar Wi-Fi, etc.).
 """)
 

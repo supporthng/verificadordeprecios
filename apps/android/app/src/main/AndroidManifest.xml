@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Actualizar la app desde el menú ✕ (descarga el APK nuevo y lo instala). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Volver solo al frente si alguien sale sin la clave (Recientes, notificaciones, otra app).
+         En Android 10+ requiere que el administrador active "Mostrar sobre otras apps" una vez. -->
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:label="Consulta de Precios"

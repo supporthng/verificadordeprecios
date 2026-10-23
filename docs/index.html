@@ -78,13 +78,17 @@
   </div>
 </section>
 
-<button id="boton-salida" class="boton-esquina" type="button" aria-label="Administración del verificador">✕</button>
+<!-- ⚙ configuración (con clave) · ✕ cerrar la app (con clave; solo dentro de las apps) -->
+<button id="boton-salida" class="boton-esquina" type="button" aria-label="Configuración del verificador" title="Configuración">
+  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94a7.07 7.07 0 0 0 .05-.94 7.07 7.07 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.63l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7 7 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7 7 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.85a.5.5 0 0 0 .12.63l2.03 1.58a7.4 7.4 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.63l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.39 1.05.71 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7 7 0 0 0 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.63zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+</button>
+<button id="boton-cerrar" class="boton-esquina boton-cerrar" type="button" aria-label="Cerrar la aplicación" title="Cerrar la aplicación" hidden>✕</button>
 <div id="estado-red" class="estado-red" aria-live="polite"></div>
 
 <dialog id="dlg-clave">
   <form id="form-clave" method="dialog">
-    <h2>🔐 Clave de administrador</h2>
-    <p class="suave">Escribe la clave de salida del verificador.</p>
+    <h2 id="clave-titulo">🔐 Clave de administrador</h2>
+    <p id="clave-texto" class="suave">Escribe la clave de salida del verificador.</p>
     <input id="clave" type="password" autocomplete="off" aria-label="Clave de salida">
     <p id="clave-error" class="error"></p>
     <div class="botones">
@@ -109,6 +113,7 @@
     <a id="m-en-linea" class="boton" target="_blank" rel="noopener" hidden>🌐 Abrir la app en línea</a>
     <button type="button" id="m-marco" class="principal" hidden>⬇️ Actualizar la app</button>
     <button type="button" id="m-fijar" hidden>📌 Fijar la app en pantalla (bloqueo)</button>
+    <button type="button" id="m-botones" class="principal" hidden>🔒 Bloquear los botones de Android</button>
     <button type="button" id="m-inicio" hidden>🏠 Cambiar la pantalla de inicio de Android</button>
     <button type="button" id="m-cerrar" class="peligro">⏻ Cerrar aplicación</button>
     <button type="button" id="m-desvincular" class="peligro">🔗 Desvincular este equipo</button>

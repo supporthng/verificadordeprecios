@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.8.0";
+  const APP_VERSION = "1.9.0";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -75,12 +75,14 @@
     $("aviso").hidden = false;
     Pantalla.ocultar();
     $("boton-salida").hidden = conFormulario;
+    botonesEsquina();
   }
 
   /* El dibujo (estilo, textos, logo, nombre, QR) lo hace pantalla.js. */
   function mostrarEspera(noEncontrado, codigo) {
     $("aviso").hidden = true;
     $("boton-salida").hidden = false;
+    botonesEsquina();
     Pantalla.espera(noEncontrado, codigo);
     if (!noEncontrado && recargarAlVolver) location.reload();   // app nueva instalada
   }
@@ -418,7 +420,8 @@
       ["App", "versión " + APP_VERSION + (versionNueva ? " (instalando la " + versionNueva + "…)" : "")
               + (nativo() ? " · app " + (nativo().tipo === "android" ? "Android" : "Windows")
                  + (nativo().version() ? " " + nativo().version() : "")
-                 + (nativo().bloqueoTotal() ? " (bloqueo total)" : "")
+                 + (nativo().bloqueoTotal() ? " (bloqueo total)"
+                    : nativo().botonesBloqueados && nativo().botonesBloqueados() ? " (botones bloqueados)" : "")
                  + (marcoNuevo ? " · hay una versión nueva: " + marcoNuevo.version : "") : "")],
     ];
     if (ultimoError) filas.push(["Último aviso", ultimoError]);
@@ -440,19 +443,38 @@
     $("m-completa").hidden = !!app;               // las apps ya están a pantalla completa
     $("m-fijar").hidden = !(app && app.tipo === "android" && !app.bloqueoTotal());
     $("m-inicio").hidden = !(app && app.tipo === "android");
+    $("m-botones").hidden = !(app && app.bloquearBotones && !app.bloqueoTotal() && !app.botonesBloqueados());
     $("m-marco").hidden = !(app && marcoNuevo);
     if (marcoNuevo) $("m-marco").textContent = "⬇️ Actualizar la app a la versión " + marcoNuevo.version;
     $("m-cerrar").textContent = app && app.tipo === "android" ? "⏻ Salir del verificador (abre Ajustes)"
                                                               : "⏻ Cerrar aplicación";
   }
 
-  $("boton-salida").addEventListener("click", function () {
-    if (!(estado && estado.salida)) { abrirMenu(); return; }
+  /* ⚙ abre la configuración; ✕ cierra la app. Los dos piden la clave de salida. */
+  let despuesDeClave = "menu";
+  function pedirClave(para) {
+    despuesDeClave = para;
+    if (!(estado && estado.salida)) { abrirMenu(); return; }   // sin clave definida: el menú lo avisa
+    $("clave-titulo").textContent = para === "cerrar" ? "🔐 Cerrar la aplicación" : "🔐 Configuración";
+    $("clave-texto").textContent = para === "cerrar"
+      ? "Escribe la clave de salida para cerrar el verificador."
+      : "Escribe la clave de salida del verificador.";
     $("clave").value = "";
     $("clave-error").textContent = "";
     $("dlg-clave").showModal();
     setTimeout(function () { $("clave").focus(); }, 50);
-  });
+  }
+  /* ✕ solo donde la app se puede cerrar de verdad: apps Android/Windows y Fully. */
+  function sePuedeCerrar() {
+    return !!nativo() || !!(window.fully && typeof window.fully.exit === "function");
+  }
+  function botonesEsquina() {
+    const ver = !$("boton-salida").hidden && sePuedeCerrar();
+    $("boton-cerrar").hidden = !ver;
+    document.body.classList.toggle("con-cerrar", ver);
+  }
+  $("boton-salida").addEventListener("click", function () { pedirClave("menu"); });
+  $("boton-cerrar").addEventListener("click", function () { pedirClave("cerrar"); });
   $("clave-cancelar").addEventListener("click", function () { $("dlg-clave").close(); enfocar(); });
   $("form-clave").addEventListener("submit", async function (e) {
     e.preventDefault();
@@ -477,7 +499,7 @@
     if (ok) {
       local("intentos_clave", null);
       $("dlg-clave").close();
-      abrirMenu();
+      if (despuesDeClave === "cerrar") cerrarApp(); else abrirMenu();
     } else {
       const n = Number(local("intentos_clave") || 0) + 1;
       if (n >= INTENTOS_CLAVE) { local("bloqueo_clave", String(Date.now() + BLOQUEO_CLAVE)); local("intentos_clave", null); }
@@ -536,6 +558,10 @@
                bloqueoTotal: function () { try { return !!a.bloqueoTotal(); } catch (e) { return false; } },
                version: function () { try { return a.version(); } catch (e) { return ""; } },
                fijar: function () { a.fijar(); }, cambiarInicio: function () { a.cambiarInicio(); },
+               botonesBloqueados: function () {
+                 try { return typeof a.botonesBloqueados === "function" ? !!a.botonesBloqueados() : false; }
+                 catch (e) { return false; } },
+               bloquearBotones: typeof a.bloquearBotones === "function" ? function () { a.bloquearBotones(); } : null,
                actualizar: typeof a.actualizar === "function" ? function (url) { a.actualizar(url); } : null };
     }
     if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.salir === "function") {
@@ -549,6 +575,7 @@
   // En Windows las llamadas al puente son asíncronas: la versión se pide una vez al abrir.
   let versionMarcoWindows = "";
   window.addEventListener("pywebviewready", function () {
+    botonesEsquina();
     try { window.pywebview.api.version().then(function (v) { versionMarcoWindows = String(v || ""); revisarMarco(); }); }
     catch (e) { /* sin puente */ }
   });
@@ -579,8 +606,13 @@
   };
 
   /* ------------------------------------------------------------ cerrar la app */
-  $("m-cerrar").addEventListener("click", function () {
-    cerrarMenu();
+  $("m-cerrar").addEventListener("click", function () { cerrarMenu(); cerrarApp(); });
+  // Android: un permiso, una vez por equipo, para que la app vuelva sola al frente.
+  $("m-botones").addEventListener("click", function () {
+    const app = nativo();
+    if (app && app.bloquearBotones) { cerrarMenu(); app.bloquearBotones(); }
+  });
+  function cerrarApp() {
     const app = nativo();
     if (app) { app.salir(); return; }   // Android: abre Ajustes · Windows: cierra la app
     try {
@@ -595,7 +627,7 @@
           "o el gesto de salida de Fully. (En Fully: activa Advanced Web Settings > Enable JavaScript Interface.)";
       }
     }, 600);
-  });
+  }
 
   $("m-marco").addEventListener("click", function () {
     const a = nativo();

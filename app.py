@@ -551,7 +551,7 @@ pagina_tradicional = st.Page("consulta_precios.py", title="Consulta de precios",
                              default=es_solo_consulta)
 pagina_movil = st.Page("pages/8_Escaner_Movil.py", title="Escáner móvil", icon="📱")
 if es_solo_consulta:
-    pages = {"Principal": [pagina_tradicional, pagina_movil]}
+    pages = {"Principal": [pagina_tradicional]}   # el verificador no usa la cámara
 else:
     pagina_inicio = st.Page("pages/0_Inicio.py", title="Inicio", icon="🏠", default=True)
     pages = {"Principal": [pagina_inicio, pagina_tradicional, pagina_movil]}
@@ -745,20 +745,6 @@ if es_solo_consulta:
     if st.button("✕", key="boton_salida_x_consulta", help="Cerrar: requiere contraseña de administrador"):
         st.session_state.autorizar_salida_consulta = True
         st.rerun()
-# Cambio a Escáner Móvil ya autorizado por un administrador (cuenta kiosko).
-if st.session_state.pop("cambio_movil_autorizado", False):
-    st.switch_page(pagina_movil)
-# Botón de cambio verificador ⇄ móvil: solo en esas dos pantallas (no en las de administración).
-en_movil = navegacion.title == pagina_movil.title
-en_consulta = en_movil or navegacion.title == pagina_tradicional.title
-if en_consulta and st.button("🏷️" if en_movil else "📱", key="boton_cambio_verificador",
-             help=("Cambiar a Consulta de Precios" if en_movil else
-                   "Cambiar a Escáner Móvil" + (": requiere contraseña de administrador"
-                                                if es_solo_consulta else ""))):
-    if es_solo_consulta and not en_movil:
-        # En el verificador (kiosko) pasar a Escáner Móvil exige clave de administrador.
-        st.session_state.autorizar_cambio_movil = True
-        st.rerun()
-    # Volver a Consulta de Precios, o cualquier cambio de otros usuarios: directo.
-    st.switch_page(pagina_tradicional if en_movil else pagina_movil)
+# La pantalla de consulta es de consulta rápida con el lector: sin botón para pasar a la cámara.
+# (El personal abre Escáner móvil desde el menú; los clientes, desde el QR.)
 navegacion.run()

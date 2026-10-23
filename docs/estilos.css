@@ -274,7 +274,10 @@ body {
   width: 38px; height: 38px; padding: 0; border-radius: 50%;
   background: transparent; border: 1px solid var(--linea); color: #a3aebe;
   font-size: 17px; font-weight: 600; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
 }
+.boton-cerrar { left: 56px; }
+.con-cerrar .estado-red { left: 104px; }
 /* Junto al ✕ (abajo a la izquierda): así no tapa el QR. */
 .estado-red {
   position: fixed; z-index: 80; left: 58px; bottom: max(20px, calc(env(safe-area-inset-bottom) + 10px));

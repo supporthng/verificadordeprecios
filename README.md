@@ -153,7 +153,7 @@ La app del verificador sin internet está en la carpeta `docs/` y se publica con
 
 6. Ejecuta `sql/MIGRACION_005_estado_equipos.sql`: cada equipo reporta (con internet) que está encendido y
    qué precios tiene; se ve en **Equipos sin internet > Estado de los equipos**. El nombre de cada equipo
-   se pone desde su menú ✕.
+   se pone desde su menú ⚙.
 7. Si cambias precios directamente en Google, crea el secreto `STREAMLIT_SECRETS` en GitHub
    (Settings > Secrets and variables > Actions) con el contenido de los Secrets de Streamlit:
    `.github/workflows/publicar-equipos.yml` revisa cada 30 minutos y publica solo si cambió.
@@ -191,7 +191,8 @@ pidiendo la clave de un administrador.
 - `apps/windows`: app WebView2 a pantalla completa, siempre encima, bloquea Alt+Tab / Windows / Alt+F4,
   arranca con Windows. Workflow *Construir app Windows*.
   Descarga fija: `https://github.com/supporthng/verificadordeprecios/releases/download/windows/Instalador_Consulta_de_Precios.exe`
-- En las dos, se sale desde el menú ✕ con la clave de salida del verificador.
+- En las dos: ⚙ abre la configuración y ✕ cierra la app, ambos con la clave de salida del verificador.
+- Android: la app vuelve sola al frente si alguien abre Recientes, notificaciones u otra app (permiso *Mostrar sobre otras apps*, desde ⚙). Windows: oculta la barra de tareas y bloquea Ctrl+Shift+Esc mientras está abierta.
 
 ### Publicar una versión nueva del marco de las apps (APK / instalador)
 
@@ -199,7 +200,7 @@ Solo cuando cambia el código de `apps/` (las funciones del verificador viven en
 1. Sube la versión en `apps/android/app/build.gradle` (`versionName`), `apps/windows/kiosco.py` (`VERSION`)
    y `apps/windows/ConsultaPrecios.iss` (`MyAppVersion`).
 2. Ejecuta los workflows *Construir app Android* / *Construir app Windows* y espera a que publiquen.
-3. **Después**, sube la misma versión en `docs/apps.json`: los equipos verán en el menú ✕
+3. **Después**, sube la misma versión en `docs/apps.json`: los equipos verán en el menú ⚙
    "⬇️ Actualizar la app" (Windows se instala solo; Android pide tocar Instalar, salvo con bloqueo total).
 
 ## Fotos de productos automáticas
