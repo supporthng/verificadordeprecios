@@ -377,7 +377,9 @@ def buscar_en_internet(codigo, informe=None):
             motivo.append("el archivo no es una imagen")
         if im is None:
             if informe is not None:
-                informe.append((fuente, "", f"foto {probadas}: no se pudo abrir ({motivo[0] if motivo else '?'})"))
+                from urllib.parse import urlsplit
+                sitio = urlsplit(direccion).netloc or direccion[:40]
+                informe.append((fuente, "", f"foto {probadas} ({sitio}): no se pudo abrir ({motivo[0] if motivo else '?'})"))
             continue
         puntaje = calidad_fondo(im)
         if puntaje >= FONDO_MINIMO:
