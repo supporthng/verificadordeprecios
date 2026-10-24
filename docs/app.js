@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "2.0.4";
+  const APP_VERSION = "2.0.5";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -343,7 +343,7 @@
       subirRegistro();
       sincronizarFotos();
       revisarApp(false, reconectado || despertado);
-      revisarMarco().then(actualizarWindowsSola);
+      revisarMarco().then(actualizarAppSola);
       despertado = false;
     } catch (e) {
       ultimoError = e && e.name === "AbortError" ? "Sin respuesta (¿hay internet?)." : String(e && e.message || e);
@@ -667,17 +667,28 @@
       const w = window.pywebview.api;
       return { tipo: "windows", salir: function () { w.salir(); }, bloqueoTotal: function () { return false; },
                version: function () { return versionMarcoWindows; },
-               actualizar: function (url) { w.actualizar(url); } };
+               // La primera app de Windows (1.0.0) no sabe actualizarse.
+               actualizar: typeof w.actualizar === "function" ? function (url) { w.actualizar(url); } : null };
     }
     return null;
   }
   // En Windows las llamadas al puente son asíncronas: la versión se pide una vez al abrir.
   let versionMarcoWindows = "";
-  window.addEventListener("pywebviewready", function () {
-    botonesEsquina();
-    try { window.pywebview.api.version().then(function (v) { versionMarcoWindows = String(v || ""); revisarMarco(); }); }
-    catch (e) { /* sin puente */ }
-  });
+  function pedirVersionWindows() {
+    if (versionMarcoWindows) return;
+    try {
+      window.pywebview.api.version().then(function (v) {
+        versionMarcoWindows = String(v || "");
+        botonesEsquina();
+        revisarMarco().then(actualizarAppSola);
+      });
+    } catch (e) { /* sin puente */ }
+  }
+  window.addEventListener("pywebviewready", function () { botonesEsquina(); pedirVersionWindows(); });
+  // Si el puente ya estaba listo antes de cargar este archivo, el evento no vuelve a llegar.
+  if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.version === "function") {
+    pedirVersionWindows();
+  }
 
   /* ------------------------------------------------------------ actualizar el "marco" de la app
      docs/apps.json dice la versión vigente del APK y del instalador de Windows. */
@@ -699,23 +710,43 @@
       return marcoNuevo ? "nueva" : "al-dia";
     } catch (e) { return "sin-conexion"; /* sin internet: se revisa después */ }
   }
-  // Windows instala sin preguntar: la app se actualiza sola cuando el equipo está libre
-  // (sin precio en pantalla ni menú abierto) y la versión nueva lleva 2 min detectada.
-  // Si algo falla, no se reintenta la misma versión hasta 6 horas después.
-  let marcoNuevoDesde = 0;
-  function actualizarWindowsSola(resultado) {
+  // Actualización automática de la app (el "marco"):
+  // - Al abrir la app: si hay versión nueva, se instala enseguida. Windows lo hace en silencio;
+  //   Android en silencio cuando puede (bloqueo total, o Android 12+ desde la 1.2.0) y, si no,
+  //   muestra su pregunta «¿Actualizar?» una vez por apertura.
+  // - Con la app abierta: solo Windows (siempre en silencio), cuando el equipo está libre
+  //   (sin precio en pantalla ni menú) y la versión nueva lleva 2 min detectada.
+  // Si algo falla, la misma versión no se reintenta sola hasta 6 horas después.
+  let marcoNuevoDesde = 0, marcoRevisadoAlAbrir = false;
+  function puedeIntentar(version, horas) {
+    const clave = "marco-intento-" + version;
+    try {
+      if (Date.now() - Number(localStorage.getItem(clave) || 0) < horas * 3600 * 1000) return false;
+      localStorage.setItem(clave, String(Date.now()));
+    } catch (e) { /* sin almacenamiento: se intenta igual */ }
+    return true;
+  }
+  function actualizarAppSola(resultado) {
     const app = nativo();
-    if (resultado !== "nueva" || !app || app.tipo !== "windows" || !marcoNuevo) { marcoNuevoDesde = 0; return; }
+    if (resultado !== "nueva" && resultado !== "al-dia") return;      // sin conexión: se revisa después
+    const alAbrir = !marcoRevisadoAlAbrir;
+    marcoRevisadoAlAbrir = true;
+    if (resultado !== "nueva" || !app || !app.actualizar || !marcoNuevo) { marcoNuevoDesde = 0; return; }
+    if (alAbrir) {
+      let yaPreguntado = false;
+      try { yaPreguntado = sessionStorage.getItem("marco-al-abrir") === marcoNuevo.version; } catch (e) { /* */ }
+      try { sessionStorage.setItem("marco-al-abrir", marcoNuevo.version); } catch (e) { /* */ }
+      // Android: una vez por apertura (la página se recarga sola al actualizar la pantalla).
+      if (!yaPreguntado && (app.tipo === "windows" ? puedeIntentar(marcoNuevo.version, 6) : true)) {
+        app.actualizar(marcoNuevo.url);
+        return;
+      }
+    }
+    if (app.tipo !== "windows") return;
     if (!marcoNuevoDesde) marcoNuevoDesde = Date.now();
     if (Date.now() - marcoNuevoDesde < 2 * 60 * 1000) return;
     if (!$("resultado").hidden || dialogoAbierto()) return;
-    const clave = "marco-intento-" + marcoNuevo.version;
-    try {
-      const antes = Number(localStorage.getItem(clave) || 0);
-      if (Date.now() - antes < 6 * 3600 * 1000) return;
-      localStorage.setItem(clave, String(Date.now()));
-    } catch (e) { /* sin almacenamiento: se intenta igual */ }
-    app.actualizar(marcoNuevo.url);
+    if (puedeIntentar(marcoNuevo.version, 6)) app.actualizar(marcoNuevo.url);
   }
   // ⚙ › Buscar actualización de la app: revisa apps.json y, si hay versión nueva, la instala.
   $("m-app-buscar").addEventListener("click", async function () {
@@ -725,9 +756,13 @@
     const nombre = app.tipo === "android" ? "Android" : "Windows";
     if (!app.actualizar) {
       msg.textContent = "Esta app de " + nombre + (app.version() ? " (versión " + app.version() + ")" : "") +
-        " es anterior a la que se actualiza desde aquí. Hay que instalar la nueva una vez a mano: toca ⏻, abre el " +
-        "navegador del equipo, entra a github.com/supporthng/verificadordeprecios/releases/download/android/ConsultaPrecios.apk " +
-        "e instálala encima (si Android no lo permite, desinstala la vieja primero). Desde esa versión se actualiza con este botón.";
+        " es anterior a la que se actualiza sola. Hay que instalar la nueva una vez a mano: " +
+        (app.tipo === "android"
+          ? "toca ⏻, abre el navegador del equipo, entra a github.com/supporthng/verificadordeprecios/releases/download/android/ConsultaPrecios.apk " +
+            "e instálala encima (si Android no lo permite, desinstala la vieja primero)."
+          : "ciérrala con ✕, abre Edge, entra a github.com/supporthng/verificadordeprecios/releases/download/windows/Instalador_Consulta_de_Precios.exe " +
+            "y ejecuta el instalador.") +
+        " Desde esa versión se actualiza sola.";
       return;
     }
     msg.textContent = "Buscando una versión nueva de la app…";
@@ -749,7 +784,8 @@
   window.__actualizacionApp = function (estado) {
     const textos = { descargando: "⬇️ Descargando la versión nueva de la app…",
                      instalando: "⚙️ Instalando… (en Android, toca «Instalar» si lo pide)",
-                     error: "No se pudo actualizar la app. Revisa la conexión e inténtalo de nuevo." };
+                     error: "No se pudo actualizar la app. Revisa la conexión e inténtalo de nuevo.",
+                     cancelada: "Actualización cancelada. Se volverá a ofrecer la próxima vez que se abra la app." };
     $("menu-mensaje").textContent = textos[estado] || "";
   };
 

@@ -1,7 +1,7 @@
 ; Instalador de "Consulta de Precios" para Windows (verificador tipo quiosco).
 ; Se instala para el usuario actual (no pide administrador) y arranca al iniciar sesión.
 #define MyAppName "Consulta de Precios"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppExeName "ConsultaPrecios.exe"
 [Setup]
 AppId={{B8E7C3F2-5A41-4C9E-9F0D-3C6A1E2B7D45}

@@ -138,22 +138,33 @@ public class MainActivity extends Activity {
             }
         }
         if (!ok) { avisarWeb("error"); return; }
-        if (esDeviceOwner()) {
-            // Bloqueo total: instalar sin preguntar (y la app se vuelve a abrir sola).
-            new Thread(() -> instalarSinPreguntar(dm, id), "actualizar-app").start();
-            return;
-        }
-        // Sin bloqueo total, Android pide confirmar: hay que soltar el bloqueo de pantalla.
-        avisarWeb("instalando");
-        hilo.post(() -> {
+        // Se instala con una sesión de PackageInstaller:
+        // - Bloqueo total (Device Owner): sin preguntar.
+        // - Android 12 o más nuevo: sin preguntar si esta misma app instaló la versión anterior
+        //   (desde la segunda actualización hecha con este botón). Si Android igual quiere
+        //   confirmar, devuelve STATUS_PENDING_USER_ACTION y se muestra su pregunta (onNewIntent).
+        new Thread(() -> instalarSinPreguntar(dm, id), "actualizar-app").start();
+    }
+
+    /** Respuesta de Android a la instalación (PackageInstaller). */
+    @Override
+    protected void onNewIntent(Intent intento) {
+        super.onNewIntent(intento);
+        if (intento == null || !"ACTUALIZADA".equals(intento.getAction())) return;
+        int estado = intento.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+        if (estado == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            Intent confirmar = intento.getParcelableExtra(Intent.EXTRA_INTENT);
+            if (confirmar == null) { avisarWeb("error"); return; }
+            // Android pide confirmar: soltar el bloqueo mientras responde.
             saliendo = true;
             try { if (enModoBloqueo()) stopLockTask(); } catch (RuntimeException ignorado) { }
-            Uri archivo = dm.getUriForDownloadedFile(id);
-            Intent instalar = new Intent(Intent.ACTION_VIEW);
-            instalar.setDataAndType(archivo, "application/vnd.android.package-archive");
-            instalar.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-            try { startActivity(instalar); } catch (RuntimeException e) { avisarWeb("error"); }
-        });
+            confirmar.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try { startActivity(confirmar); } catch (RuntimeException e) { saliendo = false; avisarWeb("error"); }
+        } else if (estado != PackageInstaller.STATUS_SUCCESS) {
+            saliendo = false;
+            avisarWeb(estado == PackageInstaller.STATUS_FAILURE_ABORTED ? "cancelada" : "error");
+        }
+        // STATUS_SUCCESS: Android reemplaza la app y BootReceiver (MY_PACKAGE_REPLACED) la vuelve a abrir.
     }
 
     private void instalarSinPreguntar(DownloadManager dm, long id) {
@@ -162,6 +173,9 @@ public class MainActivity extends Activity {
             PackageInstaller.SessionParams parametros =
                     new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             parametros.setAppPackageName(getPackageName());
+            if (Build.VERSION.SDK_INT >= 31) {
+                parametros.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
+            }
             int sesionId = instalador.createSession(parametros);
             try (PackageInstaller.Session sesion = instalador.openSession(sesionId);
                  InputStream entrada = new ParcelFileDescriptor.AutoCloseInputStream(dm.openDownloadedFile(id));
@@ -172,8 +186,10 @@ public class MainActivity extends Activity {
                 sesion.fsync(salida);
                 salida.close();
                 Intent resultado = new Intent(this, MainActivity.class).setAction("ACTUALIZADA");
-                PendingIntent aviso = PendingIntent.getActivity(this, sesionId, resultado,
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                // MUTABLE: Android agrega el resultado (EXTRA_STATUS) al intent.
+                int banderas = PendingIntent.FLAG_UPDATE_CURRENT
+                        | (Build.VERSION.SDK_INT >= 31 ? 0x02000000 /* FLAG_MUTABLE */ : 0);
+                PendingIntent aviso = PendingIntent.getActivity(this, sesionId, resultado, banderas);
                 avisarWeb("instalando");
                 sesion.commit(aviso.getIntentSender());
             }

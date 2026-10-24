@@ -12,6 +12,7 @@ Ctrl+Alt+Supr no se puede bloquear desde un programa (es una protección de Wind
 bloqueo total, usar además "Acceso asignado" de Windows (ver la guía en Equipos sin internet).
 """
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -24,10 +25,33 @@ from ctypes import wintypes
 import webview
 
 DIRECCION = "https://supporthng.github.io/verificadordeprecios/"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 # Solo se aceptan actualizaciones publicadas en el repositorio del negocio.
 ORIGEN_ACTUALIZACION = "https://github.com/supporthng/verificadordeprecios/releases/download/"
 DATOS = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ConsultaPrecios", "WebView")
+REGISTRO = os.path.join(os.path.dirname(DATOS), "actualizacion.log")
+APPS_JSON = DIRECCION + "apps.json"
+
+
+def anotar(texto):
+    """Registro breve de las actualizaciones (para revisar si algo falla)."""
+    try:
+        os.makedirs(os.path.dirname(REGISTRO), exist_ok=True)
+        if os.path.exists(REGISTRO) and os.path.getsize(REGISTRO) > 200_000:
+            os.replace(REGISTRO, REGISTRO + ".1")
+        with open(REGISTRO, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + texto + "\n")
+    except Exception:
+        pass
+
+
+def version_mayor(a, b):
+    def partes(v):
+        try:
+            return [int(x) for x in str(v).split(".")[:3]] + [0] * (3 - len(str(v).split(".")[:3]))
+        except ValueError:
+            return [0, 0, 0]
+    return partes(a) > partes(b)
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -182,6 +206,7 @@ class Kiosco:
     def __init__(self):
         self._ventana = None
         self._permitir_cierre = False
+        self._actualizando = False
 
     def esApp(self):
         return True
@@ -206,9 +231,31 @@ class Kiosco:
     def actualizar(self, url):
         """Descargar el instalador nuevo, instalarlo en silencio y volver a abrir la app."""
         if not isinstance(url, str) or not url.startswith(ORIGEN_ACTUALIZACION) or not url.endswith(".exe"):
+            anotar(f"actualización rechazada (dirección no permitida): {url!r}")
             return False
+        if self._actualizando:
+            return True
+        self._actualizando = True
         threading.Thread(target=self._actualizar, args=(url,), name="actualizar-app", daemon=True).start()
         return True
+
+    def revisar_al_abrir(self):
+        """Al abrir la app: si apps.json trae una versión nueva, se instala sola (sin preguntar)."""
+        time.sleep(20)          # dejar que la app abra y cargue los precios
+        for intento in range(3):
+            try:
+                pedido = urllib.request.Request(f"{APPS_JSON}?t={int(time.time())}",
+                                                headers={"Cache-Control": "no-cache", "User-Agent": "ConsultaPrecios/" + VERSION})
+                with urllib.request.urlopen(pedido, timeout=20) as r:
+                    info = json.loads(r.read().decode("utf-8")).get("windows") or {}
+                nueva = str(info.get("version") or "")
+                if nueva and version_mayor(nueva, VERSION):
+                    anotar(f"al abrir: hay versión nueva {nueva} (esta es {VERSION})")
+                    self.actualizar(str(info.get("url") or ""))
+                return
+            except Exception as exc:
+                anotar(f"al abrir: no se pudo revisar apps.json ({exc})")
+                time.sleep(60)
 
     def _avisar(self, estado):
         try:
@@ -218,21 +265,31 @@ class Kiosco:
 
     def _actualizar(self, url):
         try:
+            anotar(f"descargando {url}")
             self._avisar("descargando")
-            destino = os.path.join(tempfile.gettempdir(), "Instalador_Consulta_de_Precios.exe")
-            with urllib.request.urlopen(url, timeout=120) as respuesta, open(destino, "wb") as archivo:
+            destino = os.path.join(tempfile.gettempdir(), f"Instalador_Consulta_de_Precios_{int(time.time())}.exe")
+            pedido = urllib.request.Request(url, headers={"User-Agent": "ConsultaPrecios/" + VERSION})
+            with urllib.request.urlopen(pedido, timeout=180) as respuesta, open(destino, "wb") as archivo:
                 while True:
                     bloque = respuesta.read(1 << 16)
                     if not bloque:
                         break
                     archivo.write(bloque)
+            tamano = os.path.getsize(destino)
+            with open(destino, "rb") as f:
+                es_exe = f.read(2) == b"MZ"
+            if tamano < 500_000 or not es_exe:
+                raise RuntimeError(f"la descarga no es un instalador válido ({tamano} bytes)")
+            anotar(f"descargado ({tamano:,} bytes); instalando en silencio")
             self._avisar("instalando")
             # El instalador espera a que esta app se cierre, reemplaza los archivos y la vuelve a abrir.
             subprocess.Popen([destino, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"],
                              close_fds=True, creationflags=0x00000008 | 0x00000200)  # DETACHED | NEW_GROUP
             time.sleep(1)
             self.salir()
-        except Exception:
+        except Exception as exc:
+            anotar(f"error al actualizar: {exc}")
+            self._actualizando = False
             self._avisar("error")
 
     def recargar(self):
@@ -266,6 +323,7 @@ def main():
     ventana.events.minimized += al_minimizar
     teclado.poner()
     barra.ocultar()
+    threading.Thread(target=api.revisar_al_abrir, name="revisar-actualizacion", daemon=True).start()
     import atexit
     atexit.register(barra.mostrar)      # pase lo que pase, la barra de tareas vuelve al salir
     # private_mode=False + storage_path: los precios guardados sobreviven al cerrar y reiniciar.

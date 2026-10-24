@@ -200,8 +200,13 @@ Solo cuando cambia el código de `apps/` (las funciones del verificador viven en
 1. Sube la versión en `apps/android/app/build.gradle` (`versionName`), `apps/windows/kiosco.py` (`VERSION`)
    y `apps/windows/ConsultaPrecios.iss` (`MyAppVersion`).
 2. Ejecuta los workflows *Construir app Android* / *Construir app Windows* y espera a que publiquen.
-3. **Después**, sube la misma versión en `docs/apps.json`: los equipos verán en el menú ⚙
-   "⬇️ Actualizar la app" (Windows se instala solo; Android pide tocar Instalar, salvo con bloqueo total).
+3. **Después**, sube la misma versión en `docs/apps.json` (nunca antes: el equipo instalaría la versión
+   vieja creyendo que es la nueva). Los equipos se actualizan solos:
+   - **Windows**: al abrir la app, y con la app abierta cuando el equipo está libre; siempre en silencio.
+     Registro en `%LOCALAPPDATA%\ConsultaPrecios\actualizacion.log`.
+   - **Android**: al abrir la app. En silencio con bloqueo total, o en Android 12+ desde la 1.2.0
+     (la primera vez Android pregunta); si no, Android muestra «¿Actualizar?» una vez por apertura.
+   - También a mano: menú ⚙ › «📲 Buscar actualización de la app»
 
 ## Fotos de productos automáticas
 
