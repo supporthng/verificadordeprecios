@@ -27,6 +27,8 @@ COLOR_PREDETERMINADO = "#0757d4"
 PREDETERMINADA = {
     "nombre_negocio": "",
     "mostrar_nombre": True,
+    "mostrar_sucursal": True,  # nombre de la sucursal (o de la Principal) debajo del nombre del negocio
+    "nombre_principal": "",    # se edita en Administración › Sucursales › Principal
     "estilo": "claro",
     "color_marca": COLOR_PREDETERMINADO,
     "posicion_logo": "esquina",
@@ -39,7 +41,7 @@ PREDETERMINADA = {
     "mostrar_cuadro": False,  # cuadro donde escribe el escáner (siempre activo)
     "mostrar_foto": True,     # foto del producto junto al precio (si hay)
 }
-LARGOS = {"nombre_negocio": 60, "titulo_espera": 60, "mensaje_espera": 90, "texto_qr": 60, "moneda": 6}
+LARGOS = {"nombre_negocio": 60, "nombre_principal": 80, "titulo_espera": 60, "mensaje_espera": 90, "texto_qr": 60, "moneda": 6}
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -61,7 +63,7 @@ def normalizar(datos):
         else:
             texto = " ".join(str(valor if valor is not None else "").split())[:LARGOS[clave]]
             # Los textos de la pantalla no pueden quedar vacíos (el nombre sí: es opcional).
-            limpio[clave] = texto if (texto or clave == "nombre_negocio") else defecto
+            limpio[clave] = texto if (texto or clave in ("nombre_negocio", "nombre_principal")) else defecto
     return limpio
 
 

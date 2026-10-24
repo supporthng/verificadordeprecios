@@ -1,8 +1,8 @@
-"""Sucursales: tiendas del negocio, sus excepciones de precio y su ubicación.
+"""Sucursales: tiendas del negocio, su fuente de precios y su ubicación.
 
-- El catálogo general (la fuente activa: Excel, Google o SQL Server) vale para TODAS.
-- Cada sucursal puede tener excepciones (tabla sucursal_precios): un precio propio, o un
-  producto que solo vende ella. La excepción manda sobre el catálogo general.
+- Los inventarios se cargan y se identifican en Precios › Inventarios (Excel).
+- Cada sucursal ELIGE su fuente de precios: la misma de la Principal, uno de los inventarios,
+  Google Drive / Sheets o SQL Server (guardado en sucursales.excepciones_config["fuente"]).
 - Un usuario con sucursal_id es encargado de esa sucursal y solo ve lo suyo; sin
   sucursal_id es usuario general (ve todo).
 Requiere sql/MIGRACION_006_sucursales.sql. Sin ella todo sigue funcionando como antes
@@ -117,7 +117,54 @@ def es_general(usuario):
     return bool(usuario) and not usuario.get("sucursal_id")
 
 
-# ---------------------------------------------------------------- excepciones de precio
+# ---------------------------------------------------------------- la Principal
+def nombre_principal():
+    """Nombre que se le dio a la Principal (Sucursales › Principal › Datos), o «Principal»."""
+    try:
+        import apariencia
+        return apariencia.obtener().get("nombre_principal") or "Principal"
+    except Exception:
+        return "Principal"
+
+
+# ---------------------------------------------------------------- fuente de precios
+FUENTES = ("principal", "inventario", "google", "external")
+
+
+def fuente(sucursal):
+    """{"tipo": principal|inventario|google|external, "inventario_id": int|None} de la sucursal."""
+    cfg = (sucursal or {}).get("excepciones_config") or {}
+    tipo = cfg.get("fuente") if cfg.get("fuente") in FUENTES else "principal"
+    inv = cfg.get("inventario_id")
+    try:
+        inv = int(inv) if inv is not None else None
+    except (TypeError, ValueError):
+        inv = None
+    if tipo == "inventario" and inv is None:
+        tipo = "principal"
+    return {"tipo": tipo, "inventario_id": inv if tipo == "inventario" else None}
+
+
+def guardar_fuente(sucursal, tipo, inventario_id=None):
+    if tipo not in FUENTES:
+        raise ValueError("Fuente desconocida.")
+    cfg = dict(sucursal.get("excepciones_config") or {})
+    cfg["fuente"] = tipo
+    cfg["inventario_id"] = int(inventario_id) if tipo == "inventario" and inventario_id is not None else None
+    return guardar({"excepciones_config": cfg,
+                    "excepciones_fuente": {"google": "google", "external": "external"}.get(tipo, "excel")},
+                   sucursal["id"])
+
+
+def que_usan_inventario(inventario_id):
+    """Sucursales cuya fuente es ese inventario."""
+    try:
+        return [s for s in listar() if fuente(s)["inventario_id"] == int(inventario_id)]
+    except RuntimeError:
+        return []
+
+
+# ---------------------------------------------------------------- excepciones de precio (versión anterior)
 def contar_excepciones(sucursal_id):
     base, clave = url(), clave_servidor()
     r = requests.head(f"{base}/rest/v1/sucursal_precios", timeout=15,

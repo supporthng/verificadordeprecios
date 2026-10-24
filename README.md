@@ -228,11 +228,13 @@ Solo cuando cambia el código de `apps/` (las funciones del verificador viven en
 Requiere ejecutar **sql/MIGRACION_006_sucursales.sql** en Supabase (también incluido en `INSTALAR_COMPLETO.sql`).
 Mientras no haya sucursales, todo funciona como una sola tienda.
 
-- **Precios:** el catálogo general (la fuente activa) vale para todas. Cada sucursal puede tener **precios propios**
-  (Administración › Sucursales › Precios propios, desde Excel o CSV): mandan sobre el general solo en esa sucursal,
-  y sirven también para productos que solo vende ella.
+- **Precios:** todos los inventarios se crean, se cargan y se identifican en **Precios › Inventarios (Excel)**
+  (la tabla muestra quién usa cada uno). La Principal usa la fuente activa. Cada sucursal **elige su fuente** en
+  Administración › Sucursales › Fuente de precios: igual que la Principal, uno de los inventarios, Google Drive /
+  Sheets o SQL Server (se guarda en `sucursales.excepciones_config.fuente`, sin migración nueva). No se mezclan:
+  la sucursal consulta solo su fuente. Un inventario que usa una sucursal no se puede borrar.
 - **Usuarios:** sin sucursal = usuario general (ve y administra todo). Con sucursal = encargado: solo ve su
-  sucursal (sus precios propios, sus usuarios, su registro de consultas y su Inicio) y no ve la configuración común.
+  sucursal (su fuente de precios, sus usuarios, su registro de consultas y su Inicio) y no ve la configuración común.
   Una sucursal con usuarios no se puede borrar (para que no pasen a ser generales).
 - **Consulta en línea:** la cuenta del verificador de una sucursal muestra sus precios. Con el acceso por ubicación,
   el equipo queda en la sucursal en cuya zona está (cada sucursal con su punto y su radio).
@@ -242,12 +244,12 @@ Mientras no haya sucursales, todo funciona como una sola tienda.
 
 Requiere **sql/MIGRACION_007_equipos_por_sucursal.sql** (después de la 006).
 
-- Al publicar, además de `estado.json` (general) se publica `estado-<sucursal>.json` por sucursal: el mismo catálogo
-  general más un archivo pequeño `excepciones-<sucursal>-<huella>.json` con sus precios propios. El equipo descarga
-  el catálogo general una sola vez y aplica encima los de su sucursal (también sin internet).
+- Al publicar, además de `estado.json` (Principal) se publica `estado-<sucursal>.json` por sucursal. Si usa la misma
+  fuente que la Principal, comparte su catálogo; si no, apunta al `catalogo-<huella>.json` de su propia fuente.
+  Si su fuente no tiene datos (p. ej. Google sin configurar), el equipo conserva lo último que tenía.
 - Vincular un equipo a una sucursal: enlace propio en Equipos sin internet › Equipos de una sucursal, o desde el menú
   ⚙ del equipo › **Cambiar sucursal** (lista publicada en `sucursales.json`, solo sucursales activas).
 - El equipo reporta su sucursal (tabla de equipos) y sus consultas se suben con ella. Si falta la migración 007,
   reporta igual sin la sucursal.
 
-Próxima fase: precios propios desde Google y desde el SQL Server de cada sucursal.
+Pendiente: un SQL Server distinto por sucursal (hoy hay un solo conector y una sola configuración de Google).

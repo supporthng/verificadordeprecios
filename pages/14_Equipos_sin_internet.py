@@ -6,6 +6,7 @@ import streamlit as st
 
 from auth_usuarios import require_admin
 import publicar_equipos as pe
+import sucursales
 
 require_admin()
 ZONA = ZoneInfo("America/Santo_Domingo")
@@ -160,7 +161,7 @@ elif lista:
         al_dia = e.get("precios_version") == version_publicada
         filas.append({
             " ": luz, "Equipo": e.get("nombre"),
-            **({"Sucursal": _nombres_suc.get(e.get("sucursal"), e.get("sucursal")) if e.get("sucursal") else "Principal"}
+            **({"Sucursal": _nombres_suc.get(e.get("sucursal"), e.get("sucursal")) if e.get("sucursal") else sucursales.nombre_principal()}
                if _nombres_suc else {}),
             "Última conexión": texto,
             "Precios": "✅ al día" if al_dia else "⚠️ versión anterior",
@@ -250,7 +251,7 @@ if guardada:
         st.code(pe.enlace_instalacion(guardada), language=None)
     st.caption("En Chrome para Android: menú ⋮ > **Instalar aplicación** (o *Agregar a la pantalla "
                "principal*) para abrirla a pantalla completa, como una app.")
-    # Sucursales: cada equipo puede usar los precios propios de su sucursal.
+    # Sucursales: cada equipo usa la fuente de precios de su sucursal.
     try:
         import sucursales as _suc
         _lista_suc = _suc.listar()
@@ -258,11 +259,11 @@ if guardada:
         _lista_suc = []
     if _lista_suc:
         st.markdown("#### 🏬 Equipos de una sucursal")
-        st.caption("Un equipo de sucursal usa el catálogo general **más los precios propios** de su sucursal. "
+        st.caption("Un equipo de sucursal usa la **fuente de precios de su sucursal** (se elige en Sucursales). "
                    "En un equipo ya instalado se cambia desde su menú ⚙ › **Cambiar sucursal**. "
                    "Para uno nuevo, ábrele este enlace una vez con internet:")
         _cod = st.selectbox("Sucursal", [""] + [s["codigo"] for s in _lista_suc],
-                            format_func=lambda c: "🏠 Principal" if not c
+                            format_func=lambda c: "🏠 " + sucursales.nombre_principal() if not c
                             else next(s["nombre"] for s in _lista_suc if s["codigo"] == c))
         _enlace = pe.enlace_instalacion(guardada, _cod or None)
         st.code(_enlace, language=None)

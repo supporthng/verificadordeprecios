@@ -60,6 +60,12 @@ body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 62vw;
 }
 .sin-logo .cabecera-nombre { font-size: clamp(20px, 4.6vmin, 60px); }
+/* Nombre de la sucursal, debajo del nombre del negocio. */
+.nombre-sucursal {
+  display: block; font-weight: 500; letter-spacing: 0; font-size: 0.58em; line-height: 1.25;
+  color: var(--gris); margin-top: 0.15em; overflow: hidden; text-overflow: ellipsis;
+}
+.estilo-marca .nombre-sucursal, .estilo-panel .panel-nombre .nombre-sucursal { color: inherit; opacity: 0.82; }
 .espera-centro {
   grid-row: 2; align-self: center; justify-self: center; width: min(1300px, 100%);
   text-align: center;

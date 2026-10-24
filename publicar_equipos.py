@@ -166,14 +166,16 @@ def _catalogo_externo(base, headers):
     return d.get("inventario") or "SQL Server", productos
 
 
-def _catalogo_local(base, headers):
-    """(nombre del inventario, [[código, nombre, precio], ...]) del inventario activo."""
+def _catalogo_local(base, headers, inventario_id=None):
+    """(nombre del inventario, [[código, nombre, precio], ...]) del inventario activo (o de inventario_id)."""
+    filtro = {"id": f"eq.{int(inventario_id)}"} if inventario_id is not None else {"is_active": "eq.true"}
     inv = requests.get(f"{base}/rest/v1/price_inventories", headers=headers, timeout=20,
-                       params={"select": "id,name", "is_active": "eq.true", "limit": 1})
+                       params={"select": "id,name", "limit": 1, **filtro})
     if not inv.ok:
         raise RuntimeError(f"Supabase {inv.status_code}: {inv.text[:300]}")
     if not inv.json():
-        raise RuntimeError("No hay un inventario activo. Activa uno en Precios > Inventarios (Excel).")
+        raise RuntimeError("El inventario de la sucursal ya no existe." if inventario_id is not None else
+                           "No hay un inventario activo. Activa uno en Precios > Inventarios (Excel).")
     inventario = inv.json()[0]
     filas, desde = [], 0
     while True:
@@ -344,47 +346,85 @@ def publicar(apariencia_actual=None):
     if publicado != anterior:      # si nada cambió, no se reescribe nada
         _subir(base, headers, "estado.json", json.dumps(publicado, ensure_ascii=False).encode("utf-8"),
                "application/json", "no-cache")
-        _borrar_catalogos_viejos(base, headers, {archivo, anterior.get("catalogo")})
     try:
-        _publicar_sucursales(base, headers, publicado)
+        de_sucursales = _publicar_sucursales(base, headers, publicado)
     except Exception:   # sin sucursales (o sin MIGRACION_006): los equipos usan el estado general
-        pass
+        de_sucursales = None
+    if publicado != anterior or de_sucursales:
+        conservar = {archivo, anterior.get("catalogo")} | set(de_sucursales or ())
+        if de_sucursales is not None or not _hay_sucursales_publicadas(base, headers):
+            _borrar_catalogos_viejos(base, headers, conservar)
     return publicado if publicado != anterior else anterior
+
+
+def _hay_sucursales_publicadas(base, headers):
+    """True si quedan estados de sucursal publicados (para no borrar sus catálogos por error)."""
+    try:
+        r = requests.post(f"{base}/storage/v1/object/list/{BUCKET}", headers=headers, timeout=20,
+                          json={"prefix": "", "limit": 1000, "search": "estado-"})
+        return r.ok and any(str(o.get("name", "")).startswith("estado-") for o in r.json())
+    except (requests.RequestException, ValueError):
+        return True
 
 
 def estado_sucursal_nombre(codigo):
     return f"estado-{codigo}.json"
 
 
+def _catalogo_de_sucursal(base, headers, f):
+    """(nombre, productos) de la fuente que eligió la sucursal (que no es la de la Principal)."""
+    if f["tipo"] == "inventario":
+        return _catalogo_local(base, headers, f["inventario_id"])
+    if f["tipo"] == "google":
+        return _catalogo_google()
+    return _catalogo_externo(base, headers)
+
+
 def _publicar_sucursales(base, headers, general):
-    """Un estado por sucursal: el general + su lista de precios propios (archivo aparte y pequeño).
-    El equipo de una sucursal descarga el catálogo general UNA vez y encima aplica los suyos."""
+    """Un estado por sucursal con SU fuente de precios. Si usa la misma de la Principal,
+    comparte su catálogo. Devuelve los archivos de catálogo que usan las sucursales."""
     import sucursales
     lista = sucursales.listar()
     if not lista:
-        return
-    conservar = set()
+        return set()
+    catalogos = set()
+    fuente_principal = fuente_activa(base, headers)
     for s in lista:
-        filas = [[f["barcode"], f.get("name"), float(f["price"])] for f in sucursales.listar_excepciones(s["id"])]
-        contenido = json.dumps(filas, ensure_ascii=False, separators=(",", ":"))
-        huella = hashlib.sha256(contenido.encode("utf-8")).hexdigest()[:12]
-        archivo = f"excepciones-{s['codigo']}-{huella}.json" if filas else None
+        f = sucursales.fuente(s)
         nombre_estado = estado_sucursal_nombre(s["codigo"])
         try:
             r = requests.get(url_publica(nombre_estado), params={"t": datetime.now().timestamp()}, timeout=10)
             anterior = r.json() if r.status_code == 200 else {}
         except (requests.RequestException, ValueError):
             anterior = {}
-        if archivo and anterior.get("excepciones") != archivo:
-            _subir(base, headers, archivo, ('{"version":"%s","productos":%s}' % (huella, contenido)).encode("utf-8"),
-                   "application/json", "max-age=31536000")
         propio = {**general, "sucursal": {"codigo": s["codigo"], "nombre": s["nombre"]},
-                  "excepciones": archivo, "excepciones_cantidad": len(filas)}
+                  "excepciones": None, "excepciones_cantidad": 0}
+        misma = f["tipo"] == "principal" or (f["tipo"] in ("google", "external") and f["tipo"] == fuente_principal)
+        if not misma:
+            try:
+                inventario, productos = _catalogo_de_sucursal(base, headers, f)
+            except Exception:
+                # Fuente sin datos (p. ej. Google sin configurar): el equipo conserva lo último que tenía.
+                if anterior.get("catalogo"):
+                    catalogos.add(anterior["catalogo"])
+                continue
+            contenido = json.dumps(productos, ensure_ascii=False, separators=(",", ":"))
+            version = hashlib.sha256((inventario + "\n" + contenido).encode("utf-8")).hexdigest()[:16]
+            archivo = f"catalogo-{version}.json"
+            if version not in (anterior.get("version"), general.get("version")):
+                _subir(base, headers, archivo, ('{"formato":%d,"version":"%s","inventario":%s,"productos":%s}'
+                                                % (FORMATO, version, json.dumps(inventario, ensure_ascii=False),
+                                                   contenido)).encode("utf-8"),
+                       "application/json", "max-age=31536000")
+            propio.update({
+                "version": version, "catalogo": archivo, "inventario": inventario, "productos": len(productos),
+                "publicado": (anterior.get("publicado") if anterior.get("version") == version
+                              else datetime.now(timezone.utc).isoformat(timespec="seconds")),
+            })
+            catalogos.add(archivo)
         if propio != anterior:
             _subir(base, headers, nombre_estado, json.dumps(propio, ensure_ascii=False).encode("utf-8"),
                    "application/json", "no-cache")
-        if archivo:
-            conservar.add(archivo)
     lista_publica = [{"codigo": s["codigo"], "nombre": s["nombre"]} for s in lista if s.get("activa")]
     try:
         r = requests.get(url_publica("sucursales.json"), params={"t": datetime.now().timestamp()}, timeout=10)
@@ -394,9 +434,10 @@ def _publicar_sucursales(base, headers, general):
     if lista_publica != lista_anterior:
         _subir(base, headers, "sucursales.json", json.dumps(lista_publica, ensure_ascii=False).encode("utf-8"),
                "application/json", "no-cache")
-    _borrar_catalogos_viejos(base, headers, conservar, prefijo="excepciones-")
+    _borrar_catalogos_viejos(base, headers, set(), prefijo="excepciones-")   # de la versión anterior
     # Sucursal borrada: quitar su estado (sus equipos vuelven a vincularse a otra).
     _borrar_catalogos_viejos(base, headers, {estado_sucursal_nombre(s["codigo"]) for s in lista}, prefijo="estado-")
+    return catalogos
 
 
 def actualizar_si_publicado():

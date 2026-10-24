@@ -1,20 +1,18 @@
-"""Sucursales: crear tiendas, su ubicación (acceso por ubicación) y sus precios propios.
+"""Sucursales: crear tiendas, su ubicación (acceso por ubicación) y su fuente de precios.
 
 - El usuario general (sin sucursal asignada) crea y administra todas.
-- El encargado de una sucursal solo ve la suya y carga sus precios propios.
+- El encargado de una sucursal solo ve la suya y elige su fuente de precios.
+- Los inventarios se cargan y se identifican en Precios › Inventarios (Excel).
 """
-import io
 import json
 import math
 import re
 
-import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
 from auth_usuarios import current_user, es_admin, allowed
 import sucursales as suc
-from shared import normalize_header
 
 usuario = current_user()
 general = bool(usuario) and es_admin(usuario) and not usuario.get("must_change_password") and not usuario.get("sucursal_id")
@@ -33,8 +31,8 @@ except RuntimeError:
     st.stop()
 
 if general:
-    st.caption("El catálogo general (tu fuente de precios activa) vale para todas las sucursales. Cada sucursal "
-               "puede tener **precios propios**: mandan sobre el general solo en esa sucursal.")
+    st.caption("Cada sucursal **elige su fuente de precios**: la misma de la Principal, uno de los inventarios "
+               "de **Precios › Inventarios (Excel)**, Google Drive / Sheets o SQL Server.")
 for clave in ("aviso_sucursal",):
     if st.session_state.get(clave):
         st.toast(st.session_state.pop(clave), icon="✅")
@@ -165,7 +163,43 @@ def _zona_principal():
 
 
 zona_principal = _zona_principal()
-NOMBRE_PRINCIPAL = "Principal"
+NOMBRE_PRINCIPAL = suc.nombre_principal()
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _inventarios():
+    try:
+        from inventarios import all_inventories
+        return all_inventories()
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _fuente_principal():
+    """('local'|'google'|'external', nombre del inventario activo o None)."""
+    try:
+        import publicar_equipos
+        tipo = publicar_equipos.fuente_activa()
+    except Exception:
+        tipo = "local"
+    activo = next((i["name"] for i in _inventarios() if i.get("is_active")), None)
+    return tipo, activo
+
+
+ETIQUETA_FUENTE = {"local": "Excel", "google": "Google Drive / Sheets", "external": "SQL Server"}
+
+
+def _texto_fuente(f):
+    """Nombre corto de la fuente de una sucursal (o de la Principal si f es None)."""
+    if f is None or f["tipo"] == "principal":
+        tipo, activo = _fuente_principal()
+        texto = f"📚 {activo}" if tipo == "local" and activo else ETIQUETA_FUENTE.get(tipo, tipo)
+        return texto if f is None else "Igual que la Principal (" + texto + ")"
+    if f["tipo"] == "inventario":
+        nombre = next((i["name"] for i in _inventarios() if int(i["id"]) == f["inventario_id"]), None)
+        return f"📚 {nombre}" if nombre else "⚠️ Inventario borrado"
+    return "☁️ Google Drive / Sheets" if f["tipo"] == "google" else "🔌 SQL Server"
 
 # ====================================================================== lista (general)
 if general:
@@ -173,17 +207,13 @@ if general:
         zp = zona_principal or {}
         filas = [{"Sucursal": "🏠 " + NOMBRE_PRINCIPAL, "Código": "—", "Estado": "✅ Activa",
                   "Ubicación": (f"📍 {zp.get('radius_m')} m" if zp.get("enabled") and zp.get("latitude") else "—"),
-                  "Precios propios": "Catálogo general"}]
+                  "Fuente de precios": _texto_fuente(None)}]
         for s in todas:
-            try:
-                n = suc.contar_excepciones(s["id"])
-            except Exception:
-                n = None
             filas.append({"Sucursal": s["nombre"], "Código": s["codigo"],
                           "Estado": "✅ Activa" if s["activa"] else "⏸️ Inactiva",
                           "Ubicación": (f"📍 {s['radius_m']} m" if s.get("geo_enabled") and s.get("latitude") is not None
                                         else "—"),
-                          "Precios propios": "—" if n is None else f"{n:,}"})
+                          "Fuente de precios": _texto_fuente(suc.fuente(s))})
         st.dataframe(filas, hide_index=True, use_container_width=True)
         puntos = [{"lat": s.get("latitude"), "lon": s.get("longitude"), "radio": s["radius_m"], "nombre": s["nombre"]}
                   for s in todas if s.get("geo_enabled")]
@@ -224,11 +254,10 @@ else:
 
 if elegida_id == PRINCIPAL:
     st.subheader("🏠 " + NOMBRE_PRINCIPAL)
-    tab_p, tab_u = st.tabs(["💲 Precios", "📍 Ubicación"])
+    tab_p, tab_u, tab_d = st.tabs(["💲 Fuente de precios", "📍 Ubicación", "⚙️ Datos"])
     with tab_p:
-        st.markdown("La principal usa el **catálogo general**: los precios de tu fuente activa (Excel, Google o "
-                    "SQL Server). Es también la base de todas las sucursales: lo que una sucursal no tenga como "
-                    "precio propio, lo toma de aquí.")
+        st.markdown(f"La Principal usa la **fuente activa**: **{_texto_fuente(None)}**. Las sucursales que "
+                    "eligen «Igual que la Principal» usan esta misma.")
         st.markdown("- Los **equipos sin internet** sin sucursal asignada son de la principal.\n"
                     "- En el **registro de consultas** aparece como «Principal».")
         c1, c2 = st.columns(2)
@@ -248,6 +277,20 @@ if elegida_id == PRINCIPAL:
             _editor_ubicacion("geo_principal", {**zona_principal, "geo_enabled": zona_principal.get("enabled")},
                               NOMBRE_PRINCIPAL, _guardar_principal)
         st.page_link("pages/9_Ubicacion_Movil.py", label="Más opciones (buscar el negocio por nombre)", icon="📍")
+    with tab_d:
+        with st.form("datos_principal"):
+            nombre_p = st.text_input("Nombre", value="" if NOMBRE_PRINCIPAL == "Principal" else NOMBRE_PRINCIPAL,
+                                     max_chars=80, placeholder="Ej.: Casa Matriz, Sucursal Renacimiento…")
+            st.caption("Sale en la pantalla de consulta debajo del nombre del negocio (si en **Apariencia** está "
+                       "activado «Mostrar el nombre de la sucursal debajo»), y en las listas e informes. "
+                       "Vacío = «Principal», sin nombre en la pantalla.")
+            if st.form_submit_button("Guardar", type="primary"):
+                import apariencia
+                apariencia.guardar({"nombre_principal": nombre_p.strip()})
+                _enviar_a_equipos()
+                st.session_state.aviso_sucursal = "Nombre de la Principal guardado."
+                st.rerun()
+        st.caption("La Principal no se puede borrar ni desactivar: es la tienda base del sistema.")
     st.stop()
 
 sucursal = next((s for s in todas if s["id"] == elegida_id), None)
@@ -256,96 +299,56 @@ if not sucursal:
     st.stop()
 
 st.subheader(f"🏬 {sucursal['nombre']}")
-pestanas = ["💲 Precios propios", "📍 Ubicación"] + (["⚙️ Datos"] if general else [])
+pestanas = ["💲 Fuente de precios", "📍 Ubicación"] + (["⚙️ Datos"] if general else [])
 tabs = st.tabs(pestanas)
 
-# ====================================================================== precios propios
+# ====================================================================== fuente de precios
 with tabs[0]:
+    actual = suc.fuente(sucursal)
+    st.markdown(f"Fuente actual: **{_texto_fuente(actual)}**")
+    inventarios = _inventarios()
+    opciones = [("principal", None)] + [("inventario", int(i["id"])) for i in inventarios] + \
+               [("google", None), ("external", None)]
+
+    def _etiqueta(op):
+        tipo, inv = op
+        if tipo == "principal":
+            return "🏠 Igual que la Principal (" + _texto_fuente(None) + ")"
+        if tipo == "inventario":
+            nombre = next(i["name"] for i in inventarios if int(i["id"]) == inv)
+            return f"📚 Inventario: {nombre}"
+        return "☁️ Google Drive / Sheets" if tipo == "google" else "🔌 SQL Server (conector de Windows)"
+
     try:
-        cantidad = suc.contar_excepciones(sucursal["id"])
-    except Exception:
-        cantidad = 0
-    st.markdown(f"Esta sucursal tiene **{cantidad:,}** precio(s) propio(s). Para cualquier otro producto se usa "
-                "el precio del catálogo general.")
-    st.caption("Sube un Excel o CSV con **código de barras** y **precio** (y, si quieres, **nombre** para productos "
-               "que solo vende esta sucursal). Al publicar, la lista **reemplaza** a la anterior completa.")
-    archivo = st.file_uploader("Archivo de precios propios", type=["xlsx", "csv"], key=f"exc_{sucursal['id']}")
-    if archivo is not None:
-        try:
-            if archivo.name.lower().endswith(".csv"):
-                df = pd.read_csv(archivo, dtype=str, sep=None, engine="python")
-            else:
-                crudo = pd.read_excel(archivo, header=None, dtype=str, engine="openpyxl")
-                claves = ("codigobarra", "codigobarras", "barcode", "codigo", "upc", "ean")
-                fila = next((i for i, r in crudo.head(40).iterrows()
-                             if any(normalize_header(x) in claves for x in r)), 0)
-                archivo.seek(0)
-                df = pd.read_excel(archivo, header=fila, dtype=str, engine="openpyxl")
-            cols = [str(c) for c in df.columns]
-            df.columns = cols
-
-            def _idx(opciones, defecto=0):
-                return next((i for i, x in enumerate(cols) if normalize_header(x) in opciones), defecto)
-
-            c1, c2, c3 = st.columns(3)
-            col_cod = c1.selectbox("Código de barras", cols, index=_idx(("codigobarra", "codigobarras", "barcode",
-                                                                         "codigo", "upc", "ean")))
-            col_pre = c2.selectbox("Precio", cols, index=_idx(("precio", "precioventa", "price"), min(1, len(cols) - 1)))
-            col_nom = c3.selectbox("Nombre (opcional)", ["(sin nombre)"] + cols,
-                                   index=1 + _idx(("nombre", "descripcion", "producto", "nombredelproducto"), -1)
-                                   if any(normalize_header(x) in ("nombre", "descripcion", "producto", "nombredelproducto")
-                                          for x in cols) else 0)
-            datos = pd.DataFrame({
-                "barcode": df[col_cod].astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
-                "price": pd.to_numeric(df[col_pre].astype(str).str.replace(",", "", regex=False)
-                                       .str.replace("RD$", "", regex=False).str.strip(), errors="coerce"),
-                "name": df[col_nom].astype(str).str.strip() if col_nom != "(sin nombre)" else None,
-            })
-            datos = datos[datos["barcode"].str.len().between(1, 64)
-                          & ~datos["barcode"].str.upper().isin(["NAN", "NONE", "N/D", ""])
-                          & datos["price"].notna() & (datos["price"] >= 0)]
-            if "name" in datos:
-                datos["name"] = datos["name"].where(~datos["name"].isin(["nan", "None", ""]), None)
-            datos = datos.drop_duplicates("barcode", keep="last")
-            st.write(f"Precios válidos: **{len(datos):,}**")
-            st.dataframe(datos.head(30), hide_index=True, use_container_width=True)
-            confirmar = st.checkbox(f"Confirmo que esta lista reemplaza los precios propios de {sucursal['nombre']}",
-                                    key=f"conf_{sucursal['id']}")
-            if st.button("Publicar precios propios", type="primary", disabled=not confirmar or datos.empty,
-                         key=f"pub_{sucursal['id']}"):
-                with st.spinner("Guardando y enviando a los equipos…"):
-                    n = suc.reemplazar_excepciones(sucursal["id"], datos.to_dict("records"))
-                    _enviar_a_equipos()
-                st.session_state.aviso_sucursal = f"{n:,} precios propios publicados para {sucursal['nombre']}."
-                st.rerun()
-        except Exception as exc:
-            st.error(f"No se pudo leer el archivo: {exc}")
-
-    if cantidad:
-        with st.expander("Ver o descargar los precios propios actuales"):
-            actuales = pd.DataFrame(suc.listar_excepciones(sucursal["id"]))
-            buscar = st.text_input("Buscar por código o nombre", key=f"bus_{sucursal['id']}").strip().lower()
-            vista = actuales
-            if buscar:
-                vista = actuales[actuales["barcode"].str.contains(buscar, regex=False)
-                                 | actuales["name"].fillna("").str.lower().str.contains(buscar, regex=False)]
-            st.dataframe(vista.rename(columns={"barcode": "Código", "name": "Nombre", "price": "Precio"}),
-                         hide_index=True, use_container_width=True)
-            salida = io.StringIO()
-            actuales.assign(barcode=actuales["barcode"].map(lambda c: f'="{c}"')).rename(
-                columns={"barcode": "codigo", "name": "nombre", "price": "precio"}).to_csv(salida, index=False)
-            st.download_button("⬇️ Descargar (Excel / CSV)", salida.getvalue().encode("utf-8-sig"),
-                               file_name=f"precios_{sucursal['codigo']}.csv", mime="text/csv")
-            if general and st.button("🗑️ Quitar todos los precios propios", key=f"vaciar_{sucursal['id']}"):
-                suc.reemplazar_excepciones(sucursal["id"], [])
-                _enviar_a_equipos()
-                st.session_state.aviso_sucursal = "Precios propios quitados: la sucursal usa el catálogo general."
-                st.rerun()
+        indice = opciones.index((actual["tipo"], actual["inventario_id"]))
+    except ValueError:
+        indice = 0
+    with st.form(f"fuente_{sucursal['id']}"):
+        elegida = st.radio("¿De dónde toma los precios esta sucursal?", opciones, index=indice,
+                           format_func=_etiqueta)
+        guardar_f = st.form_submit_button("Guardar fuente", type="primary")
+    if elegida[0] == "inventario":
+        st.caption("Los inventarios se crean, se cargan y se renombran en **Precios › Inventarios (Excel)**.")
+    elif elegida[0] == "google":
+        st.caption("Usa el archivo configurado en **Precios › Google Drive / Sheets**.")
+    elif elegida[0] == "external":
+        st.caption("Usa la configuración habilitada en **SQL Server › Consulta externa** y el conector de Windows.")
+    if not inventarios:
+        st.info("Todavía no hay inventarios. Créalos y cárgalos en **Precios › Inventarios (Excel)**.")
+    if general:
+        st.page_link("pages/10_Inventarios.py", label="Inventarios (Excel)", icon="📚")
+    if guardar_f:
+        with st.spinner("Guardando y enviando a los equipos de la sucursal…"):
+            suc.guardar_fuente(sucursal, elegida[0], elegida[1])
+            _inventarios.clear()
+            _enviar_a_equipos()
+        st.session_state.aviso_sucursal = f"{sucursal['nombre']} ahora usa: {_etiqueta(elegida)}."
+        st.rerun()
 
 # ====================================================================== ubicación
 with tabs[1]:
     st.caption("Con la ubicación activa, un equipo que entra a la Consulta de Precios **por ubicación** queda "
-               "en la sucursal en cuya zona está, y muestra sus precios propios.")
+               "en la sucursal en cuya zona está, y muestra los precios de su fuente.")
     if not general:
         if sucursal.get("geo_enabled") and sucursal.get("latitude") is not None:
             _mapa([{"lat": sucursal["latitude"], "lon": sucursal["longitude"], "radio": sucursal["radius_m"],
@@ -372,7 +375,7 @@ if general:
                 st.session_state.aviso_sucursal = "Sucursal guardada."
                 st.rerun()
         with st.expander("🗑️ Eliminar sucursal"):
-            st.warning("Se borran sus precios propios. Si tiene usuarios, primero pásalos a otra sucursal o "
+            st.warning("Sus inventarios no se borran. Si tiene usuarios, primero pásalos a otra sucursal o "
                        "elimínalos en Usuarios. El registro de consultas se conserva.")
             ok = st.checkbox(f"Confirmo que quiero eliminar «{sucursal['nombre']}»", key=f"del_{sucursal['id']}")
             if st.button("Eliminar", disabled=not ok, key=f"delb_{sucursal['id']}"):

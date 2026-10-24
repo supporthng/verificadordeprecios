@@ -71,20 +71,32 @@ def _img(src, clase, alt=""):
     return f'<img class="{clase}" alt="{html.escape(alt)}" src="{src}">' if src else ""
 
 
-def _cabecera(clase, logo, nombre, clase_logo):
-    if not (logo or nombre):
+def _nombre_html(nombre, sucursal):
+    """Nombre del negocio y, debajo, el de la sucursal (sin nombre de negocio, la sucursal sola)."""
+    if nombre and sucursal:
+        return f'{html.escape(nombre)}<small class="vp-suc">{html.escape(sucursal)}</small>'
+    return html.escape(nombre or sucursal or "")
+
+
+def _cabecera(clase, logo, nombre_html, clase_logo):
+    if not (logo or nombre_html):
         return ""
     return (f'<header class="{clase}">{_img(logo, clase_logo, "Logo de la tienda")}'
-            + (f'<span>{html.escape(nombre)}</span>' if nombre else "") + "</header>")
+            + (f'<span>{nombre_html}</span>' if nombre_html else "") + "</header>")
 
 
 def pantalla(a, estado, logo=None, qr=None, foto=None, producto=None, codigo="", pista=None,
-             fija=False, segundos=10):
+             fija=False, segundos=10, sucursal=None):
     """HTML de la pantalla. estado: espera | no | buscando | error | producto.
     logo, qr y foto: direcciones (data:…) o None. producto: {name, price}."""
     e = a["estilo"]
     panel = e == "panel"
     nombre = a["nombre_negocio"].strip() if a["mostrar_nombre"] else ""
+    # sucursal: la de esta pantalla; sin sucursal, el nombre de la Principal (si tiene).
+    suc = str((sucursal if sucursal is not None else a.get("nombre_principal")) or "").strip() \
+        if a.get("mostrar_sucursal", True) else ""
+    nombre_html = _nombre_html(nombre, suc)
+    nombre_corto = html.escape(" · ".join(x for x in (nombre, suc) if x))
     logo = logo if a["mostrar_logo"] else None
     qr = qr if a["mostrar_qr"] else None
     foto = foto if a.get("mostrar_foto", True) else None
@@ -100,7 +112,7 @@ def pantalla(a, estado, logo=None, qr=None, foto=None, producto=None, codigo="",
     if panel:
         partes.append('<aside class="vp-panel"><div class="vp-panel-marca">'
                       + _img(logo, "vp-panel-logo", "Logo de la tienda")
-                      + (f'<p class="vp-panel-nombre">{html.escape(nombre)}</p>' if nombre else "")
+                      + (f'<p class="vp-panel-nombre">{nombre_html}</p>' if nombre_html else "")
                       + "</div>"
                       + (f'<figure class="vp-panel-qr"><img alt="Código QR" src="{qr}">'
                          f'<figcaption>{html.escape(a["texto_qr"])}</figcaption></figure>' if qr else "")
@@ -112,7 +124,7 @@ def pantalla(a, estado, logo=None, qr=None, foto=None, producto=None, codigo="",
         except (TypeError, ValueError):
             entero, centavos = "0", "00"
         cuerpo = (
-            ("" if panel else _cabecera("vp-rcab", logo, nombre, "vp-rcab-logo"))
+            ("" if panel else _cabecera("vp-rcab", logo, nombre_corto, "vp-rcab-logo"))
             + (f'<figure class="vp-foto"><img alt="" src="{foto}"></figure>' if foto else "")
             + '<div class="vp-prod">'
             f'<p class="vp-nombre">{html.escape(str(producto.get("name") or ""))}</p>'
@@ -135,7 +147,7 @@ def pantalla(a, estado, logo=None, qr=None, foto=None, producto=None, codigo="",
         else:
             titulo, texto = html.escape(a["titulo_espera"]), html.escape(a["mensaje_espera"])
         cuerpo = (
-            ("" if panel else _cabecera("vp-cab", logo, nombre, "vp-cab-logo"))
+            ("" if panel else _cabecera("vp-cab", logo, nombre_html, "vp-cab-logo"))
             + '<div class="vp-centro">'
             f'<h1 class="vp-titulo{" alerta" if alerta else ""}">{titulo}</h1>'
             f'<div class="vp-laser{" detenido" if alerta else ""}"><span></span></div>'
@@ -172,6 +184,9 @@ CSS = """
 .vp-cab span { font-weight: 700; letter-spacing: -.015em; line-height: 1.1; font-size: clamp(18px, 3.6vmin, 48px);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vp.sin-logo .vp-cab span { font-size: clamp(20px, 4.4vmin, 58px); }
+.vp-suc { display: block; font-weight: 500; letter-spacing: 0; font-size: .58em; line-height: 1.25; color: var(--gris);
+  margin-top: .15em; overflow: hidden; text-overflow: ellipsis; }
+.vp.estilo-marca .vp-suc, .vp-panel-nombre .vp-suc { color: inherit; opacity: .82; }
 .vp-centro { grid-row: 2; align-self: center; justify-self: center; width: min(1300px, 100%%); text-align: center; }
 .vp-titulo { font-weight: 600; letter-spacing: -.02em; line-height: 1.05; text-wrap: balance;
   font-size: clamp(28px, 8vmin, 106px); padding: 0 !important; color: var(--tinta); font-family: inherit; }

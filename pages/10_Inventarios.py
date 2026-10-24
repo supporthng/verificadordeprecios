@@ -3,12 +3,14 @@ import streamlit as st
 from auth_usuarios import current_user,allowed
 from inventarios import api,all_inventories
 from shared import normalize_header
+import sucursales
 
 user=current_user()
 if not user or not allowed(user,'cargar_archivo'):
     st.error('Sin permiso de administración de inventarios.');st.stop()
 st.title('📚 Inventarios independientes')
-st.caption('Cada archivo Excel se carga en un inventario seleccionado. No se mezclan los catálogos.')
+st.caption('Aquí se crean, se cargan y se identifican TODOS los inventarios. La Principal usa el inventario activo; '
+           'cada sucursal elige el suyo en Administración › Sucursales. No se mezclan los catálogos.')
 
 
 def _equipos():
@@ -32,10 +34,50 @@ with st.form('crear_inventario'):
         except Exception as e:st.error(str(e))
 if not items:st.info('Crea un inventario para empezar.');st.stop()
 names={int(i['id']):i['name'] for i in items}
-selected=st.selectbox('Inventario de destino',list(names),format_func=lambda i:names[i])
+
+
+def _usos():
+    """{id de inventario: [quién lo usa]} — la Principal (activo) y las sucursales que lo eligieron."""
+    usos={i:[] for i in names}
+    for i in items:
+        if i['is_active']:usos[int(i['id'])].append('🏠 '+sucursales.nombre_principal())
+    try:
+        for s in sucursales.listar():
+            f=sucursales.fuente(s)
+            if f['tipo']=='inventario' and f['inventario_id'] in usos:usos[f['inventario_id']].append('🏬 '+s['nombre'])
+            elif f['tipo']=='principal':
+                act=next((int(i['id']) for i in items if i['is_active']),None)
+                if act is not None:usos[act].append('🏬 '+s['nombre']+' (igual que la Principal)')
+    except Exception:pass   # sin sucursales instaladas
+    return usos
+
+
+def _cantidad(inv_id):
+    try:
+        import requests
+        from supabase_cliente import cabeceras,clave_servidor
+        r=requests.head(str(st.secrets['SUPABASE_URL']).rstrip('/')+'/rest/v1/price_inventory_items',timeout=15,
+                        params={'select':'barcode','inventory_id':f'eq.{inv_id}'},
+                        headers=cabeceras(clave_servidor(),{'Prefer':'count=exact','Range':'0-0'}))
+        return int(r.headers.get('Content-Range','*/0').split('/')[-1])
+    except Exception:return None
+
+
+usos=_usos()
+st.subheader('Inventarios')
+st.dataframe([{'Inventario':names[i],'Productos':(lambda n:'—' if n is None else f'{n:,}')(_cantidad(i)),
+               'Lo usa':', '.join(usos[i]) or '— nadie —'} for i in names],hide_index=True,use_container_width=True)
+selected=st.selectbox('Inventario',list(names),format_func=lambda i:names[i])
 active=next((i for i in items if i['is_active']),None)
-st.info('Activo en Consulta de Precios: '+(active['name'] if active else 'Ninguno'))
-if st.button('Activar inventario seleccionado',disabled=bool(active and int(active['id'])==selected)):
+st.info('Lo usa: '+(', '.join(usos[selected]) or 'nadie todavía (elígelo como inventario de la Principal o de una sucursal)'))
+with st.expander('✏️ Cambiar el nombre'):
+    nuevo=st.text_input('Nombre',value=names[selected],key=f'renombrar_{selected}',max_chars=80)
+    if st.button('Guardar nombre',disabled=not nuevo.strip() or nuevo.strip()==names[selected]):
+        try:
+            api('PATCH','price_inventories',{'id':f'eq.{selected}'},{'name':nuevo.strip()},prefer='return=minimal')
+            _equipos();st.rerun()
+        except Exception as e:st.error(str(e))
+if st.button('🏠 Usar este inventario en la Principal',disabled=bool(active and int(active['id'])==selected)):
     try:
         api('POST','rpc/activate_price_inventory',data={'target_id':selected})
         _equipos();st.rerun()
@@ -74,11 +116,13 @@ if file:
                     for n in range(0,len(rows),200):
                         api('POST','price_inventory_items',{'on_conflict':'inventory_id,barcode'},[dict(r,inventory_id=selected) for r in rows[n:n+200]],prefer='resolution=merge-duplicates,return=minimal')
                 st.success('Inventario publicado. Los otros inventarios no fueron modificados.')
-                if active and int(active['id'])==selected:_equipos()
+                if usos[selected]:_equipos()
             except Exception as e:st.error(str(e))
     except Exception as e:st.error('Error al leer Excel: '+str(e))
 st.divider();st.subheader('Eliminar inventario')
-if active and int(active['id'])==selected:st.warning('Activa otro inventario antes de eliminar este.')
+_suc_usan=[u for u in usos[selected] if u.startswith('🏬') and '(igual que la Principal)' not in u]
+if active and int(active['id'])==selected:st.warning('La Principal usa este inventario: elige otro para la Principal antes de eliminarlo.')
+elif _suc_usan:st.warning('Lo usan estas sucursales: '+', '.join(_suc_usan)+'. Cámbiales la fuente en Sucursales antes de eliminarlo.')
 else:
     typed=st.text_input('Para eliminar, escribe exactamente: '+names[selected])
     if st.button('Eliminar inventario y todos sus productos',disabled=typed!=names[selected]):

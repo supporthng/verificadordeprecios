@@ -38,7 +38,7 @@ with col_periodo:
 if col_suc is not None:
     elegida = col_suc.selectbox("Sucursal", [None, registro.PRINCIPAL] + list(NOMBRE_SUC),
                                 format_func=lambda c: "Todas" if c is None
-                                else "🏠 Principal" if c == registro.PRINCIPAL else NOMBRE_SUC[c])
+                                else "🏠 " + sucursales.nombre_principal() if c == registro.PRINCIPAL else NOMBRE_SUC[c])
     filtro_suc = elegida
 ahora = datetime.now(ZONA)
 inicio_local = datetime.combine(ahora.date(), hora.min, tzinfo=ZONA) - timedelta(
@@ -91,7 +91,7 @@ with col_a:
                  color=["#0757d4", "#dc2626"], stack=True)
 if lista_suc and not filtro_suc and "sucursal" in df:
     st.markdown("**Por sucursal**")
-    por_suc = (df.assign(Sucursal=df["sucursal"].map(NOMBRE_SUC).fillna("🏠 Principal"))
+    por_suc = (df.assign(Sucursal=df["sucursal"].map(NOMBRE_SUC).fillna("🏠 " + sucursales.nombre_principal()))
                  .groupby("Sucursal").agg(Consultas=("found", "size"), Encontrados=("found", "sum"))
                  .sort_values("Consultas", ascending=False))
     por_suc["% encontrados"] = (por_suc["Encontrados"] / por_suc["Consultas"]).map("{:.0%}".format)

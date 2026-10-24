@@ -31,15 +31,18 @@ def active_inventory_id():
     return rows[0]['id'] if rows else None
 
 
-def find_barcode(code):
-    """Busca UN código en el inventario activo usando la clave primaria.
+def find_barcode(code, inventory_id=None):
+    """Busca UN código en el inventario activo (o en inventory_id) usando la clave primaria.
 
     Devuelve dict {barcode, name, price} o None si no existe.
     Lanza RuntimeError si no hay inventario activo.
     """
     from shared import variantes_codigo
     formas = variantes_codigo(code)
-    inventory_id = active_inventory_id()
+    # Un inventario que no es el activo (el de una sucursal) solo se lee con la clave del servidor.
+    privado = inventory_id is not None
+    if inventory_id is None:
+        inventory_id = active_inventory_id()
     if inventory_id is None:
         raise RuntimeError('No hay un inventario activo seleccionado.')
     # Una sola consulta con todas las formas equivalentes (UPC-E, UPC-A, EAN-13,
@@ -47,7 +50,7 @@ def find_barcode(code):
     lista = ','.join('"' + f.replace('"', '') + '"' for f in formas)
     rows = api('GET', 'price_inventory_items',
                {'select': 'barcode,name,price', 'inventory_id': f'eq.{inventory_id}',
-                'barcode': f'in.({lista})', 'limit': len(formas)}, admin=False)
+                'barcode': f'in.({lista})', 'limit': len(formas)}, admin=privado)
     if not rows:
         return None
     rows.sort(key=lambda r: formas.index(r['barcode']) if r['barcode'] in formas else len(formas))

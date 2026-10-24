@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "2.0.5";
+  const APP_VERSION = "2.0.6";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -156,7 +156,8 @@
   }
 
   function aplicarApariencia() {
-    Pantalla.aplicar(estado && estado.apariencia, imagenes);
+    Pantalla.aplicar(estado && estado.apariencia, Object.assign({}, imagenes,
+      { sucursal: estado && estado.sucursal ? estado.sucursal.nombre : null }));
   }
 
   function ponerImagen(clave, blob) {
@@ -511,7 +512,7 @@
       ["Equipo", nombreEquipo()],
       ["Sucursal", estado && estado.sucursal ? estado.sucursal.nombre
                    + (estado.excepciones_cantidad ? " (" + estado.excepciones_cantidad + " precios propios)" : "")
-                   : "Principal"],
+                   : ((estado && estado.apariencia && estado.apariencia.nombre_principal) || "Principal")],
       ["Reporte al panel", resultadoReporte],
       ["App", "versión " + APP_VERSION + (versionNueva ? " (instalando la " + versionNueva + "…)" : "")
               + (nativo() ? " · app " + (nativo().tipo === "android" ? "Android" : "Windows")

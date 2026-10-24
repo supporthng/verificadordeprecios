@@ -4,7 +4,7 @@
 (function () {
   "use strict";
   const PREDETERMINADA = {
-    nombre_negocio: "", mostrar_nombre: true, estilo: "claro", color_marca: "#0757d4",
+    nombre_negocio: "", mostrar_nombre: true, mostrar_sucursal: true, nombre_principal: "", estilo: "claro", color_marca: "#0757d4",
     posicion_logo: "esquina", titulo_espera: "Escanea tu producto",
     mensaje_espera: "Pasa el código de barras por el lector",
     texto_qr: "Consulta también desde tu celular", moneda: "RD$",
@@ -52,7 +52,7 @@
       Object.keys(PREDETERMINADA).forEach(function (k) {
         if (a[k] === undefined || a[k] === null) return;
         if (typeof PREDETERMINADA[k] === "boolean") r[k] = !!a[k];
-        else if (k !== "nombre_negocio" && String(a[k]).trim() === "") return;
+        else if (k !== "nombre_negocio" && k !== "nombre_principal" && String(a[k]).trim() === "") return;
         else r[k] = String(a[k]);
       });
     }
@@ -62,6 +62,19 @@
     return r;
   }
 
+  /* Nombre del negocio y, debajo, el de la sucursal. Sin nombre de negocio, la sucursal va sola. */
+  function ponerNombre(id, mostrar, nombre, sucursal) {
+    const el = $(id);
+    if (!el) return;
+    el.hidden = !mostrar;
+    el.textContent = nombre || sucursal || "";
+    if (nombre && sucursal) {
+      const s = document.createElement("span");
+      s.className = "nombre-sucursal";
+      s.textContent = sucursal;
+      el.appendChild(s);
+    }
+  }
   function poner(id, mostrar, texto) {
     const el = $(id);
     if (!el) return;
@@ -100,21 +113,25 @@
     if (meta) meta.setAttribute("content", e === "panel" ? marca : fondo);
 
     const nombre = actual.mostrar_nombre ? actual.nombre_negocio.trim() : "";
+    // img.sucursal: nombre de la sucursal del equipo; sin sucursal, el de la Principal (si tiene).
+    const sucursal = actual.mostrar_sucursal
+      ? String((img.sucursal !== undefined && img.sucursal !== null ? img.sucursal : actual.nombre_principal) || "").trim() : "";
+    const hayNombre = !!(nombre || sucursal);
     const logo = actual.mostrar_logo ? img.logo : null;
     const qr = actual.mostrar_qr ? img.qr : null;
     const panel = e === "panel";
 
     // Logo y nombre: en la cabecera (o en el panel lateral).
     imagen("logo", !panel, logo);
-    poner("nombre-negocio", !panel && !!nombre, nombre);
-    $("cabecera").hidden = panel || !(logo || nombre);
+    ponerNombre("nombre-negocio", !panel && hayNombre, nombre, sucursal);
+    $("cabecera").hidden = panel || !(logo || hayNombre);
     cuerpo.classList.toggle("sin-logo", !logo);
     imagen("panel-logo", panel, logo);
-    poner("panel-nombre", panel && !!nombre, nombre);
+    ponerNombre("panel-nombre", panel && hayNombre, nombre, sucursal);
     // En el precio, una referencia pequeña de dónde está el cliente.
     imagen("resultado-logo", !panel, logo);
-    poner("resultado-negocio", !panel && !!nombre, nombre);
-    $("resultado-cabecera").hidden = panel || !(logo || nombre);
+    poner("resultado-negocio", !panel && hayNombre, [nombre, sucursal].filter(Boolean).join(" · "));
+    $("resultado-cabecera").hidden = panel || !(logo || hayNombre);
 
     // QR de Consulta Móvil.
     imagen("qr-img", true, qr);

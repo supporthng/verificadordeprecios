@@ -10,7 +10,8 @@ if not user or not allowed(user, 'fuentes'):
     st.stop()
 
 st.title('🎯 Selección de Fuentes de Datos')
-st.caption('Elige la fuente que utilizará Consulta de Precios. No elimina ni mezcla inventarios.')
+st.caption('Fuente de precios de la Principal (y de las sucursales que eligen «Igual que la Principal»). '
+           'Cada sucursal puede elegir otra en Administración › Sucursales. No elimina ni mezcla inventarios.')
 url = str(st.secrets.get('SUPABASE_URL', '')).strip().rstrip('/')
 key = clave_servidor()
 if not url or not key:

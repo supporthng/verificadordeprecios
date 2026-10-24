@@ -58,7 +58,7 @@ for clave in ("aviso_apariencia", "aviso_logo", "aviso_qr"):
         st.toast(st.session_state.pop(clave), icon="✅")
 
 guardada = apariencia.obtener()
-CAMPOS = list(apariencia.PREDETERMINADA)
+CAMPOS = [c for c in apariencia.PREDETERMINADA if c != "nombre_principal"]   # se edita en Sucursales
 # Los controles arrancan con lo guardado; "Descartar cambios" los vuelve a poner así.
 recargar = st.session_state.pop("ap_descartar", False)
 for campo in CAMPOS:
@@ -76,6 +76,9 @@ with pestana_pantalla:
         st.text_input("Nombre del negocio", key="ap_nombre_negocio", max_chars=60,
                       placeholder="Ej.: Supermercado La Esquina")
         st.toggle("Mostrar el nombre en la pantalla", key="ap_mostrar_nombre")
+        st.toggle("Mostrar el nombre de la sucursal debajo", key="ap_mostrar_sucursal",
+                  help="Cada equipo muestra el de su sucursal; los de la Principal, el nombre que le pongas "
+                       "en Administración › Sucursales › Principal.")
         st.radio("Estilo de la pantalla", list(apariencia.ESTILOS), key="ap_estilo",
                  format_func=lambda k: apariencia.ESTILOS[k][0],
                  captions=[d for _, d in apariencia.ESTILOS.values()])
@@ -102,7 +105,7 @@ with pestana_pantalla:
                   help="Visible u oculto, el cuadro siempre está activo y con el cursor: el escáner "
                        "lee igual. Mostrarlo sirve para escribir el código a mano con un teclado.")
 
-    elegida = apariencia.normalizar({c: st.session_state["ap_" + c] for c in CAMPOS})
+    elegida = apariencia.normalizar({**guardada, **{c: st.session_state["ap_" + c] for c in CAMPOS}})
     hay_cambios = elegida != guardada
     logo, qr = _imagenes()
 
@@ -131,7 +134,7 @@ with pestana_pantalla:
         if b1.button("💾 Guardar apariencia", type="primary", use_container_width=True,
                      disabled=not hay_cambios):
             try:
-                apariencia.guardar(elegida)
+                apariencia.guardar({k: v for k, v in elegida.items() if k != "nombre_principal"})
                 st.session_state.aviso_apariencia = "Apariencia guardada. Las pantallas la aplicarán en segundos."
                 import publicar_equipos
                 ok, res = publicar_equipos.actualizar_si_publicado()

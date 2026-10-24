@@ -247,12 +247,33 @@ def _sucursal_actual():
 
 
 def _con_sucursal(producto, codigo):
-    """Aplica la excepción de precio de la sucursal (manda sobre el catálogo general)."""
+    """La sucursal ya consulta su propia fuente (ver _fuente_consulta): el producto queda igual."""
+    return producto
+
+
+def _fuente_consulta():
+    """(modo, id de la fuente externa, id de inventario o None) para esta pantalla.
+    La Principal usa la fuente activa; una sucursal, la fuente que eligió en Sucursales."""
+    mode, source_id = active_source()
     suc = _sucursal_actual()
     if not suc:
-        return producto
+        return mode, source_id, None
     import sucursales
-    return sucursales.aplicar(producto, codigo, suc)[0]
+    f = sucursales.fuente(suc)
+    if f["tipo"] == "inventario":
+        return "local", None, f["inventario_id"]
+    if f["tipo"] == "google":
+        return "google", None, None
+    if f["tipo"] == "external":
+        if mode == "external":
+            return mode, source_id, None
+        externas = admin_api("GET", "external_price_sources",
+                             params={"enabled": "eq.true", "select": "id", "limit": "2"})
+        if len(externas) != 1:
+            raise RuntimeError("La sucursal usa SQL Server, pero no hay exactamente una configuración "
+                               "habilitada en SQL Server › Consulta externa.")
+        return "external", externas[0]["id"], None
+    return mode, source_id, None
 
 
 def buscar_producto(clave):
@@ -269,11 +290,11 @@ def buscar_producto(clave):
     st.session_state.external_job = None
     st.session_state.result_time = None
     try:
-        mode, source_id = active_source()
+        mode, source_id, inventario_id = _fuente_consulta()
         if mode == "local":
             # Consulta directa por clave primaria: no descarga el inventario completo.
             from inventarios import find_barcode
-            product = _con_sucursal(find_barcode(query), query)
+            product = _con_sucursal(find_barcode(query, inventario_id), query)
             if product is None:
                 st.session_state.not_found = True
             else:
@@ -434,7 +455,9 @@ def verificador():
     logo = f"data:image/png;base64,{logo}" if logo else None
     qr = f"data:image/png;base64,{qr}" if qr else None
     codigo = str(st.session_state.get("last_searched_barcode") or "")
-    comun = {"logo": logo, "qr": qr, "codigo": codigo, "fija": modo_kiosko}
+    _suc = _sucursal_actual()
+    comun = {"logo": logo, "qr": qr, "codigo": codigo, "fija": modo_kiosko,
+             "sucursal": _suc["nombre"] if _suc else None}
 
     if product is not None:
         # La foto se decide UNA vez, al aparecer el precio: si no había, esta consulta sigue sin foto
