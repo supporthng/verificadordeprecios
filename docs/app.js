@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "2.0.0";
+  const APP_VERSION = "2.0.1";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -539,7 +539,8 @@
     $("m-completa").hidden = !!app;               // las apps ya están a pantalla completa
     $("m-fijar").hidden = !(app && app.tipo === "android" && !app.bloqueoTotal());
     $("m-inicio").hidden = !(app && app.tipo === "android");
-    $("m-botones").hidden = !(app && app.bloquearBotones && !app.bloqueoTotal() && !app.botonesBloqueados());
+    // Se muestra en toda app Android sin bloqueo; si la app es vieja, el botón explica cómo actualizarla.
+    $("m-botones").hidden = !(app && app.tipo === "android" && !app.bloqueoTotal() && !app.botonesBloqueados());
     $("m-marco").hidden = !(app && marcoNuevo);
     if (marcoNuevo) $("m-marco").textContent = "⬇️ Actualizar la app a la versión " + marcoNuevo.version;
     $("m-cerrar").textContent = app && app.tipo === "android" ? "⏻ Salir del verificador (abre Ajustes)"
@@ -706,7 +707,17 @@
   // Android: un permiso, una vez por equipo, para que la app vuelva sola al frente.
   $("m-botones").addEventListener("click", function () {
     const app = nativo();
-    if (app && app.bloquearBotones) { cerrarMenu(); app.bloquearBotones(); }
+    if (!app) return;
+    if (app.bloquearBotones) { cerrarMenu(); app.bloquearBotones(); return; }
+    // App Android anterior a la 1.1.0: no trae el bloqueo de botones.
+    if (app.actualizar && marcoNuevo) {
+      app.actualizar(marcoNuevo.url);
+      window.__actualizacionApp("descargando");
+      return;
+    }
+    $("menu-mensaje").textContent = "Esta función necesita la app Android 1.1.0 o más nueva" +
+      (app.version() ? " (este equipo tiene la " + app.version() + ")" : "") +
+      ". Sal con ⏻, desinstala Consulta de Precios y vuelve a instalar ConsultaPrecios.apk desde la página de instalación.";
   });
   function cerrarApp() {
     const app = nativo();
