@@ -28,7 +28,7 @@ def _toca(marca):
         return True
 
 
-def buscar_uno(pagina, contexto, codigo, consulta, base, headers, informe=None):
+def buscar_uno(pagina, contexto, codigo, consulta, base, headers, informe=None, nombre_filtro=None):
     """Busca y guarda la foto de un código con el navegador. Devuelve la fuente o None."""
     pagina.goto(f"{fp.BING}?q={quote_plus(consulta)}&form=HDRSC2&first=1", wait_until="domcontentloaded",
                 timeout=30000)
@@ -38,11 +38,15 @@ def buscar_uno(pagina, contexto, codigo, consulta, base, headers, informe=None):
         if informe is not None:
             informe.append(("Navegador · Bing", consulta, "sin resultados"))
         return None
-    pares = fp.imagenes_de_bing(pagina.content())
+    todos = fp.imagenes_de_bing(pagina.content())
+    indices = list(range(len(todos)))
+    if nombre_filtro:   # búsqueda solo por nombre: el título de la imagen debe parecerse al producto
+        indices = [i for i, p in enumerate(todos) if fp.parecido(nombre_filtro, p[2]) >= fp.PARECIDO_MINIMO]
+    pares = [todos[i] for i in indices]
     if informe is not None:
         informe.append(("Navegador · Bing", consulta, f"{len(pares)} imagen(es)"))
     # 1) Descargar desde el navegador (con sus cookies y como si viniera de la página).
-    for n, (original, miniatura) in enumerate(pares[:8], start=1):
+    for n, (original, miniatura, _titulo) in enumerate(pares[:8], start=1):
         for direccion in (original, miniatura):
             if not direccion or not direccion.startswith("http"):
                 continue
@@ -54,9 +58,11 @@ def buscar_uno(pagina, contexto, codigo, consulta, base, headers, informe=None):
             if datos and fp.evaluar_y_guardar(codigo, datos, "Navegador (Bing)", base, headers, informe,
                                               f"imagen {n}: "):
                 return "Navegador (Bing)"
-    # 2) Captura de las miniaturas en pantalla (recorte).
+    # 2) Captura de las miniaturas en pantalla (recorte). Por nombre, solo si alguna se pareció.
+    if not pares:
+        return None
     miniaturas = pagina.locator("a.iusc img")
-    for n in range(min(miniaturas.count(), 8)):
+    for n in [i for i in indices[:8] if i < miniaturas.count()]:
         try:
             datos = miniaturas.nth(n).screenshot(timeout=5000)
         except Exception:
@@ -90,11 +96,15 @@ def procesar(maximo=MAX_POR_VUELTA, registro=print):
         for codigo in cola[:maximo]:
             nombre = fp._nombre_consultado(codigo)
             consulta = f"{nombre} {codigo}".strip() if nombre else codigo
-            try:
-                fuente = buscar_uno(pagina, contexto, codigo, consulta, base, headers)
-            except Exception as exc:
-                registro(f"⚠️ {codigo}: {exc}")
-                fuente = None
+            fuente = None
+            # Primero nombre + código; si no aparece, solo por el nombre (de tu inventario).
+            for texto, filtro in ((consulta, None), (nombre, nombre)):
+                if not texto or fuente:
+                    continue
+                try:
+                    fuente = buscar_uno(pagina, contexto, codigo, texto, base, headers, nombre_filtro=filtro)
+                except Exception as exc:
+                    registro(f"⚠️ {codigo}: {exc}")
             marcas[codigo] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             if fuente:
                 halladas += 1
