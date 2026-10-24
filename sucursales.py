@@ -131,8 +131,15 @@ def nombre_principal():
 FUENTES = ("principal", "inventario", "google", "external")
 
 
+CAMPOS_GOOGLE = ("kind", "file_id", "file_name", "sheet_name", "code_column", "name_column", "price_column")
+
+
 def fuente(sucursal):
-    """{"tipo": principal|inventario|google|external, "inventario_id": int|None} de la sucursal."""
+    """Fuente de precios de la sucursal:
+    {"tipo": principal|inventario|google|external, "inventario_id": int|None,
+     "google": {kind, file_id, file_name, sheet_name, code_column, name_column, price_column}|None,
+     "external_id": id de la configuración de SQL Server|None}.
+    Una elección incompleta (sin inventario, sin archivo o sin configuración) vale como «Principal»."""
     cfg = (sucursal or {}).get("excepciones_config") or {}
     tipo = cfg.get("fuente") if cfg.get("fuente") in FUENTES else "principal"
     inv = cfg.get("inventario_id")
@@ -140,20 +147,40 @@ def fuente(sucursal):
         inv = int(inv) if inv is not None else None
     except (TypeError, ValueError):
         inv = None
-    if tipo == "inventario" and inv is None:
+    google = cfg.get("google") if isinstance(cfg.get("google"), dict) else None
+    if google:
+        google = {k: str(google.get(k) or "") for k in CAMPOS_GOOGLE}
+    externa = str(cfg.get("external_id") or "") or None
+    if (tipo == "inventario" and inv is None) \
+            or (tipo == "google" and not (google and google["file_id"] and google["code_column"]
+                                          and google["name_column"] and google["price_column"])) \
+            or (tipo == "external" and not externa):
         tipo = "principal"
-    return {"tipo": tipo, "inventario_id": inv if tipo == "inventario" else None}
+    return {"tipo": tipo,
+            "inventario_id": inv if tipo == "inventario" else None,
+            "google": google if tipo == "google" else None,
+            "external_id": externa if tipo == "external" else None}
 
 
-def guardar_fuente(sucursal, tipo, inventario_id=None):
+def guardar_fuente(sucursal, tipo, inventario_id=None, google=None, external_id=None):
     if tipo not in FUENTES:
         raise ValueError("Fuente desconocida.")
     cfg = dict(sucursal.get("excepciones_config") or {})
-    cfg["fuente"] = tipo
-    cfg["inventario_id"] = int(inventario_id) if tipo == "inventario" and inventario_id is not None else None
+    cfg.update({"fuente": tipo,
+                "inventario_id": int(inventario_id) if tipo == "inventario" and inventario_id is not None else None,
+                "google": {k: str((google or {}).get(k) or "") for k in CAMPOS_GOOGLE} if tipo == "google" else None,
+                "external_id": str(external_id) if tipo == "external" and external_id else None})
     return guardar({"excepciones_config": cfg,
                     "excepciones_fuente": {"google": "google", "external": "external"}.get(tipo, "excel")},
                    sucursal["id"])
+
+
+def que_usan_externa(config_id):
+    """Sucursales que usan esa configuración de SQL Server."""
+    try:
+        return [s for s in listar() if fuente(s)["external_id"] == str(config_id)]
+    except RuntimeError:
+        return []
 
 
 def que_usan_inventario(inventario_id):

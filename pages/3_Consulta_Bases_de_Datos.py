@@ -175,10 +175,19 @@ with st.expander('Administrar conexiones y campos',expanded=not bool(sources)):
             left.write(f"{src['name']} — {src['database']} / {src['schema_name']}.{src['table_name']}")
             if right.button('Eliminar',key='del_'+src['id']):
                 try:
-                    api('DELETE','external_price_sources',params={'id':'eq.'+src['id']})
-                    st.rerun()
-                except requests.RequestException:
-                    st.error('No se pudo eliminar. Puede haber consultas asociadas.')
+                    import sucursales as _suc
+                    _usan=_suc.que_usan_externa(src['id'])
+                except Exception:
+                    _usan=[]
+                if _usan:
+                    st.error('La usan estas sucursales: '+', '.join(x['nombre'] for x in _usan)
+                             +'. Cámbiales la fuente en Sucursales antes de eliminarla.')
+                else:
+                    try:
+                        api('DELETE','external_price_sources',params={'id':'eq.'+src['id']})
+                        st.rerun()
+                    except requests.RequestException:
+                        st.error('No se pudo eliminar. Puede haber consultas asociadas.')
 
 st.divider()
 st.subheader('Fuente externa que utilizará la consulta')

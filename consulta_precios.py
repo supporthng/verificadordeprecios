@@ -252,28 +252,21 @@ def _con_sucursal(producto, codigo):
 
 
 def _fuente_consulta():
-    """(modo, id de la fuente externa, id de inventario o None) para esta pantalla.
+    """(modo, id de la configuración de SQL Server, id de inventario, config de Google) para esta pantalla.
     La Principal usa la fuente activa; una sucursal, la fuente que eligió en Sucursales."""
     mode, source_id = active_source()
     suc = _sucursal_actual()
     if not suc:
-        return mode, source_id, None
+        return mode, source_id, None, None
     import sucursales
     f = sucursales.fuente(suc)
     if f["tipo"] == "inventario":
-        return "local", None, f["inventario_id"]
+        return "local", None, f["inventario_id"], None
     if f["tipo"] == "google":
-        return "google", None, None
+        return "google", None, None, f["google"]
     if f["tipo"] == "external":
-        if mode == "external":
-            return mode, source_id, None
-        externas = admin_api("GET", "external_price_sources",
-                             params={"enabled": "eq.true", "select": "id", "limit": "2"})
-        if len(externas) != 1:
-            raise RuntimeError("La sucursal usa SQL Server, pero no hay exactamente una configuración "
-                               "habilitada en SQL Server › Consulta externa.")
-        return "external", externas[0]["id"], None
-    return mode, source_id, None
+        return "external", f["external_id"], None, None
+    return mode, source_id, None, None
 
 
 def buscar_producto(clave):
@@ -290,7 +283,7 @@ def buscar_producto(clave):
     st.session_state.external_job = None
     st.session_state.result_time = None
     try:
-        mode, source_id, inventario_id = _fuente_consulta()
+        mode, source_id, inventario_id, google_suc = _fuente_consulta()
         if mode == "local":
             # Consulta directa por clave primaria: no descarga el inventario completo.
             from inventarios import find_barcode
@@ -304,7 +297,7 @@ def buscar_producto(clave):
                       st.session_state.get("sucursal_codigo"))
         elif mode == "google":
             from google_oauth_source import config as google_config, catalog as google_catalog
-            cfg = google_config()
+            cfg = google_suc or google_config()
             if not cfg or not cfg.get("file_id"):
                 raise RuntimeError("Configura el archivo de Google desde Administración.")
             df = google_catalog(cfg["kind"], cfg["file_id"], cfg["sheet_name"] or "",

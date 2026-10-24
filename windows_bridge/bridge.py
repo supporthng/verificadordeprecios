@@ -89,7 +89,7 @@ try:
 except OSError:
     # El conector sigue funcionando si no tiene permiso para crear el registro.
     pass
-logger.info('Conector v5.2 iniciado; pid=%s; origen de configuración: %s; registro=%s', os.getpid(), CONFIG_SOURCE, LOG_FILE)
+logger.info('Conector v6 iniciado; pid=%s; origen de configuración: %s; registro=%s', os.getpid(), CONFIG_SOURCE, LOG_FILE)
 SESSIONS = set()
 DB_RESULTS = {}  # session-token -> (request id, accessible database names)
 WIZARD_REQUESTS = {}  # db request id -> discovery request id
@@ -137,7 +137,7 @@ def page(body):
 
 @app.get('/health')
 def health():
-    return {'ok': True, 'version': 'asistente-universal-v5',
+    return {'ok': True, 'version': 'asistente-universal-v6',
             'catalogo_equipos': {'cada_minutos': SYNC_MINUTES, **SYNC_LAST},
             'tipo_clave': ('nueva (sb_secret)' if KEY.startswith('sb_secret_') else
                            'antigua (legacy JWT)' if KEY.startswith('eyJ') else 'desconocida'),
@@ -663,12 +663,11 @@ def _execute_price(job):
     price_started = time.monotonic()
     rows = supabase('GET', 'external_price_sources', params={
         'id': 'eq.' + str(job['configuration_id']),
-        'enabled': 'eq.true',
         'select': 'id,engine,host,port,database,schema_name,table_name,code_column,description_column,price_column',
         'limit': '1',
     })
     if not rows:
-        raise ValueError('Configuración externa inexistente o deshabilitada')
+        raise ValueError('Configuración externa inexistente')
     config = rows[0]
     logger.info('Precio: configuración leída en %.3f s', time.monotonic() - price_started)
     if config['engine'] != 'SQL Server':
@@ -726,12 +725,11 @@ def _execute_catalog(job):
     """Listado paginado desde la fuente elegida, nunca desde una base fija."""
     rows = supabase('GET', 'external_price_sources', params={
         'id': 'eq.' + str(job['configuration_id']),
-        'enabled': 'eq.true',
         'select': 'id,engine,host,port,database,schema_name,table_name,code_column,description_column,price_column',
         'limit': '1',
     })
     if not rows:
-        raise ValueError('La configuración seleccionada no existe o está deshabilitada')
+        raise ValueError('La configuración seleccionada no existe')
     cfg = rows[0]
     if cfg['engine'] != 'SQL Server':
         raise ValueError('El listado externo requiere un conector compatible con este motor; actualmente SQL Server')
@@ -822,6 +820,41 @@ def _leer_catalogo_sql(cfg):
                 raise ValueError('La tabla tiene demasiados productos para los equipos (más de 300.000)')
     filas.sort()
     return filas
+
+
+def _sincronizar_sucursales():
+    """v6: tablas de SQL Server que eligieron las sucursales (Sucursales › Fuente de precios).
+    Se guardan en privado (logo-negocio/catalogo-externo-<configuración>.json); la app las publica
+    para los equipos de cada sucursal. Devuelve un resumen corto."""
+    try:
+        lista = supabase('GET', 'sucursales', params={'select': 'codigo,excepciones_config'})
+    except Exception:
+        return ''   # sin sucursales instaladas
+    ids = sorted({str((s.get('excepciones_config') or {}).get('external_id') or '')
+                  for s in lista if (s.get('excepciones_config') or {}).get('fuente') == 'external'} - {''})
+    if not ids:
+        return ''
+    hechas = []
+    for cid in ids:
+        rows = supabase('GET', 'external_price_sources', params={
+            'id': 'eq.' + cid, 'limit': '1',
+            'select': 'id,engine,host,port,database,schema_name,table_name,code_column,description_column,price_column'})
+        if not rows or rows[0]['engine'] != 'SQL Server':
+            continue
+        cfg = rows[0]
+        productos = _leer_catalogo_sql(cfg)
+        inventario = f"SQL Server · {cfg['database']}.{cfg.get('schema_name') or 'dbo'}.{cfg['table_name']}"
+        contenido = json.dumps(productos, ensure_ascii=False, separators=(',', ':'))
+        version = hashlib.sha256((inventario + '\n' + contenido).encode('utf-8')).hexdigest()[:16]
+        privado = json.dumps({'inventario': inventario, 'generado': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+                              'version': version, 'productos': productos},
+                             ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        r = _storage('POST', f'logo-negocio/catalogo-externo-{cid}.json', data=privado,
+                     headers={'Content-Type': 'application/json', 'x-upsert': 'true'})
+        if not r.ok:
+            raise RuntimeError(f'No se pudo guardar el catálogo de una sucursal (HTTP {r.status_code})')
+        hechas.append(f"{cfg['table_name']}: {len(productos)}")
+    return 'sucursales: ' + ', '.join(hechas) if hechas else ''
 
 
 def _sincronizar_catalogo():
@@ -979,11 +1012,20 @@ def _sync_worker():
     time.sleep(20)   # dejar que el conector termine de iniciar
     while True:
         espera = SYNC_MINUTES * 60
+        # v6: primero las tablas de las sucursales (no dependen de la fuente de la Principal).
+        try:
+            de_sucursales = _sincronizar_sucursales()
+            if de_sucursales:
+                logger.info('Catálogo para equipos: %s', de_sucursales)
+        except Exception as exc:
+            de_sucursales = 'sucursales: error ' + type(exc).__name__ + ': ' + str(exc)[:150]
+            logger.error('Catálogo de sucursales: %s', de_sucursales)
+            espera = min(espera, 120)
         try:
             resultado = _sincronizar_catalogo()
-            SYNC_LAST['estado'] = resultado
+            SYNC_LAST['estado'] = resultado + (' · ' + de_sucursales if de_sucursales else '')
             logger.info('Catálogo para equipos: %s', resultado)
-            if resultado == 'fuente activa no es SQL Server':
+            if resultado == 'fuente activa no es SQL Server' and not de_sucursales:
                 espera = 60   # revisar seguido: empezar apenas se active SQL Server
         except Exception as exc:
             SYNC_LAST['error'] = type(exc).__name__ + ': ' + str(exc)[:200]

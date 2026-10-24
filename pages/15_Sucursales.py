@@ -199,7 +199,98 @@ def _texto_fuente(f):
     if f["tipo"] == "inventario":
         nombre = next((i["name"] for i in _inventarios() if int(i["id"]) == f["inventario_id"]), None)
         return f"📚 {nombre}" if nombre else "⚠️ Inventario borrado"
-    return "☁️ Google Drive / Sheets" if f["tipo"] == "google" else "🔌 SQL Server"
+    if f["tipo"] == "google":
+        g = f["google"] or {}
+        return "☁️ " + (g.get("file_name") or "Google") + (f" › {g['sheet_name']}" if g.get("sheet_name") else "")
+    c = next((x for x in _externas() if str(x["id"]) == f["external_id"]), None)
+    return f"🔌 {c['name']}" if c else "⚠️ Configuración de SQL Server borrada"
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _externas():
+    """Configuraciones de SQL Server guardadas en SQL Server › Consulta externa."""
+    try:
+        return suc._api("GET", "external_price_sources",
+                        {"select": "id,name,database,schema_name,table_name,enabled", "order": "name.asc"})
+    except Exception:
+        return []
+
+
+def _adivinar(columnas, pistas):
+    return next((i for i, c in enumerate(columnas) if any(p in str(c).lower() for p in pistas)), 0)
+
+
+def _elegir_google(clave, actual):
+    """Archivo, hoja y columnas de Google para la sucursal. Devuelve el dict o None si falta algo."""
+    try:
+        import google_oauth_source as g
+        if g.faltantes():
+            st.warning("Google no está configurado. Ve a **Precios › Google Drive / Sheets**.")
+            return None
+        cfg_p = g.config() or {}
+        if not cfg_p.get("refresh_token_encrypted"):
+            st.warning("Primero conecta la cuenta de Google en **Precios › Google Drive / Sheets**.")
+            return None
+        marca = str(cfg_p.get("refresh_token_encrypted", ""))[-16:]
+    except Exception as exc:
+        st.error(f"No se pudo usar Google: {exc}")
+        return None
+    actual = actual or {}
+    tipos = {"sheets": "Google Sheets", "excel": "Excel (.xlsx) en Drive"}
+    kind = st.radio("Tipo de archivo", list(tipos), horizontal=True, format_func=tipos.get, key=clave + "_kind",
+                    index=list(tipos).index(actual.get("kind")) if actual.get("kind") in tipos else 0)
+    buscar = st.text_input("Buscar archivo por nombre", key=clave + "_buscar")
+    try:
+        archivos = g.listar_archivos(kind, buscar, marca)
+    except Exception as exc:
+        st.error(f"No se pudieron listar los archivos de Drive: {exc}")
+        return None
+    if actual.get("file_id") and actual.get("kind") == kind and all(a["id"] != actual["file_id"] for a in archivos):
+        archivos = [{"id": actual["file_id"], "name": actual.get("file_name") or actual["file_id"]}] + archivos
+    if not archivos:
+        st.info("No hay archivos de ese tipo en la cuenta de Google conectada.")
+        return None
+    ids = [a["id"] for a in archivos]
+    nombres = {a["id"]: a["name"] for a in archivos}
+    fid = st.selectbox("Archivo", ids, format_func=nombres.get, key=clave + "_file",
+                       index=ids.index(actual["file_id"]) if actual.get("file_id") in ids else 0)
+    try:
+        hojas = g.pestanas(kind, fid)
+    except Exception as exc:
+        st.error(f"No se pudo abrir el archivo: {exc}")
+        return None
+    hoja = st.selectbox("Hoja", hojas, key=clave + "_hoja",
+                        index=hojas.index(actual["sheet_name"]) if actual.get("sheet_name") in hojas else 0)
+    try:
+        columnas = [str(c) for c in g.read_file(kind, fid, hoja).columns]
+    except Exception as exc:
+        st.error(f"No se pudo leer la hoja: {exc}")
+        return None
+    if len(columnas) < 3:
+        st.warning("La hoja necesita al menos tres columnas: código, nombre y precio.")
+        return None
+
+    def _col(etiqueta, campo, pistas):
+        indice = columnas.index(actual[campo]) if actual.get(campo) in columnas else _adivinar(columnas, pistas)
+        return st.selectbox(etiqueta, columnas, index=indice, key=f"{clave}_{campo}_{fid}_{hoja}")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        codigo = _col("Código de barras", "code_column", ("codigo", "código", "barra", "barcode", "ean", "upc"))
+    with c2:
+        nombre = _col("Nombre", "name_column", ("nombre", "descrip", "producto", "name"))
+    with c3:
+        precio = _col("Precio", "price_column", ("precio", "price", "pvp"))
+    if len({codigo, nombre, precio}) != 3:
+        st.warning("Elige tres columnas distintas.")
+        return None
+    try:
+        n = len(g.catalog(kind, fid, hoja, codigo, nombre, precio))
+        st.caption(f"✅ {n:,} productos válidos en esa hoja.")
+    except Exception as exc:
+        st.warning(f"Con esas columnas no se encontraron productos válidos ({exc}).")
+        return None
+    return {"kind": kind, "file_id": fid, "file_name": nombres.get(fid, ""), "sheet_name": hoja,
+            "code_column": codigo, "name_column": nombre, "price_column": precio}
 
 # ====================================================================== lista (general)
 if general:
@@ -306,43 +397,63 @@ tabs = st.tabs(pestanas)
 with tabs[0]:
     actual = suc.fuente(sucursal)
     st.markdown(f"Fuente actual: **{_texto_fuente(actual)}**")
-    inventarios = _inventarios()
-    opciones = [("principal", None)] + [("inventario", int(i["id"])) for i in inventarios] + \
-               [("google", None), ("external", None)]
-
-    def _etiqueta(op):
-        tipo, inv = op
-        if tipo == "principal":
-            return "🏠 Igual que la Principal (" + _texto_fuente(None) + ")"
-        if tipo == "inventario":
-            nombre = next(i["name"] for i in inventarios if int(i["id"]) == inv)
-            return f"📚 Inventario: {nombre}"
-        return "☁️ Google Drive / Sheets" if tipo == "google" else "🔌 SQL Server (conector de Windows)"
-
-    try:
-        indice = opciones.index((actual["tipo"], actual["inventario_id"]))
-    except ValueError:
-        indice = 0
-    with st.form(f"fuente_{sucursal['id']}"):
-        elegida = st.radio("¿De dónde toma los precios esta sucursal?", opciones, index=indice,
-                           format_func=_etiqueta)
-        guardar_f = st.form_submit_button("Guardar fuente", type="primary")
-    if elegida[0] == "inventario":
-        st.caption("Los inventarios se crean, se cargan y se renombran en **Precios › Inventarios (Excel)**.")
-    elif elegida[0] == "google":
-        st.caption("Usa el archivo configurado en **Precios › Google Drive / Sheets**.")
-    elif elegida[0] == "external":
-        st.caption("Usa la configuración habilitada en **SQL Server › Consulta externa** y el conector de Windows.")
-    if not inventarios:
-        st.info("Todavía no hay inventarios. Créalos y cárgalos en **Precios › Inventarios (Excel)**.")
-    if general:
-        st.page_link("pages/10_Inventarios.py", label="Inventarios (Excel)", icon="📚")
-    if guardar_f:
+    clave_f = f"fuente_{sucursal['id']}"
+    tipos = {"principal": "🏠 Igual que la Principal (" + _texto_fuente(None) + ")",
+             "inventario": "📚 Inventario independiente",
+             "google": "☁️ Google Drive / Sheets",
+             "external": "🔌 SQL Server (conector de Windows)"}
+    tipo = st.radio("¿De dónde toma los precios esta sucursal?", list(tipos), format_func=tipos.get,
+                    index=list(tipos).index(actual["tipo"]), key=clave_f + "_tipo")
+    eleccion = {"tipo": tipo}
+    listo = True
+    if tipo == "inventario":
+        inventarios = _inventarios()
+        if not inventarios:
+            st.info("Todavía no hay inventarios. Créalos y cárgalos en **Precios › Inventarios (Excel)**.")
+            listo = False
+        else:
+            ids = [int(i["id"]) for i in inventarios]
+            nombres_inv = {int(i["id"]): i["name"] + ("  · 🏠 lo usa la Principal" if i.get("is_active") else "")
+                           for i in inventarios}
+            eleccion["inventario_id"] = st.selectbox(
+                "Inventario", ids, format_func=nombres_inv.get, key=clave_f + "_inv",
+                index=ids.index(actual["inventario_id"]) if actual["inventario_id"] in ids else 0)
+            st.caption("Los inventarios se crean, se cargan y se renombran en **Precios › Inventarios (Excel)**.")
+    elif tipo == "google":
+        actual_g = actual["google"]
+        if not actual_g:   # para empezar, el mismo archivo de la Principal (si tiene)
+            try:
+                import google_oauth_source as _g
+                actual_g = {k: (_g.config() or {}).get(k) for k in suc.CAMPOS_GOOGLE}
+            except Exception:
+                actual_g = None
+        eleccion["google"] = _elegir_google(clave_f + "_g", actual_g)
+        listo = eleccion["google"] is not None
+    elif tipo == "external":
+        externas = _externas()
+        if not externas:
+            st.info("Todavía no hay configuraciones de SQL Server. Créalas en **SQL Server › Consulta externa** "
+                    "(base de datos, tabla y columnas).")
+            listo = False
+        else:
+            ids = [str(x["id"]) for x in externas]
+            def _nombre_ext(i):
+                x = next(e for e in externas if str(e["id"]) == i)
+                return (f"{x['name']} — {x['database']} / {x['schema_name']}.{x['table_name']}"
+                        + ("  · 🏠 la usa la Principal" if x.get("enabled") else ""))
+            eleccion["external_id"] = st.selectbox(
+                "Base de datos y tabla", ids, format_func=_nombre_ext, key=clave_f + "_ext",
+                index=ids.index(actual["external_id"]) if actual["external_id"] in ids else 0)
+            st.caption("Las bases y tablas se configuran en **SQL Server › Consulta externa**. Para que esta "
+                       "sucursal las use, el conector de Windows debe ser la **versión 6** y estar encendido.")
+    if st.button("Guardar fuente", type="primary", disabled=not listo, key=clave_f + "_guardar"):
         with st.spinner("Guardando y enviando a los equipos de la sucursal…"):
-            suc.guardar_fuente(sucursal, elegida[0], elegida[1])
+            suc.guardar_fuente(sucursal, tipo, eleccion.get("inventario_id"), eleccion.get("google"),
+                               eleccion.get("external_id"))
             _inventarios.clear()
             _enviar_a_equipos()
-        st.session_state.aviso_sucursal = f"{sucursal['nombre']} ahora usa: {_etiqueta(elegida)}."
+        nuevo = suc.fuente({"excepciones_config": {"fuente": tipo, **{k: v for k, v in eleccion.items() if k != "tipo"}}})
+        st.session_state.aviso_sucursal = f"{sucursal['nombre']} ahora usa: {_texto_fuente(nuevo)}."
         st.rerun()
 
 # ====================================================================== ubicación

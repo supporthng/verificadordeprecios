@@ -164,7 +164,10 @@ Al cambiar cualquier archivo de `docs/`, sube la versión en los TRES lugares: `
 (si no lo logran en 2 minutos, se reinstalan sin borrar los precios).
 La carpeta `pwa_offline/` es el prototipo anterior y ya no se usa: puedes borrarla.
 
-## Conector de Windows (SQL Server) — versión 5
+## Conector de Windows (SQL Server) — versión 6
+
+- v6: atiende también las configuraciones de SQL Server que eligen las **sucursales** (no solo la habilitada
+  de la Principal) y envía sus tablas a `logo-negocio/catalogo-externo-<configuración>.json` para sus equipos.
 
 - Busca cada código con **todas sus formas equivalentes** (UPC-E impreso, UPC-A, EAN-13, sin ceros),
   igual que el Excel y Google (`codigos_barras.py`, compartido con la app).

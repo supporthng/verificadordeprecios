@@ -110,10 +110,10 @@ def fuente_activa(base=None, headers=None):
     return (r.json() or [{"source_type": "local"}])[0]["source_type"]
 
 
-def _catalogo_google():
-    """Catálogo desde el archivo de Google Drive / Sheets configurado."""
+def _catalogo_google(cfg=None):
+    """Catálogo desde el archivo de Google Drive / Sheets configurado (o el de una sucursal)."""
     import google_oauth_source as g
-    cfg = g.config()
+    cfg = cfg or g.config()
     if not cfg or not cfg.get("file_id"):
         raise RuntimeError("Configura el archivo de Google en Precios > Google Drive / Sheets.")
     g.read_file.clear()   # leer SIEMPRE la versión actual del archivo
@@ -122,7 +122,7 @@ def _catalogo_google():
                    cfg["code_column"], cfg["name_column"], cfg["price_column"])
     filas = sorted([str(b), str(n), round(float(p), 2)]
                    for b, n, p in df[["barcode", "name", "price"]].itertuples(index=False))
-    nombre = "Google " + ("Sheets" if cfg["kind"] == "sheets" else "Drive")
+    nombre = cfg.get("file_name") or ("Google " + ("Sheets" if cfg["kind"] == "sheets" else "Drive"))
     if cfg.get("sheet_name"):
         nombre += " · " + str(cfg["sheet_name"])
     return nombre, filas
@@ -152,10 +152,15 @@ def catalogo_externo_info():
         return None
 
 
-def _catalogo_externo(base, headers):
+def _catalogo_externo(base, headers, config_id=None):
     """SQL Server: el conector de Windows envía la tabla completa cada pocos minutos
-    (logo-negocio/catalogo-externo.json). La app no llega a la red del negocio."""
-    datos = _leer_privado(base, headers, f"{PRIVADO}/catalogo-externo.json")
+    (logo-negocio/catalogo-externo.json; el de una sucursal, catalogo-externo-<configuración>.json,
+    desde el conector v6). La app no llega a la red del negocio."""
+    nombre = f"catalogo-externo-{config_id}.json" if config_id else "catalogo-externo.json"
+    datos = _leer_privado(base, headers, f"{PRIVADO}/{nombre}")
+    if not datos and config_id:
+        raise RuntimeError("El conector de Windows todavía no envió la tabla de esta sucursal. "
+                           "Actualízalo a la versión 6 y déjalo encendido.")
     if not datos:
         raise RuntimeError("El conector de Windows todavía no envió el catálogo de SQL Server. Actualízalo a "
                            "la versión 5 y déjalo encendido: lo envía cada 15 minutos.")
@@ -376,8 +381,8 @@ def _catalogo_de_sucursal(base, headers, f):
     if f["tipo"] == "inventario":
         return _catalogo_local(base, headers, f["inventario_id"])
     if f["tipo"] == "google":
-        return _catalogo_google()
-    return _catalogo_externo(base, headers)
+        return _catalogo_google(f["google"])
+    return _catalogo_externo(base, headers, f["external_id"])
 
 
 def _publicar_sucursales(base, headers, general):
@@ -388,7 +393,6 @@ def _publicar_sucursales(base, headers, general):
     if not lista:
         return set()
     catalogos = set()
-    fuente_principal = fuente_activa(base, headers)
     for s in lista:
         f = sucursales.fuente(s)
         nombre_estado = estado_sucursal_nombre(s["codigo"])
@@ -399,8 +403,7 @@ def _publicar_sucursales(base, headers, general):
             anterior = {}
         propio = {**general, "sucursal": {"codigo": s["codigo"], "nombre": s["nombre"]},
                   "excepciones": None, "excepciones_cantidad": 0}
-        misma = f["tipo"] == "principal" or (f["tipo"] in ("google", "external") and f["tipo"] == fuente_principal)
-        if not misma:
+        if f["tipo"] != "principal":
             try:
                 inventario, productos = _catalogo_de_sucursal(base, headers, f)
             except Exception:
