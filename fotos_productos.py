@@ -229,7 +229,7 @@ UPCITEMDB = "https://api.upcitemdb.com/prod/trial/lookup"   # gratis: 100 consul
 DDG = "https://duckduckgo.com/"
 
 
-def _duckduckgo_imagenes(consulta, anotar):
+def _duckduckgo_imagenes(consulta, anotar, nombre=None, codigo=None):
     """Direcciones de imágenes para una búsqueda (DuckDuckGo, gratis y sin clave).
     Devuelve None si el buscador no respondió. Es un servicio no oficial: si algún día deja de
     responder, el resto de la búsqueda sigue funcionando igual."""
@@ -248,7 +248,10 @@ def _duckduckgo_imagenes(consulta, anotar):
     except (requests.RequestException, ValueError) as exc:
         anotar("Buscador DuckDuckGo", consulta, f"sin respuesta ({type(exc).__name__})")
         return None
-    anotar("Buscador DuckDuckGo", consulta, f"{len(resultados)} imagen(es)" if resultados else "sin resultados")
+    total = len(resultados)
+    resultados = [x for x in resultados if es_del_producto(" ".join(str(x.get(k) or "") for k in ("title", "url", "source")),
+                                                          nombre, codigo)]
+    anotar("Buscador DuckDuckGo", consulta, _texto_resultados(total, len(resultados)))
     urls = []
     for res in resultados[:10]:
         # La original y, de respaldo, la miniatura (siempre se puede descargar).
@@ -557,11 +560,32 @@ def imagenes_de_bing(html_pagina):
             continue
         original, miniatura = datos.get("murl"), datos.get("turl")
         if (original or miniatura) and all(p[:2] != (original, miniatura) for p in pares):
-            pares.append((original, miniatura, str(datos.get("t") or "")))
+            texto = " ".join(str(datos.get(k) or "") for k in ("t", "purl", "desc"))
+            pares.append((original, miniatura, texto))
     return pares
 
 
-def _bing_imagenes(consulta, anotar, nombre_filtro=None):
+def es_del_producto(texto, nombre=None, codigo=None):
+    """¿La imagen de un buscador es de ESTE producto? Su título o página debe mencionar el código
+    (en cualquiera de sus formas) o parecerse al nombre del producto."""
+    texto = str(texto or "")
+    if codigo:
+        digitos = "".join(c if c.isdigit() else " " for c in texto).split()
+        formas = {f.lstrip("0") for f in variantes_codigo(codigo) if len(f) >= 8}
+        if any(d.lstrip("0") in formas for d in digitos):
+            return True
+    return bool(nombre) and parecido(nombre, texto) >= PARECIDO_MINIMO
+
+
+def _texto_resultados(total, validos):
+    if not total:
+        return "sin resultados"
+    if not validos:
+        return f"{total} imagen(es), ninguna de este producto"
+    return f"{validos} de {total} imagen(es) son de este producto"
+
+
+def _bing_imagenes(consulta, anotar, nombre=None, codigo=None):
     """Bing Imágenes sin clave (página normal de resultados). None si no respondió."""
     try:
         r = requests.get(BING, params={"q": consulta, "form": "HDRSC2", "first": 1},
@@ -569,13 +593,12 @@ def _bing_imagenes(consulta, anotar, nombre_filtro=None):
     except requests.RequestException as exc:
         anotar("Buscador Bing", consulta, f"sin respuesta ({type(exc).__name__})")
         return None
-    pares = imagenes_de_bing(r.text) if r.ok else []
-    if nombre_filtro:   # búsqueda solo por nombre: el título de la imagen debe parecerse al producto
-        pares = [p for p in pares if parecido(nombre_filtro, p[2]) >= PARECIDO_MINIMO]
     if not r.ok:
         anotar("Buscador Bing", consulta, f"no respondió (HTTP {r.status_code})")
         return None
-    anotar("Buscador Bing", consulta, f"{len(pares)} imagen(es)" if pares else "sin resultados")
+    todos = imagenes_de_bing(r.text)
+    pares = [p for p in todos if es_del_producto(p[2], nombre, codigo)]
+    anotar("Buscador Bing", consulta, _texto_resultados(len(todos), len(pares)))
     return [u for par in pares[:10] for u in par[:2] if u and u.startswith("http")]
 
 
@@ -811,10 +834,11 @@ def _candidatas(codigo, informe, estado):
     if nombre_producto:
         consultas.append(nombre_producto)
     for n, consulta in enumerate(consultas):
-        solo_nombre = n == 1
-        buscadores = [("Buscador Bing", lambda c, a: _bing_imagenes(c, a, nombre_producto if solo_nombre else None))]
-        if not solo_nombre:   # DuckDuckGo no da títulos fiables: solo con nombre + código
-            buscadores.append(("Buscador DuckDuckGo", _duckduckgo_imagenes))
+        # Los buscadores traen de todo (dibujos, otros productos): solo se aceptan imágenes cuyo
+        # título o página mencione el código, o se parezca al nombre del producto.
+        buscadores = [("Buscador Bing", lambda c, a: _bing_imagenes(c, a, nombre_producto, codigo))]
+        if n == 0:
+            buscadores.append(("Buscador DuckDuckGo", lambda c, a: _duckduckgo_imagenes(c, a, nombre_producto, codigo)))
         for nombre_buscador, buscador in buscadores:
             imagenes = buscador(consulta, anotar)
             if imagenes is not None:
