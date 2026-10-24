@@ -608,6 +608,7 @@ MENU = {
     ],
     "Equipos y pantallas": [
         ("admin", "pages/14_Equipos_sin_internet.py", "Equipos sin internet", "📴"),
+        ("admin", "pages/16_Instaladores.py", "Instaladores", "📦"),
         ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
         ("admin", "pages/9_Ubicacion_Movil.py", "Ubicación y acceso", "📍"),
     ],
