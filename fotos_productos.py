@@ -256,6 +256,62 @@ def _duckduckgo_imagenes(consulta, anotar):
     return urls
 
 
+# Supermercados de República Dominicana con catálogo público VTEX (fotos de catálogo, productos locales).
+TIENDAS_VTEX = (
+    ("Sirena", "https://www.sirena.do"),
+)
+
+
+def _codigos_del_producto(producto):
+    """Todos los códigos que una tienda VTEX guarda para un producto (EAN, referencia, PLU)."""
+    vistos = set()
+    for clave in ("productReference", "productReferenceCode"):
+        if producto.get(clave):
+            vistos.add(str(producto[clave]))
+    for item in producto.get("items") or []:
+        if item.get("ean"):
+            vistos.add(str(item["ean"]))
+        for ref in item.get("referenceId") or []:
+            if ref.get("Value"):
+                vistos.add(str(ref["Value"]))
+    return {"".join(ch for ch in v if ch.isdigit()).lstrip("0") for v in vistos if v}
+
+
+def _vtex_imagenes(tienda, sitio, formas, anotar):
+    """Fotos del producto en una tienda VTEX, buscando por EAN, por referencia y por texto.
+    Solo se aceptan productos cuyo código coincide (no "parecidos"). None si no respondió."""
+    buscados = {f.lstrip("0") for f in formas}
+    pruebas = []
+    for forma in formas[:3]:
+        pruebas += [{"fq": f"alternateIds_Ean:{forma}"}, {"fq": f"alternateIds_RefId:A{forma}"}]
+    pruebas += [{"ft": formas[0]}]
+    respondio = False
+    for params in pruebas:
+        try:
+            r = requests.get(f"{sitio}/api/catalog_system/pub/products/search", params=params, timeout=12,
+                             headers={"User-Agent": NAVEGADOR, "Accept": "application/json"})
+        except requests.RequestException as exc:
+            anotar(f"Tienda {tienda}", formas[0], f"sin respuesta ({type(exc).__name__})")
+            return None
+        if r.status_code not in (200, 206, 404):
+            continue
+        respondio = True
+        try:
+            productos = r.json() if r.status_code in (200, 206) else []
+        except ValueError:
+            productos = []
+        for producto in productos if isinstance(productos, list) else []:
+            if not (_codigos_del_producto(producto) & buscados):
+                continue
+            urls = [img.get("imageUrl") for item in producto.get("items") or []
+                    for img in item.get("images") or [] if img.get("imageUrl")]
+            if urls:
+                anotar(f"Tienda {tienda}", formas[0], f"{producto.get('productName', 'producto')}: {len(urls)} foto(s)")
+                return list(dict.fromkeys(urls))
+    anotar(f"Tienda {tienda}", formas[0], "no lo tiene" if respondio else "no respondió")
+    return [] if respondio else None
+
+
 BING = "https://www.bing.com/images/search"
 
 
@@ -397,6 +453,13 @@ def _candidatas(codigo, informe, estado):
         if informe is not None:
             informe.append((base, forma, texto))
 
+    # 1) Supermercados dominicanos (catálogo con fotos de estudio, incluye productos locales).
+    for tienda, sitio in TIENDAS_VTEX:
+        urls = _vtex_imagenes(tienda, sitio, formas, anotar)
+        if urls is not None:
+            estado["respondio"] = True
+        for u in urls or []:
+            yield f"Tienda {tienda}", u, True
     for forma in formas[:2]:
         try:
             r = requests.get(UPCITEMDB, params={"upc": forma}, timeout=12,
