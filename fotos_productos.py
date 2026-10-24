@@ -558,8 +558,42 @@ def _foto_de_pagina(enlace):
     return None
 
 
+_catalogo_cache = {"version": None, "nombres": {}, "hora": 0}
+_nombre_forzado = {}
+
+
+def _nombre_en_catalogo(codigo):
+    """Nombre del producto en el catálogo publicado para los equipos (cualquier fuente de precios)."""
+    try:
+        if time.time() - _catalogo_cache["hora"] > 600 or not _catalogo_cache["nombres"]:
+            base, headers = _conexion()
+            r = requests.get(f"{base}/storage/v1/object/public/{PUBLICO}/estado.json", timeout=10)
+            estado = r.json() if r.ok else {}
+            if estado.get("catalogo") and estado.get("version") != _catalogo_cache["version"]:
+                rc = requests.get(f"{base}/storage/v1/object/public/{PUBLICO}/{estado['catalogo']}", timeout=60)
+                productos = (rc.json() or {}).get("productos") or [] if rc.ok else []
+                _catalogo_cache["nombres"] = {str(p[0]): str(p[1]) for p in productos if len(p) > 1}
+                _catalogo_cache["version"] = estado.get("version")
+            _catalogo_cache["hora"] = time.time()
+        nombres = _catalogo_cache["nombres"]
+        for forma in variantes_codigo(codigo):
+            if forma in nombres:
+                return nombres[forma].strip()
+    except (requests.RequestException, ValueError, RuntimeError, TypeError):
+        pass
+    return ""
+
+
 def _nombre_consultado(codigo):
-    """Nombre del producto según el registro de consultas (para buscar su foto por nombre)."""
+    """Nombre del producto para buscar su foto por nombre: el escrito en la prueba, el del registro
+    de consultas o el del catálogo publicado."""
+    if _nombre_forzado.get(codigo):
+        return _nombre_forzado[codigo]
+    del_registro = _nombre_del_registro(codigo)
+    return del_registro or _nombre_en_catalogo(codigo)
+
+
+def _nombre_del_registro(codigo):
     try:
         base, headers = _conexion()
         r = requests.get(f"{base}/rest/v1/price_lookup_log", headers=headers, timeout=10,
@@ -1045,18 +1079,26 @@ def enlaces_firmados(rutas, segundos=3600, base=None, headers=None):
     return salida
 
 
-def probar(codigo):
+def probar(codigo, nombre=None):
     """Diagnóstico para la página: busca YA la foto de un código y explica qué pasó."""
     codigo = _codigo_valido(codigo)
     if not codigo:
         return {"error": "Escribe un código de barras numérico de 6 a 14 dígitos."}
+    _nombre_forzado.clear()
+    if nombre and nombre.strip():
+        _nombre_forzado[codigo] = " ".join(nombre.split())[:120]
     base, headers = _conexion()
     for ruta, origen in ((f"{BUCKET}/{codigo}.png", "manual"), (f"{BUCKET}/{CARPETA_INTERNET}/{codigo}.jpg", "internet")):
         if _leer_existe(base, headers, ruta):
             return {"ya": origen, "ruta": ruta}
     informe = []
-    datos, fuente, respondio = buscar_en_internet(codigo, informe)
-    resultado = {"informe": informe, "respondio": respondio, "fuente": fuente}
+    try:
+        datos, fuente, respondio = buscar_en_internet(codigo, informe)
+    finally:
+        nombre_usado = _nombre_consultado(codigo)
+        _nombre_forzado.clear()
+    resultado = {"informe": informe, "respondio": respondio, "fuente": fuente, "nombre": nombre_usado,
+                 "en_catalogo": bool(_nombre_en_catalogo(codigo))}
     if datos:
         _asegurar_bucket(base, headers)
         _subir(base, headers, f"{BUCKET}/{CARPETA_INTERNET}/{codigo}.jpg", datos, "image/jpeg")
