@@ -256,10 +256,190 @@ def _duckduckgo_imagenes(consulta, anotar):
     return urls
 
 
-# Supermercados de República Dominicana con catálogo público VTEX (fotos de catálogo, productos locales).
-TIENDAS_VTEX = (
-    ("Sirena", "https://www.sirena.do"),
-)
+# Tiendas en línea donde buscar fotos. Sirena viene incluida; el administrador puede agregar más
+# desde Apariencia (se detecta sola si la tienda usa VTEX o Shopify, que tienen catálogo público).
+TIENDAS_PREDETERMINADAS = ({"nombre": "Sirena", "sitio": "https://www.sirena.do", "plataforma": "vtex"},)
+ARCHIVO_TIENDAS = "logo-negocio/fotos-tiendas.json"
+PARECIDO_MINIMO = 0.6
+_tiendas_cache = {"hora": 0, "lista": None}
+_PALABRAS_VACIAS = {"de", "del", "la", "el", "los", "las", "en", "con", "sin", "y", "x", "para", "a", "al", "e", "o",
+                    "u", "und", "unidad", "unidades", "pack", "paquete"}
+
+
+def _palabras(texto):
+    """Palabras normalizadas de un nombre: sin acentos ni mayúsculas, con la medida pegada al número
+    ("355 ml" -> "355ml", "2 Lt" -> "2lt")."""
+    import re
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texto or "").lower())
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = re.sub(r"(\d)[\s.]*(ml|lt|l|oz|onzas|onz|g|gr|kg|lb|lbs|cc|un|uds)\b", r"\1\2", t)
+    t = t.replace("onzas", "oz").replace("onz", "oz")
+    return [w for w in re.split(r"[^a-z0-9]+", t) if w and w not in _PALABRAS_VACIAS]
+
+
+def parecido(nuestro, otro):
+    """Qué tanto se parece el nombre de una tienda al nuestro (0 a 1). Las abreviaturas cuentan
+    ("bot" = "botella"), y si nuestro nombre tiene una medida (355ml, 2lt) la otra debe tenerla."""
+    a, b = _palabras(nuestro), _palabras(otro)
+    if not a or not b:
+        return 0.0
+
+    def coincide(x, y):
+        if x == y:
+            return True
+        if x[0].isdigit() or y[0].isdigit():
+            return x.rstrip("s") == y.rstrip("s")
+        return len(x) >= 3 and len(y) >= 3 and (x.startswith(y) or y.startswith(x))
+
+    medidas = [w for w in a if w[0].isdigit()]
+    if medidas and not any(coincide(m, w) for m in medidas for w in b):
+        return 0.0
+    return sum(1 for x in a if any(coincide(x, y) for y in b)) / len(a)
+
+
+def _sitio(direccion):
+    from urllib.parse import urlsplit
+    direccion = str(direccion or "").strip()
+    if not direccion.startswith(("http://", "https://")):
+        direccion = "https://" + direccion
+    partes = urlsplit(direccion)
+    return f"https://{partes.netloc}" if partes.netloc else ""
+
+
+def detectar_plataforma(sitio):
+    """'vtex', 'shopify' o None, según el catálogo público que tenga la tienda."""
+    cab = {"User-Agent": NAVEGADOR, "Accept": "application/json"}
+    try:
+        r = requests.get(f"{sitio}/api/catalog_system/pub/products/search", params={"_from": 0, "_to": 0},
+                         headers=cab, timeout=12)
+        if r.status_code in (200, 206) and isinstance(r.json(), list):
+            return "vtex"
+    except (requests.RequestException, ValueError):
+        pass
+    try:
+        r = requests.get(f"{sitio}/products.json", params={"limit": 1}, headers=cab, timeout=12)
+        if r.ok and isinstance(r.json().get("products"), list):
+            return "shopify"
+    except (requests.RequestException, ValueError, AttributeError):
+        pass
+    return None
+
+
+def tiendas_configuradas(base=None, headers=None):
+    """Tiendas donde buscar (predeterminadas + las agregadas en Apariencia). Se recuerda 5 min."""
+    if _tiendas_cache["lista"] is not None and time.time() - _tiendas_cache["hora"] < 300:
+        return _tiendas_cache["lista"]
+    lista = [dict(t) for t in TIENDAS_PREDETERMINADAS]
+    try:
+        if base is None:
+            base, headers = _conexion()
+        datos = _leer(base, headers, ARCHIVO_TIENDAS)
+        for t in (json.loads(datos).get("tiendas") if datos else []) or []:
+            if t.get("sitio") and t.get("plataforma") and all(t["sitio"] != x["sitio"] for x in lista):
+                lista.append(t)
+    except (RuntimeError, ValueError, AttributeError):
+        pass
+    _tiendas_cache.update(hora=time.time(), lista=lista)
+    return lista
+
+
+def guardar_tiendas(direcciones, base=None, headers=None):
+    """Guarda las tiendas agregadas por el administrador. Devuelve [(sitio, plataforma o None)]."""
+    if base is None:
+        base, headers = _conexion()
+    resultado, tiendas = [], []
+    for direccion in direcciones:
+        sitio = _sitio(direccion)
+        if not sitio or any(sitio == t["sitio"] for t in TIENDAS_PREDETERMINADAS) or any(sitio == t["sitio"] for t in tiendas):
+            continue
+        plataforma = detectar_plataforma(sitio)
+        resultado.append((sitio, plataforma))
+        if plataforma:
+            nombre = sitio.split("//", 1)[1].replace("www.", "").split(".")[0].capitalize()
+            tiendas.append({"nombre": nombre, "sitio": sitio, "plataforma": plataforma})
+    _subir(base, headers, ARCHIVO_TIENDAS, json.dumps({"tiendas": tiendas}, ensure_ascii=False).encode("utf-8"),
+           "application/json")
+    _tiendas_cache["lista"] = None
+    return resultado
+
+
+def _imagenes_vtex_de(producto):
+    return list(dict.fromkeys(img.get("imageUrl") for item in producto.get("items") or []
+                              for img in item.get("images") or [] if img.get("imageUrl")))
+
+
+def _vtex_por_nombre(tienda, sitio, nombre, anotar):
+    """Busca por NOMBRE en una tienda VTEX y devuelve las fotos del más parecido (o [])."""
+    try:
+        r = requests.get(f"{sitio}/api/catalog_system/pub/products/search", timeout=12,
+                         params={"ft": " ".join(_palabras(nombre))[:80], "_from": 0, "_to": 9},
+                         headers={"User-Agent": NAVEGADOR, "Accept": "application/json"})
+        productos = r.json() if r.status_code in (200, 206) else []
+    except (requests.RequestException, ValueError):
+        return []
+    mejor, puntaje = None, 0.0
+    for p in productos if isinstance(productos, list) else []:
+        valor = parecido(nombre, p.get("productName", ""))
+        if valor > puntaje:
+            mejor, puntaje = p, valor
+    if mejor is None or puntaje < PARECIDO_MINIMO:
+        anotar(f"Tienda {tienda} (por nombre)", nombre, "ninguno se parece lo suficiente")
+        return []
+    anotar(f"Tienda {tienda} (por nombre)", nombre, f"{mejor.get('productName')} (parecido {puntaje:.0%})")
+    return _imagenes_vtex_de(mejor)
+
+
+def _shopify_producto(sitio, enlace):
+    from urllib.parse import urlsplit
+    ruta = urlsplit(enlace).path.rstrip("/")
+    try:
+        r = requests.get(f"{sitio}{ruta}.js", headers={"User-Agent": NAVEGADOR}, timeout=12)
+        return r.json() if r.ok else None
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def _shopify_imagenes(tienda, sitio, formas, nombre, anotar, por_nombre=False):
+    """Tienda Shopify: por código (comprueba el código de barras de las variantes) o por nombre."""
+    buscados = {f.lstrip("0") for f in formas}
+    consulta = " ".join(_palabras(nombre))[:80] if por_nombre else formas[0]
+    if not consulta:
+        return []
+    try:
+        r = requests.get(f"{sitio}/search/suggest.json", timeout=12, headers={"User-Agent": NAVEGADOR},
+                         params={"q": consulta, "resources[type]": "product", "resources[limit]": 6})
+        productos = (((r.json() or {}).get("resources") or {}).get("results") or {}).get("products") or [] if r.ok else []
+    except (requests.RequestException, ValueError, AttributeError):
+        anotar(f"Tienda {tienda}", consulta, "no respondió")
+        return None
+    elegido, puntaje = None, 0.0
+    for p in productos:
+        detalle = _shopify_producto(sitio, p.get("url", ""))
+        if not detalle:
+            continue
+        codigos = {str(v.get("barcode") or "").lstrip("0") for v in detalle.get("variants") or []}
+        if codigos & buscados:
+            elegido, puntaje = detalle, 1.0
+            break
+        if por_nombre:
+            valor = parecido(nombre, detalle.get("title", ""))
+            if valor > puntaje:
+                elegido, puntaje = detalle, valor
+    etiqueta = f"Tienda {tienda}" + (" (por nombre)" if por_nombre else "")
+    if not elegido or puntaje < (PARECIDO_MINIMO if por_nombre else 1.0):
+        anotar(etiqueta, consulta, "no lo tiene" if not por_nombre else "ninguno se parece lo suficiente")
+        return []
+    fotos = [("https:" + u if u.startswith("//") else u) for u in (detalle_fotos(elegido))]
+    anotar(etiqueta, consulta, f"{elegido.get('title')}: {len(fotos)} foto(s)")
+    return fotos
+
+
+def detalle_fotos(producto):
+    fotos = list(producto.get("images") or [])
+    if producto.get("featured_image"):
+        fotos.insert(0, producto["featured_image"])
+    return [u for u in dict.fromkeys(fotos) if isinstance(u, str)]
 
 
 def _codigos_del_producto(producto):
@@ -329,12 +509,12 @@ def imagenes_de_bing(html_pagina):
         except ValueError:
             continue
         original, miniatura = datos.get("murl"), datos.get("turl")
-        if (original or miniatura) and (original, miniatura) not in pares:
-            pares.append((original, miniatura))
+        if (original or miniatura) and all(p[:2] != (original, miniatura) for p in pares):
+            pares.append((original, miniatura, str(datos.get("t") or "")))
     return pares
 
 
-def _bing_imagenes(consulta, anotar):
+def _bing_imagenes(consulta, anotar, nombre_filtro=None):
     """Bing Imágenes sin clave (página normal de resultados). None si no respondió."""
     try:
         r = requests.get(BING, params={"q": consulta, "form": "HDRSC2", "first": 1},
@@ -343,11 +523,13 @@ def _bing_imagenes(consulta, anotar):
         anotar("Buscador Bing", consulta, f"sin respuesta ({type(exc).__name__})")
         return None
     pares = imagenes_de_bing(r.text) if r.ok else []
+    if nombre_filtro:   # búsqueda solo por nombre: el título de la imagen debe parecerse al producto
+        pares = [p for p in pares if parecido(nombre_filtro, p[2]) >= PARECIDO_MINIMO]
     if not r.ok:
         anotar("Buscador Bing", consulta, f"no respondió (HTTP {r.status_code})")
         return None
     anotar("Buscador Bing", consulta, f"{len(pares)} imagen(es)" if pares else "sin resultados")
-    return [u for par in pares[:10] for u in par if u and u.startswith("http")]
+    return [u for par in pares[:10] for u in par[:2] if u and u.startswith("http")]
 
 
 def _foto_de_pagina(enlace):
@@ -388,7 +570,7 @@ def _nombre_consultado(codigo):
     except (requests.RequestException, ValueError, KeyError, RuntimeError):
         return ""
 FONDO_MINIMO = 0.55     # parte del borde que debe ser fondo blanco/claro (foto de catálogo)
-MAX_CANDIDATAS = 30
+MAX_CANDIDATAS = 40
 
 
 def _abrir_rgb(datos):
@@ -453,13 +635,17 @@ def _candidatas(codigo, informe, estado):
         if informe is not None:
             informe.append((base, forma, texto))
 
-    # 1) Supermercados dominicanos (catálogo con fotos de estudio, incluye productos locales).
-    for tienda, sitio in TIENDAS_VTEX:
-        urls = _vtex_imagenes(tienda, sitio, formas, anotar)
+    # 1) Tiendas en línea (Sirena y las agregadas): por CÓDIGO, con fotos de estudio y productos locales.
+    tiendas = tiendas_configuradas()
+    for t in tiendas:
+        if t["plataforma"] == "vtex":
+            urls = _vtex_imagenes(t["nombre"], t["sitio"], formas, anotar)
+        else:
+            urls = _shopify_imagenes(t["nombre"], t["sitio"], formas, "", anotar)
         if urls is not None:
             estado["respondio"] = True
         for u in urls or []:
-            yield f"Tienda {tienda}", u, True
+            yield f"Tienda {t['nombre']}", u, True
     for forma in formas[:2]:
         try:
             r = requests.get(UPCITEMDB, params={"upc": forma}, timeout=12,
@@ -485,8 +671,8 @@ def _candidatas(codigo, informe, estado):
         for u in fotos:
             yield "UPCitemdb", u, True
         # Las tiendas que venden el producto: la foto principal de su página (suele ser de catálogo).
-        tiendas = [o for it in items for o in (it.get("offers") or []) if str(o.get("link", "")).startswith("http")]
-        for oferta in tiendas[:4]:
+        ofertas = [o for it in items for o in (it.get("offers") or []) if str(o.get("link", "")).startswith("http")]
+        for oferta in ofertas[:4]:
             u = _foto_de_pagina(oferta["link"])
             tienda = oferta.get("domain") or oferta.get("merchant") or "tienda"
             if u:
@@ -523,16 +709,33 @@ def _candidatas(codigo, informe, estado):
                 yield nombre, u, False
             if urls:
                 break
-    # Últimos recursos (gratis, sin clave): buscadores de imágenes, por nombre y código.
-    nombre_producto = estado.get("titulo") or _nombre_consultado(codigo)
+    # 2) Si por código no apareció: por el NOMBRE del producto (el de tu inventario), en las tiendas.
+    nombre_propio = _nombre_consultado(codigo)
+    nombre_producto = nombre_propio or estado.get("titulo") or ""
     estado["titulo"] = nombre_producto
-    consulta = f"{nombre_producto} {codigo}".strip() if nombre_producto else codigo
-    for nombre_buscador, buscador in (("Buscador Bing", _bing_imagenes), ("Buscador DuckDuckGo", _duckduckgo_imagenes)):
-        imagenes = buscador(consulta, anotar)
-        if imagenes is not None:
-            estado["respondio"] = True
-        for u in imagenes or []:
-            yield nombre_buscador, u, False
+    if nombre_propio:
+        for t in tiendas:
+            if t["plataforma"] == "vtex":
+                urls = _vtex_por_nombre(t["nombre"], t["sitio"], nombre_propio, anotar)
+            else:
+                urls = _shopify_imagenes(t["nombre"], t["sitio"], formas, nombre_propio, anotar, por_nombre=True)
+            for u in urls or []:
+                yield f"Tienda {t['nombre']} (por nombre)", u, True
+    # 3) Últimos recursos (gratis, sin clave): buscadores de imágenes, por nombre y código y solo por nombre.
+    consultas = [f"{nombre_producto} {codigo}".strip() if nombre_producto else codigo]
+    if nombre_producto:
+        consultas.append(nombre_producto)
+    for n, consulta in enumerate(consultas):
+        solo_nombre = n == 1
+        buscadores = [("Buscador Bing", lambda c, a: _bing_imagenes(c, a, nombre_producto if solo_nombre else None))]
+        if not solo_nombre:   # DuckDuckGo no da títulos fiables: solo con nombre + código
+            buscadores.append(("Buscador DuckDuckGo", _duckduckgo_imagenes))
+        for nombre_buscador, buscador in buscadores:
+            imagenes = buscador(consulta, anotar)
+            if imagenes is not None:
+                estado["respondio"] = True
+            for u in imagenes or []:
+                yield nombre_buscador, u, False
 
 
 def _carpeta_open_facts(codigo):
@@ -930,3 +1133,19 @@ def evaluar_y_guardar(codigo, datos, fuente, base=None, headers=None, informe=No
         indice["pendientes"].remove(codigo)
     guardar_indice(indice, base, headers)
     return True
+
+
+def reintentar_sin_foto(base=None, headers=None):
+    """Vuelve a poner en la cola los productos marcados "sin foto" (no los que quitaste tú).
+    Útil al agregar tiendas o mejorar la búsqueda. Devuelve cuántos."""
+    if base is None:
+        base, headers = _conexion()
+    indice = leer_indice(base, headers)
+    codigos = [c for c, v in indice["sin_foto"].items() if not v.get("rechazada")]
+    for c in codigos:
+        indice["sin_foto"].pop(c, None)
+        (indice.get("navegador") or {}).pop(c, None)
+        if c not in indice["pendientes"]:
+            indice["pendientes"].append(c)
+    guardar_indice(indice, base, headers)
+    return len(codigos)
