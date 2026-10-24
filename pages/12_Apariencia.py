@@ -401,6 +401,56 @@ with pestana_fotos:
                 # En lista (no en tabla): en el celular la tabla corta los textos largos.
                 st.markdown("\n".join(f"- **{b}**{' · ' + c if c else ''}: {t}" for b, c, t in r.get("informe", [])))
 
+    # ---- Búsqueda con navegador real (GitHub Actions), iniciada desde aquí
+    import github_acciones as ga
+    st.markdown("#### 🌐 Buscar con el navegador")
+    st.caption("La búsqueda de arriba la hace el servidor de Streamlit, donde los buscadores de imágenes dan "
+               "pocos resultados. Este botón le pide a GitHub que abra un **Chrome de verdad** (Bing Imágenes "
+               "completo, descarga o captura de la foto) y recorra Merkapp. Tarda unos 5 a 10 minutos.")
+    if ga.configurado():
+        cb1, cb2 = st.columns([2, 1])
+        codigos_nav = cb1.text_input("Códigos a buscar primero (opcional, separados por coma)",
+                                     value=st.session_state.get("codigo_prueba_foto", ""), key="codigos_navegador")
+        if cb2.button("🌐 Buscar con el navegador ahora", key="iniciar_navegador", use_container_width=True):
+            lista = [c.strip() for c in codigos_nav.replace(" ", ",").split(",") if c.strip()]
+            ok, motivo = ga.iniciar(lista)
+            if ok:
+                st.success("Listo: GitHub ya empezó a buscar. En unos minutos toca «Ver estado» y, al terminar, "
+                           "las fotos encontradas aparecen en «Fotos guardadas».")
+            else:
+                st.error(motivo)
+        if st.button("Ver estado", key="estado_navegador"):
+            ultima = ga.ultima_ejecucion()
+            if not ultima:
+                st.info("Todavía no hay ejecuciones.")
+            else:
+                texto = {"queued": "⏳ En cola", "in_progress": "🔄 Buscando…"}.get(ultima["estado"])
+                if not texto:
+                    texto = "✅ Terminó" if ultima["resultado"] == "success" else f"⚠️ Terminó: {ultima['resultado']}"
+                try:
+                    hora = datetime.fromisoformat(ultima["fecha"].replace("Z", "+00:00")).astimezone(
+                        ZoneInfo("America/Santo_Domingo"))
+                    texto += f" · iniciada {hora:%d/%m %H:%M}"
+                except (ValueError, AttributeError):
+                    pass
+                st.markdown(f"{texto} · [ver el registro en GitHub]({ultima['enlace']})")
+                if ultima["estado"] == "completed":
+                    _imagenes_cambiaron()
+    else:
+        with st.expander("Activar este botón (una sola vez)"):
+            st.markdown(
+                "Hace falta una clave de GitHub que **solo** pueda iniciar las tareas de este repositorio:\n\n"
+                "1. En GitHub: tu foto (arriba a la derecha) → **Settings** → **Developer settings** → "
+                "**Personal access tokens** → **Fine-grained tokens** → **Generate new token**.\n"
+                "2. **Token name:** `Verificador fotos`. **Expiration:** la más larga que permita.\n"
+                "3. **Resource owner:** `supporthng` (el dueño del repositorio).\n"
+                "4. **Repository access:** *Only select repositories* → `verificadordeprecios`.\n"
+                "5. **Permissions → Repository permissions → Actions:** *Read and write*. Nada más.\n"
+                "6. **Generate token** y copia la clave (empieza con `github_pat_`).\n"
+                "7. En Streamlit: **Manage app → Settings → Secrets**, agrega la línea\n"
+                "   `GITHUB_TOKEN_ACCIONES = \"github_pat_...\"` y guarda.\n\n"
+                "La clave queda solo en los Secrets de Streamlit (nunca en los archivos de GitHub).")
+
     st.markdown("#### Fotos guardadas")
     filtro = st.text_input("Buscar por código", key="filtro_fotos", placeholder="Ej.: 7501055363063").strip()
     orden = sorted(fotos.items(), key=lambda kv: (indice["origen"].get(kv[0], {}).get("fecha", ""), kv[0]),
