@@ -16,7 +16,7 @@ from urllib.parse import quote_plus
 import fotos_productos as fp
 
 DIAS_ENTRE_INTENTOS = 30
-MAX_POR_VUELTA = 15
+MAX_POR_VUELTA = 10
 
 
 def _toca(marca):
@@ -114,3 +114,129 @@ def procesar(maximo=MAX_POR_VUELTA, registro=print):
     indice.setdefault("navegador", {}).update(marcas)
     fp.guardar_indice(indice, base, headers)
     return {"intentados": len(marcas), "halladas": halladas}
+
+
+# ---------------------------------------------------------------- índice de tiendas sin catálogo público
+# Algunas tiendas (p. ej. Merkapp) no tienen un catálogo que se pueda consultar, pero sus páginas de
+# categorías muestran todos los productos al ir bajando. El navegador las recorre una vez por semana
+# y arma un índice {código, nombre, foto}; después cualquier búsqueda usa ese índice al instante.
+TIENDAS_INDEXADAS = (
+    {"nombre": "Merkapp", "inicio": "https://www.merkapp.com/", "producto": "/products/", "categoria": "/collections/"},
+)
+DIAS_ENTRE_INDICES = 7
+MAX_CATEGORIAS = 80
+MAX_BAJADAS = 60
+
+_EXTRAER = r"""(patron) => {
+  const vistos = new Map();
+  for (const a of document.querySelectorAll('a[href*="' + patron + '"]')) {
+    const tarjeta = a.closest('li, article, [class*="card"], [class*="product"]') || a.parentElement;
+    const img = a.querySelector('img') || (tarjeta && tarjeta.querySelector('img'));
+    const src = img ? (img.currentSrc || img.src || img.getAttribute('data-src') || '') : '';
+    let texto = (a.innerText || a.getAttribute('title') || (img && img.alt) || '').trim().split('\n')[0];
+    if (!texto && tarjeta) texto = (tarjeta.innerText || '').trim().split('\n')[0];
+    const actual = vistos.get(a.href) || {};
+    vistos.set(a.href, {href: a.href, texto: actual.texto || texto, img: actual.img || src});
+  }
+  return Array.from(vistos.values());
+}"""
+
+
+def _codigo_de_foto(direccion):
+    import re
+    m = re.search(r"/(\d{8,14})_\d+\.(?:jpe?g|png|webp)", direccion or "", re.I)
+    return m.group(1) if m else ""
+
+
+def _nombre_de_enlace(href, patron):
+    slug = href.split(patron, 1)[-1].split("?", 1)[0].strip("/")
+    return slug.replace("-", " ")
+
+
+def indexar_tienda(pagina, tienda, registro=print, hechas=(), hasta=None):
+    """Recorre las categorías de una tienda con el navegador. Devuelve (productos, categorías hechas,
+    terminó). Si se acaba el tiempo (hasta), sigue en la próxima vuelta desde donde quedó."""
+    import time
+    pagina.goto(tienda["inicio"], wait_until="domcontentloaded", timeout=45000)
+    pagina.wait_for_timeout(2500)
+    categorias = pagina.evaluate("""(patron) => Array.from(new Set(Array.from(document.querySelectorAll('a[href*="' + patron + '"]'))
+        .map(a => a.href.split('#')[0].split('?')[0])))""", tienda["categoria"])
+    productos, hechas, termino = {}, list(hechas), True
+    for direccion in categorias[:MAX_CATEGORIAS]:
+        if direccion in hechas:
+            continue
+        if hasta and time.time() > hasta:
+            termino = False
+            break
+        try:
+            pagina.goto(direccion, wait_until="domcontentloaded", timeout=45000)
+            pagina.wait_for_timeout(2000)
+            antes, quietas = -1, 0
+            for _ in range(MAX_BAJADAS):
+                pagina.mouse.wheel(0, 20000)
+                pagina.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                pagina.wait_for_timeout(1200)
+                cuenta = pagina.locator(f'a[href*="{tienda["producto"]}"]').count()
+                quietas = quietas + 1 if cuenta == antes else 0
+                antes = cuenta
+                if quietas >= 3:
+                    break
+            for p in pagina.evaluate(_EXTRAER, tienda["producto"]):
+                if not p.get("img") or "image_not_available" in p["img"]:
+                    continue
+                nombre = p.get("texto") or _nombre_de_enlace(p["href"], tienda["producto"])
+                productos[p["href"]] = [_codigo_de_foto(p["img"]), nombre, p["img"]]
+            hechas.append(direccion)
+        except Exception as exc:
+            registro(f"⚠️ {tienda['nombre']}: {direccion}: {exc}")
+    return list(productos.values()), hechas, termino
+
+
+def actualizar_indices(registro=print, forzar=False, minutos=8):
+    """Arma (una vez por semana) el índice de las tiendas sin catálogo público, en tandas de unos
+    minutos por vuelta para no pasar el tiempo de GitHub Actions."""
+    import json
+    import time
+    hasta = time.time() + minutos * 60
+    from playwright.sync_api import sync_playwright
+    base, headers = fp._conexion()
+    indices = fp.leer_indices_tiendas(base, headers)
+    pendientes = [t for t in TIENDAS_INDEXADAS
+                  if forzar or (indices.get(t["nombre"]) or {}).get("en_curso")
+                  or _toca_dias((indices.get(t["nombre"]) or {}).get("fecha"), DIAS_ENTRE_INDICES)]
+    if not pendientes:
+        return {}
+    resumen = {}
+    with sync_playwright() as p:
+        try:
+            navegador = p.chromium.launch(channel="chrome", headless=True)
+        except Exception:
+            navegador = p.chromium.launch(headless=True)
+        pagina = navegador.new_page(user_agent=fp.NAVEGADOR, locale="es-ES", viewport={"width": 1366, "height": 900})
+        for tienda in pendientes:
+            previo = indices.get(tienda["nombre"]) or {}
+            curso = previo.get("en_curso") or {}
+            productos, hechas, termino = indexar_tienda(pagina, tienda, registro, curso.get("hechas", ()), hasta)
+            juntos = {p[2]: p for p in (curso.get("productos") or []) + productos}
+            lista = list(juntos.values())
+            if termino:
+                indices[tienda["nombre"]] = {"fecha": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                             "productos": lista or previo.get("productos") or []}
+            else:   # sigue en la próxima vuelta; mientras, se usa el índice anterior
+                indices[tienda["nombre"]] = {**previo, "en_curso": {"hechas": hechas, "productos": lista}}
+            resumen[tienda["nombre"]] = len(lista)
+            registro(f"🏪 {tienda['nombre']}: {len(lista)} productos en el índice"
+                     + ("" if termino else " (continúa en la próxima vuelta)"))
+        navegador.close()
+    fp._subir(base, headers, fp.ARCHIVO_INDICES, json.dumps(indices, ensure_ascii=False).encode("utf-8"),
+              "application/json")
+    return resumen
+
+
+def _toca_dias(marca, dias):
+    if not marca:
+        return True
+    try:
+        return datetime.now(timezone.utc) - datetime.fromisoformat(marca) > timedelta(days=dias)
+    except ValueError:
+        return True
