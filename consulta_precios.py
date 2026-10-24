@@ -234,6 +234,27 @@ for key, default in (
         st.session_state[key] = default
 
 
+def _sucursal_actual():
+    """Sucursal de esta pantalla (la del usuario o la detectada por ubicación), o None."""
+    codigo = st.session_state.get("sucursal_codigo")
+    if not codigo:
+        return None
+    try:
+        import sucursales
+        return sucursales.por_codigo(codigo)
+    except Exception:
+        return None
+
+
+def _con_sucursal(producto, codigo):
+    """Aplica la excepción de precio de la sucursal (manda sobre el catálogo general)."""
+    suc = _sucursal_actual()
+    if not suc:
+        return producto
+    import sucursales
+    return sucursales.aplicar(producto, codigo, suc)[0]
+
+
 def buscar_producto(clave):
     query = str(st.session_state.get(clave, "")).strip()
     # Cada lectura usa un cuadro NUEVO y vacío (otra clave). Si quedara el código
@@ -252,13 +273,14 @@ def buscar_producto(clave):
         if mode == "local":
             # Consulta directa por clave primaria: no descarga el inventario completo.
             from inventarios import find_barcode
-            product = find_barcode(query)
+            product = _con_sucursal(find_barcode(query), query)
             if product is None:
                 st.session_state.not_found = True
             else:
                 st.session_state.current_product = product
             st.session_state.result_time = time.monotonic()
-            registrar(query, product is not None, product, "local", "verificador")
+            registrar(query, product is not None, product, "local", "verificador",
+                      st.session_state.get("sucursal_codigo"))
         elif mode == "google":
             from google_oauth_source import config as google_config, catalog as google_catalog
             cfg = google_config()
@@ -272,12 +294,14 @@ def buscar_producto(clave):
             hits = df[codigos.isin(formas)]
             if not hits.empty:   # la forma más parecida a la leída primero
                 hits = hits.assign(_orden=codigos[hits.index].map(formas.index)).sort_values("_orden").head(1)
-            if hits.empty:
+            producto = _con_sucursal(None if hits.empty else hits.iloc[0].to_dict(), query)
+            if producto is None:
                 st.session_state.not_found = True
             else:
-                st.session_state.current_product = hits.iloc[0].to_dict()
+                st.session_state.current_product = producto
             st.session_state.result_time = time.monotonic()
-            registrar(query, not hits.empty, st.session_state.current_product, "google", "verificador")
+            registrar(query, producto is not None, producto, "google", "verificador",
+                      st.session_state.get("sucursal_codigo"))
         else:
             rows = admin_api("POST", "external_price_jobs", payload={
                 "configuration_id": source_id,
@@ -315,18 +339,24 @@ def check_external_result():
         job = rows[0]
         if job["status"] == "done":
             result = job.get("result")
+            buscado = st.session_state.get("last_searched_barcode", "")
+            producto = None
             if result:
-                st.session_state.current_product = {
-                    "barcode": result.get("barcode") or st.session_state.get("last_searched_barcode", ""),
+                producto = {
+                    "barcode": result.get("barcode") or buscado,
                     "name": result.get("name", ""),
                     "price": result.get("price", 0),
                 }
+            producto = _con_sucursal(producto, buscado)
+            if producto:
+                st.session_state.current_product = producto
             else:
                 st.session_state.not_found = True
             st.session_state.external_job = None
             st.session_state.result_time = time.monotonic()
-            registrar(st.session_state.get("last_searched_barcode", ""), bool(result),
-                      st.session_state.current_product, "external", "verificador")
+            registrar(st.session_state.get("last_searched_barcode", ""), producto is not None,
+                      st.session_state.current_product, "external", "verificador",
+                      st.session_state.get("sucursal_codigo"))
         elif job["status"] == "error":
             st.session_state.external_job = None
             st.session_state.consult_error = (

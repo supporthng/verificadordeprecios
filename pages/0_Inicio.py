@@ -31,7 +31,7 @@ def _contar(tabla, filtros):
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def resumen():
+def resumen(sucursal=None):
     import publicar_equipos as pe
     d = {"fuente": None, "inventario": None, "productos": None, "consultas": None,
          "equipos": None, "estado": None, "avisos": []}
@@ -54,7 +54,7 @@ def resumen():
     try:   # últimos 7 días del registro (solo las columnas necesarias)
         import registro_consultas
         inicio = datetime.combine(datetime.now(ZONA).date() - timedelta(days=6), hora.min, tzinfo=ZONA)
-        filas = registro_consultas.leer(inicio.astimezone(timezone.utc), limite=60000)
+        filas = registro_consultas.leer(inicio.astimezone(timezone.utc), limite=60000, sucursal=sucursal)
         d["consultas"] = [{"t": f["created_at"], "codigo": f["barcode"], "ok": f["found"],
                            "producto": f.get("product_name"), "precio": f.get("price"),
                            "canal": f.get("channel")} for f in filas]
@@ -100,7 +100,7 @@ def _hace(minutos):
 
 
 with st.spinner("Cargando el panel…"):
-    d = resumen()
+    d = resumen(st.session_state.get("sucursal_codigo") if usuario.get("sucursal_id") else None)
 
 ahora = datetime.now(ZONA)
 hoy = ahora.date()
@@ -368,7 +368,9 @@ ACCESOS = [
     (None, "consulta_precios.py", "Pantalla del verificador", "🏷️"),
     (None, "pages/8_Escaner_Movil.py", "Escáner móvil", "📱"),
 ]
-visibles = [a for a in ACCESOS if a[0] is None or (admin if a[0] == "admin" else allowed(usuario, a[0]))]
+_solo_general = st.session_state.get("paginas_solo_general") or set()
+visibles = [a for a in ACCESOS if (a[0] is None or (admin if a[0] == "admin" else allowed(usuario, a[0])))
+            and not (usuario.get("sucursal_id") and a[1] in _solo_general)]
 with st.container(key="accesos"):
     columnas = st.columns(4)
     for n, (_, ruta, titulo, icono) in enumerate(visibles):

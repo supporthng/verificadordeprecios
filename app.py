@@ -521,6 +521,19 @@ st.session_state["admin_authenticated"] = es_administrador_autenticado
 st.session_state["fuentes_admin_ok"] = allowed(user, "fuentes")
 st.session_state["external_admin_ok"] = allowed(user, "fuentes")
 
+# Sucursal de esta sesión: la del usuario (encargado o verificador de una sucursal) o, si entró
+# por ubicación, la sucursal en cuya zona está el equipo. Vacío = negocio general.
+try:
+    import sucursales as _suc
+    _sucursal_sesion = (_suc.por_codigo(st.session_state.get("sucursal_geo")) if user.get("por_ubicacion")
+                        else _suc.de_usuario(user))
+except Exception:
+    _sucursal_sesion = None
+st.session_state["sucursal_codigo"] = _sucursal_sesion["codigo"] if _sucursal_sesion else None
+st.session_state["sucursal_nombre"] = _sucursal_sesion["nombre"] if _sucursal_sesion else None
+# Usuario general: sin sucursal asignada. Los encargados no ven la configuración común.
+es_usuario_general = not user.get("sucursal_id")
+
 # La cuenta exclusiva de consulta no necesita navegación lateral.
 es_solo_consulta = es_kiosko(user)
 # consulta_precios.py lo usa para mostrar la pantalla adaptada al alto del equipo.
@@ -603,15 +616,34 @@ MENU = {
     ],
     "Administración": [
         ("usuarios", "pages/5_Administrador_Usuarios.py", "Usuarios", "👥"),
+        ("sucursales", "pages/15_Sucursales.py", "Sucursales", "🏬"),
     ],
     "SQL Server": [
         ("fuentes", "pages/2_Fuentes_de_datos.py", "Servidores", "🔌"),
         ("configurar", "pages/3_Consulta_Bases_de_Datos.py", "Consulta externa", "⚙️"),
     ],
 }
+# Configuración común a todas las sucursales: solo la ven los usuarios generales.
+SOLO_GENERAL = {"pages/10_Inventarios.py", "pages/11_Seleccion_Fuentes.py", "pages/7_Google_Drive.py",
+                "pages/14_Equipos_sin_internet.py", "pages/12_Apariencia.py", "pages/9_Ubicacion_Movil.py",
+                "pages/2_Fuentes_de_datos.py", "pages/3_Consulta_Bases_de_Datos.py"}
+
+
+st.session_state["paginas_solo_general"] = SOLO_GENERAL
+
+
+def _puede_ver(perm, path):
+    if path in SOLO_GENERAL and not es_usuario_general:
+        return False
+    if perm == "sucursales":   # el general la administra; el encargado ve los precios de su sucursal
+        return (es_administrador_autenticado and es_usuario_general) or (
+            not es_usuario_general and allowed(user, "cargar_archivo"))
+    return es_administrador_autenticado if perm == "admin" else allowed(user, perm)
+
+
 for seccion, opciones in MENU.items():
     visibles = [st.Page(path, title=title, icon=icon) for perm, path, title, icon in opciones
-                if (es_administrador_autenticado if perm == "admin" else allowed(user, perm))]
+                if _puede_ver(perm, path)]
     if visibles:
         pages[seccion] = visibles
 if es_solo_consulta:

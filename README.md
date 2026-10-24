@@ -217,3 +217,20 @@ Solo cuando cambia el código de `apps/` (las funciones del verificador viven en
    o pedir que se busque otra vez.
 5. Los equipos sin internet descargan las fotos nuevas solos (`equipos/fotos.json`) y las guardan en el equipo:
    se ven aunque no haya conexión. «Foto del producto junto al precio» se enciende o apaga en Apariencia.
+
+## Sucursales (fase 1)
+
+Requiere ejecutar **sql/MIGRACION_006_sucursales.sql** en Supabase (también incluido en `INSTALAR_COMPLETO.sql`).
+Mientras no haya sucursales, todo funciona como una sola tienda.
+
+- **Precios:** el catálogo general (la fuente activa) vale para todas. Cada sucursal puede tener **precios propios**
+  (Administración › Sucursales › Precios propios, desde Excel o CSV): mandan sobre el general solo en esa sucursal,
+  y sirven también para productos que solo vende ella.
+- **Usuarios:** sin sucursal = usuario general (ve y administra todo). Con sucursal = encargado: solo ve su
+  sucursal (sus precios propios, sus usuarios, su registro de consultas y su Inicio) y no ve la configuración común.
+  Una sucursal con usuarios no se puede borrar (para que no pasen a ser generales).
+- **Consulta en línea:** la cuenta del verificador de una sucursal muestra sus precios. Con el acceso por ubicación,
+  el equipo queda en la sucursal en cuya zona está (cada sucursal con su punto y su radio).
+- **Informes:** cada consulta queda anotada con su sucursal; el registro se puede ver por sucursal.
+
+Próximas fases: equipos sin internet por sucursal; precios propios desde Google y desde el SQL Server de cada sucursal.

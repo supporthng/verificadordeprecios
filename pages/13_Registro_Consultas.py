@@ -19,21 +19,39 @@ st.title("📊 Registro de consultas")
 st.caption("Cada consulta de precio queda registrada: sirve para encontrar productos que faltan "
            "en el inventario o tienen el código mal cargado.")
 
-periodo = st.radio("Período", ["Hoy", "Últimos 7 días", "Últimos 30 días", "Últimos 90 días"],
-                   index=1, horizontal=True)
+# Sucursales: el encargado ve solo la suya; el usuario general elige (o ve todas).
+import sucursales
+try:
+    lista_suc = sucursales.listar()
+except RuntimeError:
+    lista_suc = []
+NOMBRE_SUC = {s["codigo"]: s["nombre"] for s in lista_suc}
+filtro_suc = None
+if usuario.get("sucursal_id"):
+    propia = sucursales.por_id(usuario["sucursal_id"])
+    filtro_suc = propia["codigo"] if propia else "—"
+    st.caption(f"🏬 Sucursal: **{propia['nombre'] if propia else '—'}**")
+col_periodo, col_suc = st.columns([3, 1.3]) if (lista_suc and not filtro_suc) else (st.container(), None)
+with col_periodo:
+    periodo = st.radio("Período", ["Hoy", "Últimos 7 días", "Últimos 30 días", "Últimos 90 días"],
+                       index=1, horizontal=True)
+if col_suc is not None:
+    elegida = col_suc.selectbox("Sucursal", [None] + list(NOMBRE_SUC), format_func=lambda c: "Todas" if c is None
+                                else NOMBRE_SUC[c])
+    filtro_suc = elegida
 ahora = datetime.now(ZONA)
 inicio_local = datetime.combine(ahora.date(), hora.min, tzinfo=ZONA) - timedelta(
     days={"Hoy": 0, "Últimos 7 días": 6, "Últimos 30 días": 29, "Últimos 90 días": 89}[periodo])
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def cargar(desde_utc_iso):
-    return registro.leer(datetime.fromisoformat(desde_utc_iso))
+def cargar(desde_utc_iso, sucursal=None):
+    return registro.leer(datetime.fromisoformat(desde_utc_iso), sucursal=sucursal)
 
 
 try:
     with st.spinner("Cargando registro…"):
-        filas = cargar(inicio_local.astimezone(timezone.utc).isoformat(timespec="minutes"))
+        filas = cargar(inicio_local.astimezone(timezone.utc).isoformat(timespec="minutes"), filtro_suc)
 except Exception as exc:
     if "price_lookup_log" in str(exc) or "42P01" in str(exc) or "404" in str(exc):
         st.warning("El registro todavía no está instalado. Ejecuta **sql/MIGRACION_003_registro_consultas.sql** "
@@ -70,6 +88,13 @@ with col_a:
     por_dia["No encontrados"] = por_dia["Total"] - por_dia["Encontrados"]
     st.bar_chart(por_dia.set_index("dia")[["Encontrados", "No encontrados"]],
                  color=["#0757d4", "#dc2626"], stack=True)
+if lista_suc and not filtro_suc and "sucursal" in df:
+    st.markdown("**Por sucursal**")
+    por_suc = (df.assign(Sucursal=df["sucursal"].map(NOMBRE_SUC).fillna("Sin sucursal"))
+                 .groupby("Sucursal").agg(Consultas=("found", "size"), Encontrados=("found", "sum"))
+                 .sort_values("Consultas", ascending=False))
+    por_suc["% encontrados"] = (por_suc["Encontrados"] / por_suc["Consultas"]).map("{:.0%}".format)
+    st.dataframe(por_suc[["Consultas", "% encontrados"]], use_container_width=True)
 with col_b:
     st.markdown("**Por canal**")
     por_canal = (df.groupby("canal").agg(Consultas=("found", "size"), Encontrados=("found", "sum"))
@@ -125,7 +150,7 @@ with st.expander("Últimas 200 consultas"):
                  hide_index=True, use_container_width=True)
 
 # ---------------- Limpieza (solo administradores) ----------------
-if es_admin(usuario):
+if es_admin(usuario) and not usuario.get("sucursal_id"):
     with st.expander("🧹 Borrar registros antiguos"):
         dias = st.number_input("Borrar consultas con más de (días)", min_value=7, max_value=3650, value=90, step=1)
         confirmar = st.checkbox(f"Confirmo que quiero borrar las consultas con más de {int(dias)} días")

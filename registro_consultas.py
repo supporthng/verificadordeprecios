@@ -20,7 +20,7 @@ def _num(valor):
         return None
 
 
-def registrar(codigo, encontrado, producto=None, fuente=None, canal=None):
+def registrar(codigo, encontrado, producto=None, fuente=None, canal=None, sucursal=None):
     """Anota una consulta. Nunca lanza errores ni demora la respuesta."""
     try:
         base, clave = url(), clave_servidor()
@@ -36,6 +36,8 @@ def registrar(codigo, encontrado, producto=None, fuente=None, canal=None):
             "source": (str(fuente)[:20] if fuente else None),
             "channel": (str(canal)[:20] if canal else None),
         }
+        if sucursal:   # solo con sucursales (MIGRACION_006): antes la columna no existe
+            fila["sucursal"] = str(sucursal)[:30]
         destino = f"{base}/rest/v1/{TABLA}"
         encabezados = cabeceras(clave, {"Content-Type": "application/json", "Prefer": "return=minimal"})
 
@@ -54,17 +56,23 @@ def registrar(codigo, encontrado, producto=None, fuente=None, canal=None):
         pass
 
 
-def leer(desde, hasta=None, limite=50000):
-    """Filas del registro entre dos fechas (UTC), más recientes primero."""
+def leer(desde, hasta=None, limite=50000, sucursal=None):
+    """Filas del registro entre dos fechas (UTC), más recientes primero.
+    sucursal: código de una sucursal para ver solo sus consultas (None = todas)."""
     base, clave = url(), clave_servidor()
-    params = {"select": "created_at,barcode,found,product_name,price,source,channel",
-              "created_at": f"gte.{desde.isoformat()}", "order": "created_at.desc"}
+    columnas = "created_at,barcode,found,product_name,price,source,channel"
+    params = {"select": columnas + ",sucursal", "created_at": f"gte.{desde.isoformat()}", "order": "created_at.desc"}
+    if sucursal:
+        params["sucursal"] = f"eq.{sucursal}"
     if hasta is not None:
         params["and"] = f"(created_at.lt.{hasta.isoformat()})"
     filas, inicio, bloque = [], 0, 1000
     while inicio < limite:
         r = requests.get(f"{base}/rest/v1/{TABLA}", params={**params, "offset": inicio, "limit": bloque},
                          headers=cabeceras(clave), timeout=30)
+        if not r.ok and "sucursal" in r.text and not sucursal and "sucursal" in params["select"]:
+            params["select"] = columnas          # todavía sin MIGRACION_006
+            continue
         if not r.ok:
             raise RuntimeError(f"Supabase {r.status_code}: {r.text[:300]}")
         lote = r.json()

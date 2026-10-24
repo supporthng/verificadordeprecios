@@ -63,6 +63,7 @@ def sesion_vigente():
 def terminar():
     st.session_state.pop("geo_verificador_hasta", None)
     st.session_state.pop("geo_verificador_pedido", None)
+    st.session_state.pop("sucursal_geo", None)
 
 
 def verificar_ubicacion():
@@ -70,12 +71,16 @@ def verificar_ubicacion():
     Devuelve True si está autorizada; si está esperando o falla, muestra el aviso y detiene la página."""
     from mobile_geofence import get_settings, validate_location
     from streamlit_js_eval import get_geolocation
+    import sucursales
+    con_zona = sucursales.con_ubicacion()     # sucursales con su propia ubicación (MIGRACION_006)
     try:
         zona = get_settings()
     except Exception:
-        st.error("No se pudo leer la zona autorizada. Revisa Equipos y pantallas > Ubicación y acceso.")
-        return False
-    if not zona.get("enabled"):
+        if not con_zona:
+            st.error("No se pudo leer la zona autorizada. Revisa Equipos y pantallas > Ubicación y acceso.")
+            return False
+        zona = {"enabled": False}
+    if not zona.get("enabled") and not con_zona:
         st.warning("El acceso por ubicación necesita la zona autorizada activa "
                    "(Equipos y pantallas > Ubicación y acceso). Entra con tu usuario.")
         return False
@@ -89,6 +94,20 @@ def verificar_ubicacion():
         return False
     coords = respuesta.get("coords", respuesta) if isinstance(respuesta, dict) else {}
     lugar = {k: (coords or {}).get(k) for k in ("latitude", "longitude", "accuracy")}
+    # Primero las sucursales: el equipo queda asignado a la sucursal en cuya zona está.
+    if con_zona:
+        sucursal, distancia = sucursales.por_ubicacion(lugar.get("latitude"), lugar.get("longitude"),
+                                                      lugar.get("accuracy"))
+        if sucursal:
+            st.session_state["sucursal_geo"] = sucursal["codigo"]
+            st.session_state["geo_verificador_hasta"] = time.time() + VALIDEZ_HORAS * 3600
+            return True
+        if not zona.get("enabled"):
+            st.warning("Este equipo no está dentro de ninguna sucursal"
+                       + (f" (la más cercana está a {distancia:,.0f} m)." if distancia is not None else ".")
+                       + " Entra con tu usuario.")
+            return False
+    st.session_state.pop("sucursal_geo", None)
     ok, mensaje = validate_location(lugar, zona)
     if not ok:
         st.warning(mensaje.replace("Consulta Móvil", "la Consulta de Precios"))
