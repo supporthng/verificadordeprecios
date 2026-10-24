@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "2.0.1";
+  const APP_VERSION = "2.0.2";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -542,6 +542,8 @@
     // Se muestra en toda app Android sin bloqueo; si la app es vieja, el botón explica cómo actualizarla.
     $("m-botones").hidden = !(app && app.tipo === "android" && !app.bloqueoTotal() && !app.botonesBloqueados());
     $("m-marco").hidden = !(app && marcoNuevo);
+    $("m-app-buscar").hidden = !app || !!marcoNuevo;
+    if (app) $("m-app-buscar").textContent = "📲 Buscar actualización de la app " + (app.tipo === "android" ? "Android" : "Windows");
     if (marcoNuevo) $("m-marco").textContent = "⬇️ Actualizar la app a la versión " + marcoNuevo.version;
     $("m-cerrar").textContent = app && app.tipo === "android" ? "⏻ Salir del verificador (abre Ajustes)"
                                                               : "⏻ Cerrar aplicación";
@@ -685,16 +687,47 @@
     for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); }
     return false;
   }
+  // Devuelve "nueva", "al-dia", "sin-conexion" o "no-soporta".
   async function revisarMarco() {
     const app = nativo();
-    if (!app || !app.actualizar || !app.version()) { marcoNuevo = null; return; }
+    if (!app || !app.actualizar || !app.version()) { marcoNuevo = null; return "no-soporta"; }
     try {
       const r = await conTiempo("apps.json?t=" + Date.now(), { cache: "no-store" }, 8000);
-      if (!r.ok) return;
+      if (!r.ok) return "sin-conexion";
       const info = (await r.json())[app.tipo];
       marcoNuevo = info && info.url && versionMayor(info.version, app.version()) ? info : null;
-    } catch (e) { /* sin internet: se revisa después */ }
+      return marcoNuevo ? "nueva" : "al-dia";
+    } catch (e) { return "sin-conexion"; /* sin internet: se revisa después */ }
   }
+  // ⚙ › Buscar actualización de la app: revisa apps.json y, si hay versión nueva, la instala.
+  $("m-app-buscar").addEventListener("click", async function () {
+    const app = nativo();
+    if (!app) return;
+    const msg = $("menu-mensaje");
+    const nombre = app.tipo === "android" ? "Android" : "Windows";
+    if (!app.actualizar) {
+      msg.textContent = "Esta app de " + nombre + (app.version() ? " (versión " + app.version() + ")" : "") +
+        " es anterior a la que se actualiza desde aquí. Hay que instalar la nueva una vez a mano: toca ⏻, abre el " +
+        "navegador del equipo, entra a github.com/supporthng/verificadordeprecios/releases/download/android/ConsultaPrecios.apk " +
+        "e instálala encima (si Android no lo permite, desinstala la vieja primero). Desde esa versión se actualiza con este botón.";
+      return;
+    }
+    msg.textContent = "Buscando una versión nueva de la app…";
+    const r = await revisarMarco();
+    if (r === "nueva") {
+      app.actualizar(marcoNuevo.url);
+      window.__actualizacionApp("descargando");
+    } else if (r === "al-dia") {
+      msg.textContent = "✅ La app de " + nombre + " está al día (versión " + app.version() + ").";
+    } else if (r === "sin-conexion") {
+      msg.textContent = "No se pudo revisar: no hay conexión. Inténtalo de nuevo con internet.";
+    } else {
+      msg.textContent = "Todavía no se sabe la versión de la app. Espera unos segundos y vuelve a intentarlo.";
+    }
+    $("m-marco").hidden = !marcoNuevo;
+    $("m-app-buscar").hidden = !!marcoNuevo;
+    if (marcoNuevo) $("m-marco").textContent = "⬇️ Actualizar la app a la versión " + marcoNuevo.version;
+  });
   window.__actualizacionApp = function (estado) {
     const textos = { descargando: "⬇️ Descargando la versión nueva de la app…",
                      instalando: "⚙️ Instalando… (en Android, toca «Instalar» si lo pide)",
@@ -717,7 +750,7 @@
     }
     $("menu-mensaje").textContent = "Esta función necesita la app Android 1.1.0 o más nueva" +
       (app.version() ? " (este equipo tiene la " + app.version() + ")" : "") +
-      ". Sal con ⏻, desinstala Consulta de Precios y vuelve a instalar ConsultaPrecios.apk desde la página de instalación.";
+      ". Toca «📲 Buscar actualización de la app Android» para ver cómo instalarla.";
   });
   function cerrarApp() {
     const app = nativo();
