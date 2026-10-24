@@ -97,10 +97,83 @@ def _coordenadas(texto):
     return None
 
 
+def _editor_ubicacion(clave, datos, nombre, guardar_fn):
+    """Ubicación con enlace de Maps, GPS o coordenadas. datos: {latitude, longitude, radius_m, geo_enabled}."""
+    if st.session_state.get(clave + "_suc") != clave:
+        st.session_state[clave + "_lat"] = float(datos.get("latitude") or 0)
+        st.session_state[clave + "_lon"] = float(datos.get("longitude") or 0)
+        st.session_state[clave + "_suc"] = clave
+    c1, c2 = st.columns([2, 1])
+    enlace = c1.text_input("Pega un enlace de Google Maps o «latitud, longitud»", key=clave + "_enlace")
+    if enlace:
+        punto = _coordenadas(enlace)
+        if punto:
+            st.session_state[clave + "_lat"], st.session_state[clave + "_lon"] = punto
+        else:
+            st.warning("No encontré coordenadas en ese texto. En Google Maps, mantén presionado el punto y copia "
+                       "las coordenadas que aparecen (ej.: 18.4719, -69.9312).")
+    if c2.button("📍 Usar mi ubicación actual", use_container_width=True, key=clave + "_btn"):
+        st.session_state[clave + "_pedir"] = st.session_state.get(clave + "_pedir", 0) + 1
+    if st.session_state.get(clave + "_pedir"):
+        from streamlit_js_eval import get_geolocation
+        try:
+            respuesta = get_geolocation(component_key=f"{clave}_gps_{st.session_state[clave + '_pedir']}")
+        except TypeError:
+            respuesta = get_geolocation()
+        coords = (respuesta or {}).get("coords", respuesta) if isinstance(respuesta, dict) else None
+        if isinstance(coords, dict) and coords.get("latitude") is not None:
+            st.session_state[clave + "_lat"] = float(coords["latitude"])
+            st.session_state[clave + "_lon"] = float(coords["longitude"])
+            st.session_state[clave + "_pedir"] = 0
+            st.rerun()
+        elif isinstance(respuesta, dict) and respuesta.get("error"):
+            st.error("El navegador no pudo obtener la ubicación: " + str(respuesta["error"]))
+            st.session_state[clave + "_pedir"] = 0
+        else:
+            st.caption("Solicitando la ubicación… acepta el permiso del navegador.")
+    with st.form(clave + "_form"):
+        f1, f2, f3 = st.columns(3)
+        lat = f1.number_input("Latitud", -90.0, 90.0, step=0.000001, format="%.7f", key=clave + "_lat")
+        lon = f2.number_input("Longitud", -180.0, 180.0, step=0.000001, format="%.7f", key=clave + "_lon")
+        radio = f3.number_input("Radio (metros)", 10, 10000, value=int(datos.get("radius_m") or 100), step=10)
+        activa_geo = st.toggle("Usar esta ubicación para el acceso por ubicación",
+                               value=bool(datos.get("geo_enabled")))
+        guardar_geo = st.form_submit_button("Guardar ubicación", type="primary")
+    if guardar_geo:
+        if activa_geo and lat == 0 and lon == 0:
+            st.error("Primero indica la ubicación.")
+        else:
+            guardar_fn(lat, lon, int(radio), activa_geo)
+            st.session_state.aviso_sucursal = "Ubicación guardada."
+            st.rerun()
+    if not (lat == 0 and lon == 0) and all(map(math.isfinite, (lat, lon))):
+        _mapa([{"lat": lat, "lon": lon, "radio": int(radio), "nombre": nombre}])
+
+
+# ====================================================================== la principal
+# La tienda principal no es una fila de la tabla de sucursales: es el catálogo general, los equipos
+# sin sucursal y la ubicación de «Ubicación y acceso». Se muestra aquí junto a las demás.
+PRINCIPAL = "__principal__"
+
+
+def _zona_principal():
+    try:
+        from mobile_geofence import get_settings
+        return get_settings()
+    except Exception:
+        return None
+
+
+zona_principal = _zona_principal()
+NOMBRE_PRINCIPAL = "Principal"
+
 # ====================================================================== lista (general)
 if general:
     if todas:
-        filas = []
+        zp = zona_principal or {}
+        filas = [{"Sucursal": "🏠 " + NOMBRE_PRINCIPAL, "Código": "—", "Estado": "✅ Activa",
+                  "Ubicación": (f"📍 {zp.get('radius_m')} m" if zp.get("enabled") and zp.get("latitude") else "—"),
+                  "Precios propios": "Catálogo general"}]
         for s in todas:
             try:
                 n = suc.contar_excepciones(s["id"])
@@ -110,10 +183,14 @@ if general:
                           "Estado": "✅ Activa" if s["activa"] else "⏸️ Inactiva",
                           "Ubicación": (f"📍 {s['radius_m']} m" if s.get("geo_enabled") and s.get("latitude") is not None
                                         else "—"),
-                          "Precios propios": n})
+                          "Precios propios": "—" if n is None else f"{n:,}"})
         st.dataframe(filas, hide_index=True, use_container_width=True)
-        _mapa([{"lat": s.get("latitude"), "lon": s.get("longitude"), "radio": s["radius_m"], "nombre": s["nombre"]}
-               for s in todas if s.get("geo_enabled")], alto=300)
+        puntos = [{"lat": s.get("latitude"), "lon": s.get("longitude"), "radio": s["radius_m"], "nombre": s["nombre"]}
+                  for s in todas if s.get("geo_enabled")]
+        if zp.get("enabled") and zp.get("latitude"):
+            puntos.insert(0, {"lat": zp["latitude"], "lon": zp["longitude"], "radio": zp["radius_m"],
+                              "nombre": NOMBRE_PRINCIPAL})
+        _mapa(puntos, alto=300)
     else:
         st.info("Todavía no hay sucursales. Crea la primera: mientras no haya ninguna, todo funciona como una sola tienda.")
 
@@ -139,10 +216,39 @@ if general:
                     st.error(str(exc))
     if not todas:
         st.stop()
-    elegida_id = st.selectbox("Administrar", [s["id"] for s in todas],
-                              format_func=lambda i: next(s["nombre"] for s in todas if s["id"] == i))
+    elegida_id = st.selectbox("Administrar", [PRINCIPAL] + [s["id"] for s in todas],
+                              format_func=lambda i: "🏠 " + NOMBRE_PRINCIPAL if i == PRINCIPAL
+                              else "🏬 " + next(s["nombre"] for s in todas if s["id"] == i))
 else:
     elegida_id = usuario["sucursal_id"]
+
+if elegida_id == PRINCIPAL:
+    st.subheader("🏠 " + NOMBRE_PRINCIPAL)
+    tab_p, tab_u = st.tabs(["💲 Precios", "📍 Ubicación"])
+    with tab_p:
+        st.markdown("La principal usa el **catálogo general**: los precios de tu fuente activa (Excel, Google o "
+                    "SQL Server). Es también la base de todas las sucursales: lo que una sucursal no tenga como "
+                    "precio propio, lo toma de aquí.")
+        st.markdown("- Los **equipos sin internet** sin sucursal asignada son de la principal.\n"
+                    "- En el **registro de consultas** aparece como «Principal».")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.page_link("pages/11_Seleccion_Fuentes.py", label="Fuente activa", icon="🎯")
+        with c2:
+            st.page_link("pages/10_Inventarios.py", label="Inventarios (Excel)", icon="📚")
+    with tab_u:
+        st.caption("Es la ubicación de **Ubicación y acceso**: la Consulta Móvil y el acceso por ubicación la usan "
+                   "cuando el equipo no está dentro de ninguna sucursal.")
+        if zona_principal is None:
+            st.warning("No se pudo leer la ubicación de la principal. Revísala en **Ubicación y acceso**.")
+        else:
+            def _guardar_principal(lat, lon, radio, activa):
+                from mobile_geofence import save_settings
+                save_settings(lat, lon, enabled=activa, radius_m=radio)
+            _editor_ubicacion("geo_principal", {**zona_principal, "geo_enabled": zona_principal.get("enabled")},
+                              NOMBRE_PRINCIPAL, _guardar_principal)
+        st.page_link("pages/9_Ubicacion_Movil.py", label="Más opciones (buscar el negocio por nombre)", icon="📍")
+    st.stop()
 
 sucursal = next((s for s in todas if s["id"] == elegida_id), None)
 if not sucursal:
@@ -247,57 +353,10 @@ with tabs[1]:
         else:
             st.info("Esta sucursal todavía no tiene ubicación. La configura el administrador general.")
     else:
-        clave = f"geo_{sucursal['id']}"
-        if st.session_state.get(clave + "_suc") != sucursal["id"]:
-            st.session_state[clave + "_lat"] = float(sucursal.get("latitude") or 0)
-            st.session_state[clave + "_lon"] = float(sucursal.get("longitude") or 0)
-            st.session_state[clave + "_suc"] = sucursal["id"]
-        c1, c2 = st.columns([2, 1])
-        enlace = c1.text_input("Pega un enlace de Google Maps o «latitud, longitud»", key=clave + "_enlace")
-        if enlace:
-            punto = _coordenadas(enlace)
-            if punto:
-                st.session_state[clave + "_lat"], st.session_state[clave + "_lon"] = punto
-            else:
-                st.warning("No encontré coordenadas en ese texto. En Google Maps, mantén presionado el punto y copia "
-                           "las coordenadas que aparecen (ej.: 18.4719, -69.9312).")
-        if c2.button("📍 Usar mi ubicación actual", use_container_width=True, key=clave + "_btn"):
-            st.session_state[clave + "_pedir"] = st.session_state.get(clave + "_pedir", 0) + 1
-        if st.session_state.get(clave + "_pedir"):
-            from streamlit_js_eval import get_geolocation
-            try:
-                respuesta = get_geolocation(component_key=f"{clave}_gps_{st.session_state[clave + '_pedir']}")
-            except TypeError:
-                respuesta = get_geolocation()
-            coords = (respuesta or {}).get("coords", respuesta) if isinstance(respuesta, dict) else None
-            if isinstance(coords, dict) and coords.get("latitude") is not None:
-                st.session_state[clave + "_lat"] = float(coords["latitude"])
-                st.session_state[clave + "_lon"] = float(coords["longitude"])
-                st.session_state[clave + "_pedir"] = 0
-                st.rerun()
-            elif isinstance(respuesta, dict) and respuesta.get("error"):
-                st.error("El navegador no pudo obtener la ubicación: " + str(respuesta["error"]))
-                st.session_state[clave + "_pedir"] = 0
-            else:
-                st.caption("Solicitando la ubicación… acepta el permiso del navegador.")
-        with st.form(clave + "_form"):
-            f1, f2, f3 = st.columns(3)
-            lat = f1.number_input("Latitud", -90.0, 90.0, step=0.000001, format="%.7f", key=clave + "_lat")
-            lon = f2.number_input("Longitud", -180.0, 180.0, step=0.000001, format="%.7f", key=clave + "_lon")
-            radio = f3.number_input("Radio (metros)", 10, 10000, value=int(sucursal["radius_m"]), step=10)
-            activa_geo = st.toggle("Usar esta ubicación para el acceso por ubicación",
-                                   value=bool(sucursal.get("geo_enabled")))
-            guardar_geo = st.form_submit_button("Guardar ubicación", type="primary")
-        if guardar_geo:
-            if activa_geo and lat == 0 and lon == 0:
-                st.error("Primero indica la ubicación de la sucursal.")
-            else:
-                suc.guardar({"latitude": lat, "longitude": lon, "radius_m": int(radio), "geo_enabled": activa_geo},
-                            sucursal["id"])
-                st.session_state.aviso_sucursal = "Ubicación guardada."
-                st.rerun()
-        if not (lat == 0 and lon == 0) and all(map(math.isfinite, (lat, lon))):
-            _mapa([{"lat": lat, "lon": lon, "radio": int(radio), "nombre": sucursal["nombre"]}])
+        _editor_ubicacion(f"geo_{sucursal['id']}", sucursal, sucursal["nombre"],
+                          lambda lat, lon, radio, activa: suc.guardar(
+                              {"latitude": lat, "longitude": lon, "radius_m": radio, "geo_enabled": activa},
+                              sucursal["id"]))
 
 # ====================================================================== datos (general)
 if general:

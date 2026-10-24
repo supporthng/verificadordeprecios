@@ -56,13 +56,18 @@ def registrar(codigo, encontrado, producto=None, fuente=None, canal=None, sucurs
         pass
 
 
+PRINCIPAL = "__principal__"   # filtro: consultas de la principal (sin sucursal)
+
+
 def leer(desde, hasta=None, limite=50000, sucursal=None):
     """Filas del registro entre dos fechas (UTC), más recientes primero.
-    sucursal: código de una sucursal para ver solo sus consultas (None = todas)."""
+    sucursal: código de una sucursal para ver solo sus consultas (None = todas; PRINCIPAL = sin sucursal)."""
     base, clave = url(), clave_servidor()
     columnas = "created_at,barcode,found,product_name,price,source,channel"
     params = {"select": columnas + ",sucursal", "created_at": f"gte.{desde.isoformat()}", "order": "created_at.desc"}
-    if sucursal:
+    if sucursal == PRINCIPAL:
+        params["sucursal"] = "is.null"
+    elif sucursal:
         params["sucursal"] = f"eq.{sucursal}"
     if hasta is not None:
         params["and"] = f"(created_at.lt.{hasta.isoformat()})"

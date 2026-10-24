@@ -160,7 +160,7 @@ elif lista:
         al_dia = e.get("precios_version") == version_publicada
         filas.append({
             " ": luz, "Equipo": e.get("nombre"),
-            **({"Sucursal": _nombres_suc.get(e.get("sucursal"), "General") if e.get("sucursal") else "General"}
+            **({"Sucursal": _nombres_suc.get(e.get("sucursal"), e.get("sucursal")) if e.get("sucursal") else "Principal"}
                if _nombres_suc else {}),
             "Última conexión": texto,
             "Precios": "✅ al día" if al_dia else "⚠️ versión anterior",
@@ -261,9 +261,10 @@ if guardada:
         st.caption("Un equipo de sucursal usa el catálogo general **más los precios propios** de su sucursal. "
                    "En un equipo ya instalado se cambia desde su menú ⚙ › **Cambiar sucursal**. "
                    "Para uno nuevo, ábrele este enlace una vez con internet:")
-        _cod = st.selectbox("Sucursal", [s["codigo"] for s in _lista_suc],
-                            format_func=lambda c: next(s["nombre"] for s in _lista_suc if s["codigo"] == c))
-        _enlace = pe.enlace_instalacion(guardada, _cod)
+        _cod = st.selectbox("Sucursal", [""] + [s["codigo"] for s in _lista_suc],
+                            format_func=lambda c: "🏠 Principal" if not c
+                            else next(s["nombre"] for s in _lista_suc if s["codigo"] == c))
+        _enlace = pe.enlace_instalacion(guardada, _cod or None)
         st.code(_enlace, language=None)
         try:
             import io
