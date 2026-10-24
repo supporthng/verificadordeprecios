@@ -256,6 +256,44 @@ def _duckduckgo_imagenes(consulta, anotar):
     return urls
 
 
+BING = "https://www.bing.com/images/search"
+
+
+def imagenes_de_bing(html_pagina):
+    """De una página de resultados de Bing Imágenes: [(original, miniatura)].
+    La miniatura la sirve Bing y siempre se puede descargar, aunque la tienda bloquee la original."""
+    import html as html_mod
+    import json as json_mod
+    import re
+    pares = []
+    for crudo in re.findall(r'class="iusc"[^>]*?\sm="([^"]+)"', html_pagina or "") + \
+            re.findall(r'\sm="([^"]+)"[^>]*?class="iusc"', html_pagina or ""):
+        try:
+            datos = json_mod.loads(html_mod.unescape(crudo))
+        except ValueError:
+            continue
+        original, miniatura = datos.get("murl"), datos.get("turl")
+        if (original or miniatura) and (original, miniatura) not in pares:
+            pares.append((original, miniatura))
+    return pares
+
+
+def _bing_imagenes(consulta, anotar):
+    """Bing Imágenes sin clave (página normal de resultados). None si no respondió."""
+    try:
+        r = requests.get(BING, params={"q": consulta, "form": "HDRSC2", "first": 1},
+                         headers={"User-Agent": NAVEGADOR, "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"}, timeout=15)
+    except requests.RequestException as exc:
+        anotar("Buscador Bing", consulta, f"sin respuesta ({type(exc).__name__})")
+        return None
+    pares = imagenes_de_bing(r.text) if r.ok else []
+    if not r.ok:
+        anotar("Buscador Bing", consulta, f"no respondió (HTTP {r.status_code})")
+        return None
+    anotar("Buscador Bing", consulta, f"{len(pares)} imagen(es)" if pares else "sin resultados")
+    return [u for par in pares[:10] for u in par if u and u.startswith("http")]
+
+
 def _foto_de_pagina(enlace):
     """Foto principal de la página de un producto (og:image / twitter:image / JSON-LD), o None."""
     import re
@@ -294,7 +332,7 @@ def _nombre_consultado(codigo):
     except (requests.RequestException, ValueError, KeyError, RuntimeError):
         return ""
 FONDO_MINIMO = 0.55     # parte del borde que debe ser fondo blanco/claro (foto de catálogo)
-MAX_CANDIDATAS = 20
+MAX_CANDIDATAS = 30
 
 
 def _abrir_rgb(datos):
@@ -422,14 +460,16 @@ def _candidatas(codigo, informe, estado):
                 yield nombre, u, False
             if urls:
                 break
-    # Último recurso (gratis, sin clave): buscador de imágenes de DuckDuckGo, por nombre y código.
+    # Últimos recursos (gratis, sin clave): buscadores de imágenes, por nombre y código.
     nombre_producto = estado.get("titulo") or _nombre_consultado(codigo)
+    estado["titulo"] = nombre_producto
     consulta = f"{nombre_producto} {codigo}".strip() if nombre_producto else codigo
-    imagenes = _duckduckgo_imagenes(consulta, anotar)
-    if imagenes is not None:
-        estado["respondio"] = True
-    for u in imagenes or []:
-        yield "Buscador DuckDuckGo", u, False
+    for nombre_buscador, buscador in (("Buscador Bing", _bing_imagenes), ("Buscador DuckDuckGo", _duckduckgo_imagenes)):
+        imagenes = buscador(consulta, anotar)
+        if imagenes is not None:
+            estado["respondio"] = True
+        for u in imagenes or []:
+            yield nombre_buscador, u, False
 
 
 def _carpeta_open_facts(codigo):
@@ -801,3 +841,29 @@ def importar_desde_enlace(enlace):
     except (OSError, ValueError):
         raise RuntimeError("El enlace no es de una imagen (copia la dirección de la imagen, no de la página).")
     return _foto_catalogo(im), calidad_fondo(im)
+
+
+def evaluar_y_guardar(codigo, datos, fuente, base=None, headers=None, informe=None, etiqueta=""):
+    """Si la imagen es de catálogo, la deja pareja y la guarda como foto del producto. True si se guardó."""
+    try:
+        im = _abrir_rgb(datos)
+    except (OSError, ValueError):
+        return False
+    if min(im.size) < 120:
+        return False
+    puntaje = calidad_fondo(im)
+    if informe is not None:
+        informe.append((fuente, "", f"{etiqueta}{'aceptada' if puntaje >= FONDO_MINIMO else 'descartada'} (fondo limpio {puntaje:.0%})"))
+    if puntaje < FONDO_MINIMO:
+        return False
+    if base is None:
+        base, headers = _conexion()
+    _asegurar_bucket(base, headers)
+    _subir(base, headers, f"{BUCKET}/{CARPETA_INTERNET}/{codigo}.jpg", _foto_catalogo(im), "image/jpeg")
+    indice = leer_indice(base, headers)
+    indice["sin_foto"].pop(codigo, None)
+    indice["origen"][codigo] = {"fuente": fuente, "fecha": _ahora().isoformat(timespec="seconds")}
+    if codigo in indice["pendientes"]:
+        indice["pendientes"].remove(codigo)
+    guardar_indice(indice, base, headers)
+    return True
