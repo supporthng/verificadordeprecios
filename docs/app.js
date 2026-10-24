@@ -5,7 +5,7 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "2.0.2";
+  const APP_VERSION = "2.0.3";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
@@ -343,7 +343,7 @@
       subirRegistro();
       sincronizarFotos();
       revisarApp(false, reconectado || despertado);
-      revisarMarco();
+      revisarMarco().then(actualizarWindowsSola);
       despertado = false;
     } catch (e) {
       ultimoError = e && e.name === "AbortError" ? "Sin respuesta (¿hay internet?)." : String(e && e.message || e);
@@ -698,6 +698,24 @@
       marcoNuevo = info && info.url && versionMayor(info.version, app.version()) ? info : null;
       return marcoNuevo ? "nueva" : "al-dia";
     } catch (e) { return "sin-conexion"; /* sin internet: se revisa después */ }
+  }
+  // Windows instala sin preguntar: la app se actualiza sola cuando el equipo está libre
+  // (sin precio en pantalla ni menú abierto) y la versión nueva lleva 2 min detectada.
+  // Si algo falla, no se reintenta la misma versión hasta 6 horas después.
+  let marcoNuevoDesde = 0;
+  function actualizarWindowsSola(resultado) {
+    const app = nativo();
+    if (resultado !== "nueva" || !app || app.tipo !== "windows" || !marcoNuevo) { marcoNuevoDesde = 0; return; }
+    if (!marcoNuevoDesde) marcoNuevoDesde = Date.now();
+    if (Date.now() - marcoNuevoDesde < 2 * 60 * 1000) return;
+    if (!$("resultado").hidden || dialogoAbierto()) return;
+    const clave = "marco-intento-" + marcoNuevo.version;
+    try {
+      const antes = Number(localStorage.getItem(clave) || 0);
+      if (Date.now() - antes < 6 * 3600 * 1000) return;
+      localStorage.setItem(clave, String(Date.now()));
+    } catch (e) { /* sin almacenamiento: se intenta igual */ }
+    app.actualizar(marcoNuevo.url);
   }
   // ⚙ › Buscar actualización de la app: revisa apps.json y, si hay versión nueva, la instala.
   $("m-app-buscar").addEventListener("click", async function () {
