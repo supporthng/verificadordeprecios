@@ -492,6 +492,53 @@ def _vtex_imagenes(tienda, sitio, formas, anotar):
     return [] if respondio else None
 
 
+# Índice de tiendas sin catálogo público (lo arma fotos_navegador una vez por semana).
+ARCHIVO_INDICES = "logo-negocio/indice-tiendas.json"
+_indices_cache = {"hora": 0, "datos": None}
+
+
+def leer_indices_tiendas(base=None, headers=None):
+    try:
+        if base is None:
+            base, headers = _conexion()
+        datos = _leer(base, headers, ARCHIVO_INDICES)
+        return json.loads(datos) if datos else {}
+    except (RuntimeError, ValueError):
+        return {}
+
+
+def _indices():
+    if _indices_cache["datos"] is None or time.time() - _indices_cache["hora"] > 600:
+        _indices_cache.update(datos=leer_indices_tiendas(), hora=time.time())
+    return _indices_cache["datos"] or {}
+
+
+def _productos_indice(datos):
+    """El último índice completo más lo que ya se recorrió del que se está armando."""
+    return (datos.get("productos") or []) + ((datos.get("en_curso") or {}).get("productos") or [])
+
+
+def _indice_por_codigo(formas, anotar):
+    buscados = {f.lstrip("0") for f in formas}
+    for tienda, datos in _indices().items():
+        for codigo, nombre, foto in _productos_indice(datos):
+            if codigo and codigo.lstrip("0") in buscados:
+                anotar(f"Tienda {tienda}", formas[0], f"{nombre}: 1 foto(s)")
+                yield tienda, foto
+
+
+def _indice_por_nombre(nombre, anotar):
+    for tienda, datos in _indices().items():
+        mejor, puntaje = None, 0.0
+        for _codigo, otro, foto in _productos_indice(datos):
+            valor = parecido(nombre, otro)
+            if valor > puntaje:
+                mejor, puntaje = (otro, foto), valor
+        if mejor and puntaje >= PARECIDO_MINIMO:
+            anotar(f"Tienda {tienda} (por nombre)", nombre, f"{mejor[0]} (parecido {puntaje:.0%})")
+            yield tienda, mejor[1]
+
+
 BING = "https://www.bing.com/images/search"
 
 
@@ -680,6 +727,8 @@ def _candidatas(codigo, informe, estado):
             estado["respondio"] = True
         for u in urls or []:
             yield f"Tienda {t['nombre']}", u, True
+    for tienda, u in _indice_por_codigo(formas, anotar):
+        yield f"Tienda {tienda}", u, True
     for forma in formas[:2]:
         try:
             r = requests.get(UPCITEMDB, params={"upc": forma}, timeout=12,
@@ -755,6 +804,8 @@ def _candidatas(codigo, informe, estado):
                 urls = _shopify_imagenes(t["nombre"], t["sitio"], formas, nombre_propio, anotar, por_nombre=True)
             for u in urls or []:
                 yield f"Tienda {t['nombre']} (por nombre)", u, True
+        for tienda, u in _indice_por_nombre(nombre_propio, anotar):
+            yield f"Tienda {tienda} (por nombre)", u, True
     # 3) Últimos recursos (gratis, sin clave): buscadores de imágenes, por nombre y código y solo por nombre.
     consultas = [f"{nombre_producto} {codigo}".strip() if nombre_producto else codigo]
     if nombre_producto:
