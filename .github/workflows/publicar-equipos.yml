@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: "7,37 * * * *"
   workflow_dispatch:
+    inputs:
+      codigos:
+        description: "Códigos de barras a buscar primero (separados por coma)"
+        required: false
+        default: ""
 permissions:
   contents: read
 concurrency:
@@ -36,4 +41,6 @@ jobs:
         if: hashFiles('.streamlit/secrets.toml') != ''
         run: python -m playwright install --with-deps chromium
       - name: Revisar y publicar
+        env:
+          FOTOS_CODIGOS: ${{ inputs.codigos }}
         run: python publicar_automatico.py
