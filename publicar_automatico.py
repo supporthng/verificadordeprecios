@@ -19,6 +19,24 @@ def main():
     if antes is None:
         print("Todavía no se publicó nada para los equipos: no hay nada que mantener al día.")
         return 0
+    # Códigos pedidos desde la app ("Buscar con el navegador ahora"): se buscan primero.
+    prioridad = [c.strip() for c in os.environ.get("FOTOS_CODIGOS", "").split(",") if c.strip()]
+    if prioridad:
+        try:
+            import fotos_productos
+            fotos_productos.priorizar(prioridad)
+            print(f"Fotos pedidas desde la app: {', '.join(prioridad)}")
+        except Exception as exc:
+            print(f"::warning::No se pudieron priorizar los códigos: {exc}")
+    # Índice semanal de tiendas sin catálogo público (Merkapp…), recorriendo sus categorías.
+    try:
+        import fotos_navegador
+        for tienda, cantidad in fotos_navegador.actualizar_indices().items():
+            print(f"Índice de {tienda}: {cantidad} productos.")
+    except ImportError:
+        pass
+    except Exception as exc:
+        print(f"::warning::No se pudo actualizar el índice de tiendas: {exc}")
     # Fotos de los productos consultados que todavía no tienen (se buscan en internet).
     try:
         import fotos_productos
@@ -27,6 +45,16 @@ def main():
               f"{r['pendientes']} quedan para la próxima vuelta.")
     except Exception as exc:   # las fotos nunca impiden mantener los precios al día
         print(f"::warning::No se pudieron buscar fotos: {exc}")
+    # Las que siguen sin foto: con un navegador real (Bing Imágenes, descarga o captura).
+    try:
+        import fotos_navegador
+        r = fotos_navegador.procesar(prioridad=prioridad)
+        if r["intentados"]:
+            print(f"Fotos con navegador: {r['halladas']} de {r['intentados']} encontradas.")
+    except ImportError:
+        print("Fotos con navegador: falta Playwright en el flujo de GitHub (ver publicar-equipos.yml).")
+    except Exception as exc:
+        print(f"::warning::No se pudo usar el navegador para las fotos: {exc}")
     nuevo = pe.publicar()
     if nuevo.get("version") != antes.get("version"):
         print(f"Precios nuevos publicados: {nuevo['productos']:,} productos ({nuevo['inventario']}).")

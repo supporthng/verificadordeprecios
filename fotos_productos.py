@@ -1266,3 +1266,21 @@ def reintentar_sin_foto(base=None, headers=None):
             indice["pendientes"].append(c)
     guardar_indice(indice, base, headers)
     return len(codigos)
+
+
+def priorizar(codigos, base=None, headers=None):
+    """Pone estos códigos al principio de la cola (y olvida intentos anteriores), salvo los quitados."""
+    if base is None:
+        base, headers = _conexion()
+    indice = leer_indice(base, headers)
+    validos = []
+    for c in codigos:
+        c = _codigo_valido(c)
+        if not c or (indice["sin_foto"].get(c) or {}).get("rechazada"):
+            continue
+        indice["sin_foto"].pop(c, None)
+        (indice.get("navegador") or {}).pop(c, None)
+        validos.append(c)
+    indice["pendientes"] = validos + [c for c in indice["pendientes"] if c not in validos]
+    guardar_indice(indice, base, headers)
+    return validos

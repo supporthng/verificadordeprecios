@@ -72,8 +72,8 @@ def buscar_uno(pagina, contexto, codigo, consulta, base, headers, informe=None, 
     return None
 
 
-def procesar(maximo=MAX_POR_VUELTA, registro=print):
-    """Productos consultados que siguen sin foto: buscarlos con el navegador."""
+def procesar(maximo=MAX_POR_VUELTA, registro=print, prioridad=()):
+    """Productos consultados que siguen sin foto: buscarlos con el navegador (los de prioridad primero)."""
     from playwright.sync_api import sync_playwright
     base, headers = fp._conexion()
     indice = fp.leer_indice(base, headers)
@@ -82,6 +82,8 @@ def procesar(maximo=MAX_POR_VUELTA, registro=print):
     cola = [c for c, v in indice["sin_foto"].items()
             if not v.get("rechazada") and c not in guardadas and _toca(intentos.get(c))]
     cola += [c for c in indice["pendientes"] if c not in cola and c not in guardadas and _toca(intentos.get(c))]
+    primero = [c for c in prioridad if c not in guardadas and not (indice["sin_foto"].get(c) or {}).get("rechazada")]
+    cola = primero + [c for c in cola if c not in primero]
     if not cola:
         return {"intentados": 0, "halladas": 0}
     halladas, marcas = 0, {}
