@@ -365,10 +365,12 @@ with pestana_fotos:
         cp1, cp2 = st.columns([2, 1])
         codigo_prueba = cp1.text_input("Código de barras", key="codigo_prueba_foto",
                                        label_visibility="collapsed", placeholder="Ej.: 7501055363063").strip()
+        nombre_prueba = st.text_input("Nombre del producto (opcional)", key="nombre_prueba_foto",
+                                      placeholder="Si lo dejas vacío, se usa el de tu inventario").strip()
         if cp2.button("Buscar foto", key="probar_foto", use_container_width=True) and codigo_prueba:
             with st.spinner("Buscando…"):
                 try:
-                    r = fp.probar(codigo_prueba)
+                    r = fp.probar(codigo_prueba, nombre_prueba)
                 except Exception as exc:
                     r = {"error": str(exc)}
             if r.get("error"):
@@ -387,10 +389,15 @@ with pestana_fotos:
                         st.image(enlace, width=200)
                     import publicar_equipos
                     publicar_equipos.actualizar_si_publicado()
+                elif not r.get("nombre"):
+                    st.warning("Este código **no está en tu inventario** y por eso no se pudo buscar por nombre. "
+                               "Revisa que esté completo (los EAN tienen 13 dígitos) o escribe el nombre arriba.")
                 elif not r.get("respondio"):
                     st.error("Las bases de fotos no respondieron desde el servidor. Vuelve a intentar en unos minutos.")
                 else:
                     st.warning("Ninguna base de internet tiene foto de este código. Súbela a mano abajo.")
+                if r.get("nombre"):
+                    st.caption(f"Nombre usado para buscar: **{r['nombre']}**")
                 # En lista (no en tabla): en el celular la tabla corta los textos largos.
                 st.markdown("\n".join(f"- **{b}**{' · ' + c if c else ''}: {t}" for b, c, t in r.get("informe", [])))
 
