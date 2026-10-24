@@ -12,9 +12,26 @@ FLUJO = "publicar-equipos.yml"
 API = "https://api.github.com"
 
 
+def _secreto(nombre):
+    """Busca la clave arriba de todo en Secrets o, si quedó pegada debajo de una sección
+    ([algo]), dentro de esa sección. Acepta también el nombre en minúsculas."""
+    try:
+        for clave in (nombre, nombre.lower()):
+            if st.secrets.get(clave):
+                return str(st.secrets.get(clave)).strip()
+        for _, valor in st.secrets.items():
+            if hasattr(valor, "get"):
+                for clave in (nombre, nombre.lower()):
+                    if valor.get(clave):
+                        return str(valor.get(clave)).strip()
+    except Exception:
+        pass
+    return ""
+
+
 def _config():
-    token = str(st.secrets.get("GITHUB_TOKEN_ACCIONES", "") or "").strip()
-    repo = str(st.secrets.get("GITHUB_REPO", "") or "supporthng/verificadordeprecios").strip()
+    token = _secreto("GITHUB_TOKEN_ACCIONES")
+    repo = _secreto("GITHUB_REPO") or "supporthng/verificadordeprecios"
     return token, repo
 
 
