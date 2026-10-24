@@ -286,6 +286,34 @@ with pestana_fotos:
     m3.metric("Sin foto en internet", f"{len(sin_foto):,}")
     m4.metric("Por buscar", f"{len(indice['pendientes']):,}")
 
+    with st.expander("🏪 Tiendas en línea donde buscar fotos"):
+        st.caption("El sistema busca primero en estas tiendas, por código de barras y, si no aparece, por el "
+                   "nombre del producto. Sirena ya está incluida. Agrega otras pegando su dirección (una por "
+                   "línea): funcionan las tiendas hechas con VTEX o Shopify, que tienen catálogo público.")
+        try:
+            actuales = fp.tiendas_configuradas()
+        except Exception:
+            actuales = list(fp.TIENDAS_PREDETERMINADAS)
+        for t in actuales:
+            st.markdown(f"- **{t['nombre']}** · {t['sitio'].split('//', 1)[-1]} "
+                        f"({'VTEX' if t['plataforma'] == 'vtex' else 'Shopify'})"
+                        + (" · incluida" if t in fp.TIENDAS_PREDETERMINADAS else ""))
+        agregadas = [t["sitio"] for t in actuales if t not in fp.TIENDAS_PREDETERMINADAS]
+        texto_tiendas = st.text_area("Tiendas agregadas (una dirección por línea)", value="\n".join(agregadas),
+                                     key="tiendas_fotos", placeholder="plazalama.com.do\nmerkapp.com")
+        if st.button("Guardar tiendas", key="guardar_tiendas"):
+            with st.spinner("Revisando cada tienda…"):
+                try:
+                    lineas = [x.strip() for x in texto_tiendas.splitlines() if x.strip()]
+                    for sitio, plataforma in fp.guardar_tiendas(lineas):
+                        if plataforma:
+                            st.success(f"{sitio}: lista ({'VTEX' if plataforma == 'vtex' else 'Shopify'}).")
+                        else:
+                            st.warning(f"{sitio}: no tiene un catálogo público que el sistema pueda leer. "
+                                       "Sus fotos igual pueden aparecer por el buscador de imágenes.")
+                except Exception as exc:
+                    st.error(f"No se pudieron guardar las tiendas: {exc}")
+
     if st.button("🔎 Buscar fotos ahora", type="primary", key="buscar_fotos",
                  help="Busca las fotos de los productos consultados que todavía no tienen. "
                       "Igual se hace sola cada 30 minutos."):
@@ -313,6 +341,16 @@ with pestana_fotos:
                 st.rerun()
             except Exception as exc:
                 st.error(f"No se pudo revisar: {exc}")
+    if sin_foto and st.button(f"🔄 Volver a buscar los {len(sin_foto)} productos sin foto", key="reintentar_fotos",
+                              help="Los pone otra vez en la cola (no incluye los que quitaste tú). "
+                                   "Úsalo después de agregar tiendas."):
+        try:
+            n = fp.reintentar_sin_foto()
+            _imagenes_cambiaron()
+            st.session_state.aviso_logo = f"{n} producto(s) vuelven a la cola de búsqueda."
+            st.rerun()
+        except Exception as exc:
+            st.error(f"No se pudo: {exc}")
     st.caption("Solo se guardan fotos **de catálogo**: el producto solo, sobre fondo blanco. Las fotos tomadas "
                "en la tienda o con la mano se descartan solas.")
     st.caption("Se buscan solas: al consultar en la Consulta en línea (al instante) y cada 30 minutos para "
