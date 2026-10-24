@@ -19,6 +19,15 @@ def main():
     if antes is None:
         print("Todavía no se publicó nada para los equipos: no hay nada que mantener al día.")
         return 0
+    # Índice semanal de tiendas sin catálogo público (Merkapp…), recorriendo sus categorías.
+    try:
+        import fotos_navegador
+        for tienda, cantidad in fotos_navegador.actualizar_indices().items():
+            print(f"Índice de {tienda}: {cantidad} productos.")
+    except ImportError:
+        pass
+    except Exception as exc:
+        print(f"::warning::No se pudo actualizar el índice de tiendas: {exc}")
     # Fotos de los productos consultados que todavía no tienen (se buscan en internet).
     try:
         import fotos_productos
