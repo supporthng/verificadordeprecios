@@ -11,6 +11,35 @@ from streamlit_cookies_controller import CookieController
 from auth_usuarios import (allowed, bootstrap, cambiar_password, current_user,
                            es_admin, es_kiosko, intentar_login)
 
+# Archivos subidos a GitHub con la app ya funcionando: Streamlit puede seguir usando en memoria la
+# versión VIEJA de los módulos del proyecto (y fallar con AttributeError). Recargar los que cambiaron.
+def _recargar_modulos_cambiados():
+    import importlib
+    import os
+    import sys
+    raiz = os.path.dirname(os.path.abspath(__file__))
+    for nombre, modulo in list(sys.modules.items()):
+        archivo = getattr(modulo, "__file__", None) or ""
+        if not archivo.startswith(raiz) or os.path.dirname(archivo) != raiz or nombre in ("__main__", "app"):
+            continue
+        try:
+            fecha = os.path.getmtime(archivo)
+        except OSError:
+            continue
+        anterior = getattr(modulo, "_fecha_archivo", None)
+        if anterior != fecha:   # nunca revisado en este proceso, o el archivo cambió: recargar una vez
+            try:
+                modulo = importlib.reload(modulo)
+            except Exception:
+                continue
+        try:
+            modulo._fecha_archivo = fecha
+        except Exception:
+            pass
+
+
+_recargar_modulos_cambiados()
+
 st.set_page_config(
     page_title="Consulta de Precios",
     page_icon="🏷️",
