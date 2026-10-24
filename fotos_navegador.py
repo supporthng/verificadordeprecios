@@ -29,6 +29,8 @@ def _toca(marca):
 
 
 def buscar_uno(pagina, contexto, codigo, consulta, base, headers, informe=None, nombre_filtro=None):
+    """nombre_filtro: nombre del producto; solo se aceptan imágenes cuyo título o página mencione el
+    código o se parezca a ese nombre (los buscadores traen de todo)."""
     """Busca y guarda la foto de un código con el navegador. Devuelve la fuente o None."""
     pagina.goto(f"{fp.BING}?q={quote_plus(consulta)}&form=HDRSC2&first=1", wait_until="domcontentloaded",
                 timeout=30000)
@@ -39,9 +41,7 @@ def buscar_uno(pagina, contexto, codigo, consulta, base, headers, informe=None, 
             informe.append(("Navegador · Bing", consulta, "sin resultados"))
         return None
     todos = fp.imagenes_de_bing(pagina.content())
-    indices = list(range(len(todos)))
-    if nombre_filtro:   # búsqueda solo por nombre: el título de la imagen debe parecerse al producto
-        indices = [i for i, p in enumerate(todos) if fp.parecido(nombre_filtro, p[2]) >= fp.PARECIDO_MINIMO]
+    indices = [i for i, p in enumerate(todos) if fp.es_del_producto(p[2], nombre_filtro, codigo)]
     pares = [todos[i] for i in indices]
     if informe is not None:
         informe.append(("Navegador · Bing", consulta, f"{len(pares)} imagen(es)"))
@@ -98,7 +98,7 @@ def procesar(maximo=MAX_POR_VUELTA, registro=print):
             consulta = f"{nombre} {codigo}".strip() if nombre else codigo
             fuente = None
             # Primero nombre + código; si no aparece, solo por el nombre (de tu inventario).
-            for texto, filtro in ((consulta, None), (nombre, nombre)):
+            for texto, filtro in ((consulta, nombre), (nombre, nombre)):
                 if not texto or fuente:
                     continue
                 try:
