@@ -149,12 +149,20 @@ elif lista:
             navegador = "Navegador"
         return navegador + (" · " + sistema if sistema else "")
 
+    try:
+        import sucursales as _suc
+        _nombres_suc = {s["codigo"]: s["nombre"] for s in _suc.listar()}
+    except Exception:
+        _nombres_suc = {}
     filas = []
     for e in lista:
         texto, luz = _hace(e.get("ultima_vez"))
         al_dia = e.get("precios_version") == version_publicada
         filas.append({
-            " ": luz, "Equipo": e.get("nombre"), "Última conexión": texto,
+            " ": luz, "Equipo": e.get("nombre"),
+            **({"Sucursal": _nombres_suc.get(e.get("sucursal"), "General") if e.get("sucursal") else "General"}
+               if _nombres_suc else {}),
+            "Última conexión": texto,
             "Precios": "✅ al día" if al_dia else "⚠️ versión anterior",
             "Productos": e.get("productos"), "Consultas por subir": e.get("pendientes"),
             "App": e.get("app_version"),
@@ -242,6 +250,29 @@ if guardada:
         st.code(pe.enlace_instalacion(guardada), language=None)
     st.caption("En Chrome para Android: menú ⋮ > **Instalar aplicación** (o *Agregar a la pantalla "
                "principal*) para abrirla a pantalla completa, como una app.")
+    # Sucursales: cada equipo puede usar los precios propios de su sucursal.
+    try:
+        import sucursales as _suc
+        _lista_suc = _suc.listar()
+    except Exception:
+        _lista_suc = []
+    if _lista_suc:
+        st.markdown("#### 🏬 Equipos de una sucursal")
+        st.caption("Un equipo de sucursal usa el catálogo general **más los precios propios** de su sucursal. "
+                   "En un equipo ya instalado se cambia desde su menú ⚙ › **Cambiar sucursal**. "
+                   "Para uno nuevo, ábrele este enlace una vez con internet:")
+        _cod = st.selectbox("Sucursal", [s["codigo"] for s in _lista_suc],
+                            format_func=lambda c: next(s["nombre"] for s in _lista_suc if s["codigo"] == c))
+        _enlace = pe.enlace_instalacion(guardada, _cod)
+        st.code(_enlace, language=None)
+        try:
+            import io
+            import segno
+            _img = io.BytesIO()
+            segno.make(_enlace, error="l").save(_img, kind="png", scale=5, border=3)
+            st.image(_img.getvalue(), caption="Escanéalo con la cámara del equipo", width=240)
+        except Exception:
+            pass
 
 # ---------------- Revisión automática ----------------
 with st.expander("🔁 Revisión automática (si cambias precios directamente en Google)"):

@@ -101,6 +101,8 @@ def _hace(minutos):
 
 with st.spinner("Cargando el panel…"):
     d = resumen(st.session_state.get("sucursal_codigo") if usuario.get("sucursal_id") else None)
+if usuario.get("sucursal_id") and d.get("equipos") is not None:   # el encargado ve los equipos de su sucursal
+    d = {**d, "equipos": [e for e in d["equipos"] if e.get("sucursal") == st.session_state.get("sucursal_codigo")]}
 
 ahora = datetime.now(ZONA)
 hoy = ahora.date()

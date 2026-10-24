@@ -74,13 +74,13 @@ def _leer_privado(base, headers, ruta):
     return r.content if r.status_code == 200 and r.content else None
 
 
-def _borrar_catalogos_viejos(base, headers, conservar):
+def _borrar_catalogos_viejos(base, headers, conservar, prefijo="catalogo-"):
     try:
         r = requests.post(f"{base}/storage/v1/object/list/{BUCKET}",
                           headers={**headers, "Content-Type": "application/json"},
                           json={"prefix": "", "limit": 1000}, timeout=20)
         viejos = [o["name"] for o in (r.json() if r.ok else [])
-                  if o.get("name", "").startswith("catalogo-") and o["name"] not in conservar]
+                  if o.get("name", "").startswith(prefijo) and o["name"] not in conservar]
         if viejos:
             requests.delete(f"{base}/storage/v1/object/{BUCKET}",
                             headers={**headers, "Content-Type": "application/json"},
@@ -261,9 +261,11 @@ def guardar_app_equipos(direccion):
     return direccion
 
 
-def enlace_instalacion(direccion_app):
+def enlace_instalacion(direccion_app, sucursal=None):
+    """Enlace para vincular un equipo; con sucursal, el equipo recibe los precios de esa sucursal."""
     from urllib.parse import quote
-    return f"{direccion_app}?estado={quote(url_publica('estado.json'), safe='')}"
+    archivo = estado_sucursal_nombre(sucursal) if sucursal else "estado.json"
+    return f"{direccion_app}?estado={quote(url_publica(archivo), safe='')}"
 
 
 def _app_en_linea():
@@ -339,12 +341,62 @@ def publicar(apariencia_actual=None):
         # La clave pública solo permite AGREGAR filas 'offline-*' (ver MIGRACION_004).
         "registro": {"url": base, "clave": clave_publica()} if clave_publica() else None,
     }
-    if publicado == anterior:
-        return anterior          # nada cambió: no se reescribe nada
-    _subir(base, headers, "estado.json", json.dumps(publicado, ensure_ascii=False).encode("utf-8"),
-           "application/json", "no-cache")
-    _borrar_catalogos_viejos(base, headers, {archivo, anterior.get("catalogo")})
-    return publicado
+    if publicado != anterior:      # si nada cambió, no se reescribe nada
+        _subir(base, headers, "estado.json", json.dumps(publicado, ensure_ascii=False).encode("utf-8"),
+               "application/json", "no-cache")
+        _borrar_catalogos_viejos(base, headers, {archivo, anterior.get("catalogo")})
+    try:
+        _publicar_sucursales(base, headers, publicado)
+    except Exception:   # sin sucursales (o sin MIGRACION_006): los equipos usan el estado general
+        pass
+    return publicado if publicado != anterior else anterior
+
+
+def estado_sucursal_nombre(codigo):
+    return f"estado-{codigo}.json"
+
+
+def _publicar_sucursales(base, headers, general):
+    """Un estado por sucursal: el general + su lista de precios propios (archivo aparte y pequeño).
+    El equipo de una sucursal descarga el catálogo general UNA vez y encima aplica los suyos."""
+    import sucursales
+    lista = sucursales.listar()
+    if not lista:
+        return
+    conservar = set()
+    for s in lista:
+        filas = [[f["barcode"], f.get("name"), float(f["price"])] for f in sucursales.listar_excepciones(s["id"])]
+        contenido = json.dumps(filas, ensure_ascii=False, separators=(",", ":"))
+        huella = hashlib.sha256(contenido.encode("utf-8")).hexdigest()[:12]
+        archivo = f"excepciones-{s['codigo']}-{huella}.json" if filas else None
+        nombre_estado = estado_sucursal_nombre(s["codigo"])
+        try:
+            r = requests.get(url_publica(nombre_estado), params={"t": datetime.now().timestamp()}, timeout=10)
+            anterior = r.json() if r.status_code == 200 else {}
+        except (requests.RequestException, ValueError):
+            anterior = {}
+        if archivo and anterior.get("excepciones") != archivo:
+            _subir(base, headers, archivo, ('{"version":"%s","productos":%s}' % (huella, contenido)).encode("utf-8"),
+                   "application/json", "max-age=31536000")
+        propio = {**general, "sucursal": {"codigo": s["codigo"], "nombre": s["nombre"]},
+                  "excepciones": archivo, "excepciones_cantidad": len(filas)}
+        if propio != anterior:
+            _subir(base, headers, nombre_estado, json.dumps(propio, ensure_ascii=False).encode("utf-8"),
+                   "application/json", "no-cache")
+        if archivo:
+            conservar.add(archivo)
+    lista_publica = [{"codigo": s["codigo"], "nombre": s["nombre"]} for s in lista if s.get("activa")]
+    try:
+        r = requests.get(url_publica("sucursales.json"), params={"t": datetime.now().timestamp()}, timeout=10)
+        lista_anterior = r.json() if r.status_code == 200 else None
+    except (requests.RequestException, ValueError):
+        lista_anterior = None
+    if lista_publica != lista_anterior:
+        _subir(base, headers, "sucursales.json", json.dumps(lista_publica, ensure_ascii=False).encode("utf-8"),
+               "application/json", "no-cache")
+    _borrar_catalogos_viejos(base, headers, conservar, prefijo="excepciones-")
+    # Sucursal borrada: quitar su estado (sus equipos vuelven a vincularse a otra).
+    _borrar_catalogos_viejos(base, headers, {estado_sucursal_nombre(s["codigo"]) for s in lista}, prefijo="estado-")
 
 
 def actualizar_si_publicado():

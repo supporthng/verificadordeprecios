@@ -75,6 +75,15 @@ def _mapa(puntos, alto=360):
 </script>""", height=alto + 12)
 
 
+def _enviar_a_equipos():
+    """Los equipos sin internet de las sucursales reciben los cambios (si ya están en uso)."""
+    try:
+        import publicar_equipos
+        publicar_equipos.actualizar_si_publicado()
+    except Exception:
+        pass
+
+
 def _coordenadas(texto):
     """Latitud y longitud de un enlace de Google Maps o de un texto «18.47, -69.93»."""
     texto = str(texto or "")
@@ -123,6 +132,7 @@ if general:
             else:
                 try:
                     suc.guardar({"nombre": nombre_nueva.strip(), "codigo": codigo, "activa": True})
+                    _enviar_a_equipos()
                     st.session_state.aviso_sucursal = f"Sucursal «{nombre_nueva.strip()}» creada."
                     st.rerun()
                 except RuntimeError as exc:
@@ -197,8 +207,9 @@ with tabs[0]:
                                     key=f"conf_{sucursal['id']}")
             if st.button("Publicar precios propios", type="primary", disabled=not confirmar or datos.empty,
                          key=f"pub_{sucursal['id']}"):
-                with st.spinner("Guardando…"):
+                with st.spinner("Guardando y enviando a los equipos…"):
                     n = suc.reemplazar_excepciones(sucursal["id"], datos.to_dict("records"))
+                    _enviar_a_equipos()
                 st.session_state.aviso_sucursal = f"{n:,} precios propios publicados para {sucursal['nombre']}."
                 st.rerun()
         except Exception as exc:
@@ -221,6 +232,7 @@ with tabs[0]:
                                file_name=f"precios_{sucursal['codigo']}.csv", mime="text/csv")
             if general and st.button("🗑️ Quitar todos los precios propios", key=f"vaciar_{sucursal['id']}"):
                 suc.reemplazar_excepciones(sucursal["id"], [])
+                _enviar_a_equipos()
                 st.session_state.aviso_sucursal = "Precios propios quitados: la sucursal usa el catálogo general."
                 st.rerun()
 
@@ -297,6 +309,7 @@ if general:
             st.caption(f"Código: `{sucursal['codigo']}` (no cambia: lo usan los equipos y los informes).")
             if st.form_submit_button("Guardar", type="primary"):
                 suc.guardar({"nombre": nombre.strip() or sucursal["nombre"], "activa": activa}, sucursal["id"])
+                _enviar_a_equipos()
                 st.session_state.aviso_sucursal = "Sucursal guardada."
                 st.rerun()
         with st.expander("🗑️ Eliminar sucursal"):
@@ -306,6 +319,7 @@ if general:
             if st.button("Eliminar", disabled=not ok, key=f"delb_{sucursal['id']}"):
                 try:
                     suc.eliminar(sucursal["id"])
+                    _enviar_a_equipos()
                     st.session_state.aviso_sucursal = "Sucursal eliminada."
                     st.rerun()
                 except RuntimeError as exc:

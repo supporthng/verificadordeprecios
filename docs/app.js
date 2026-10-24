@@ -5,13 +5,14 @@
    - Salir o configurar pide la clave de salida (se comprueba en el equipo, sin internet). */
 (function () {
   "use strict";
-  const APP_VERSION = "1.9.1";
+  const APP_VERSION = "2.0.0";
   const FORMATO = 1;                       // formato de archivos que entiende esta app
   const REVISAR_CADA = 60 * 1000;          // con internet: revisar cada minuto (archivo de 1 KB)
   const SEG_ENCONTRADO = 10, SEG_NO_ENCONTRADO = 7;
   const MAX_REGISTRO = 20000, LOTE_REGISTRO = 200, DIAS_REGISTRO = 55;
   const INTENTOS_CLAVE = 5, BLOQUEO_CLAVE = 60 * 1000;
-  const RUTA_ESTADO = "/storage/v1/object/public/equipos/estado.json";
+  // estado.json (general) o estado-<sucursal>.json (precios de una sucursal).
+  const RUTA_ESTADO = /\/storage\/v1\/object\/public\/equipos\/estado(-[a-z0-9][a-z0-9-]{1,29})?\.json$/;
 
   const $ = function (id) { return document.getElementById(id); };
   const lector = $("lector");
@@ -19,6 +20,18 @@
   let origen = null;          // URL de estado.json
   let estado = null;          // estado.json guardado en el equipo
   let productos = new Map();  // código -> [código, nombre, precio]
+  let catalogoBase = [], excepciones = [];   // catálogo general y precios propios de la sucursal
+  /* Precios de este equipo: el catálogo general y, encima, los precios propios de su sucursal
+     (una excepción cambia el precio, o agrega un producto que solo vende esa sucursal). */
+  function armarProductos() {
+    const m = new Map(catalogoBase.map(function (p) { return [String(p[0]), p]; }));
+    (excepciones || []).forEach(function (e) {
+      const codigo = String(e[0]), actual = m.get(codigo);
+      if (actual) m.set(codigo, [actual[0], e[1] || actual[1], Number(e[2])]);
+      else if (e[1]) m.set(codigo, [codigo, e[1], Number(e[2])]);
+    });
+    productos = m;
+  }
   let revisando = false, ultimaRevisionOk = 0, ultimoError = "";
   let temporizador = null, recargarAlVolver = false;
   const imagenes = { logo: null, qr: null };   // URLs locales (blob:)
@@ -32,7 +45,7 @@
     return fetch(url, Object.assign({}, opciones, { signal: control.signal }))
       .finally(function () { clearTimeout(t); });
   }
-  function base() { return origen.slice(0, origen.length - "estado.json".length); }
+  function base() { return origen.slice(0, origen.lastIndexOf("/") + 1); }
   function fecha(valor) {
     if (!valor) return "—";
     const d = new Date(valor);
@@ -61,7 +74,7 @@
       let u = new URL(String(texto || "").trim());
       const interno = u.searchParams.get("estado");
       if (interno) u = new URL(interno);         // pegaron el enlace de instalación completo
-      if (u.protocol !== "https:" || !u.pathname.endsWith(RUTA_ESTADO)) return null;
+      if (u.protocol !== "https:" || !RUTA_ESTADO.test(u.pathname)) return null;
       return u.origin + u.pathname;
     } catch (e) { return null; }
   }
@@ -215,6 +228,7 @@
       product_name: p ? String(p[1]).slice(0, 200) : null,
       price: p ? Math.round(Number(p[2]) * 100) / 100 : null,
       source: "local", channel: "offline-verificador",
+      sucursal: estado && estado.sucursal ? estado.sucursal.codigo : undefined,
     }).then(function () { return BD.recortar(MAX_REGISTRO); })
       .catch(function () { /* el registro nunca debe afectar la consulta */ });
     clearTimeout(anotar.envio);
@@ -236,8 +250,23 @@
         if (filas.length) {
           const cabeceras = { "apikey": destino.clave, "Content-Type": "application/json", "Prefer": "return=minimal" };
           if (String(destino.clave).indexOf("eyJ") === 0) cabeceras["Authorization"] = "Bearer " + destino.clave;
-          const r = await conTiempo(destino.url + "/rest/v1/price_lookup_log",
-            { method: "POST", headers: cabeceras, body: JSON.stringify(filas.map(function (x) { return x.fila; })) }, 20000);
+          // Todas las filas con las mismas columnas (lo exige la base). La sucursal va solo si alguna la tiene;
+          // si la base todavía no tiene esa columna (falta MIGRACION_006), se suben sin ella.
+          const conSucursal = filas.some(function (x) { return x.fila.sucursal; });
+          let cuerpo = filas.map(function (x) {
+            const f = Object.assign({}, x.fila);
+            if (conSucursal) f.sucursal = f.sucursal || null; else delete f.sucursal;
+            return f;
+          });
+          const subir = function () {
+            return conTiempo(destino.url + "/rest/v1/price_lookup_log",
+              { method: "POST", headers: cabeceras, body: JSON.stringify(cuerpo) }, 20000);
+          };
+          let r = await subir();
+          if (!r.ok && r.status === 400 && conSucursal) {
+            cuerpo = cuerpo.map(function (f) { delete f.sucursal; return f; });
+            r = await subir();
+          }
           if (!r.ok) break;   // sin la migración 004 o sin red: se reintenta más tarde
         }
         await BD.quitar(lote.map(function (x) { return x.id; }));
@@ -275,6 +304,20 @@
         nuevoCatalogo = c.productos;
         cambios.catalogo = nuevoCatalogo;
       }
+      // Precios propios de la sucursal (archivo pequeño; solo si cambió).
+      let nuevasExcepciones = null;
+      if ((nuevo.excepciones || null) !== ((estado && estado.excepciones) || null) || (nuevo.excepciones && !excepciones.length)) {
+        if (nuevo.excepciones) {
+          const re = await conTiempo(base() + nuevo.excepciones, {}, 60000);
+          if (!re.ok) throw new Error("precios de la sucursal HTTP " + re.status);
+          const x = await re.json();
+          if (!x || !Array.isArray(x.productos)) throw new Error("Precios de la sucursal incompletos.");
+          nuevasExcepciones = x.productos;
+        } else {
+          nuevasExcepciones = [];
+        }
+        cambios.excepciones = nuevasExcepciones;
+      }
       const nuevasImagenes = {};
       for (const clave of ["logo", "qr"]) {
         if (!estado || estado[clave] !== nuevo[clave]) {
@@ -284,7 +327,9 @@
       }
       await BD.guardar(cambios);           // todo junto: nunca queda a medias
       estado = nuevo;
-      if (nuevoCatalogo) productos = new Map(nuevoCatalogo.map(function (p) { return [String(p[0]), p]; }));
+      if (nuevoCatalogo) catalogoBase = nuevoCatalogo;
+      if (nuevasExcepciones) excepciones = nuevasExcepciones;
+      if (nuevoCatalogo || nuevasExcepciones) armarProductos();
       Object.keys(nuevasImagenes).forEach(function (k) { ponerImagen(k, nuevasImagenes[k]); });
       ultimaRevisionOk = Date.now();
       // Reportar YA si llegaron precios nuevos o si acaba de volver la conexión;
@@ -343,12 +388,18 @@
       const cabeceras = { "apikey": destino.clave, "Content-Type": "application/json" };
       if (String(destino.clave).indexOf("eyJ") === 0) cabeceras["Authorization"] = "Bearer " + destino.clave;
       const pendientesN = await BD.contar().catch(function () { return 0; });
-      const r = await conTiempo(destino.url + "/rest/v1/rpc/equipo_reporta", { method: "POST", headers: cabeceras,
-        body: JSON.stringify({ p_id: equipo.id, p_nombre: nombreEquipo(), p_tipo: "verificador",
+      const datos = { p_id: equipo.id, p_nombre: nombreEquipo(), p_tipo: "verificador",
           p_app: APP_VERSION, p_precios: estado.version, p_productos: productos.size,
           p_pendientes: pendientesN,
           p_navegador: ((nativo() && nativo().tipo === "windows" ? "ConsultaPreciosApp (Windows) " : "")
-                        + navigator.userAgent).slice(0, 160) }) }, 15000);
+                        + navigator.userAgent).slice(0, 160) };
+      if (estado.sucursal) datos.p_sucursal = estado.sucursal.codigo;
+      const enviar = function (cuerpo) {
+        return conTiempo(destino.url + "/rest/v1/rpc/equipo_reporta", { method: "POST", headers: cabeceras,
+          body: JSON.stringify(cuerpo) }, 15000);
+      };
+      let r = await enviar(datos);
+      if (r.status === 404 && datos.p_sucursal) { delete datos.p_sucursal; r = await enviar(datos); }
       if (r.ok) {
         resultadoReporte = "✅ " + fecha(Date.now());
       } else {
@@ -360,6 +411,47 @@
       resultadoReporte = "⏳ sin conexión, se reintenta";   // no afecta al verificador
     }
   }
+
+  /* Sucursal del equipo: se elige en el menú (lista publicada en sucursales.json). */
+  async function rellenarSucursales() {
+    const form = $("form-sucursal"), lista = $("sucursal-equipo");
+    try {
+      const r = await conTiempo(base() + "sucursales.json?t=" + Date.now(), { cache: "no-store" }, 8000);
+      const sucursales = r.ok ? await r.json() : [];
+      if (!Array.isArray(sucursales) || !sucursales.length) { form.hidden = true; return; }
+      lista.textContent = "";
+      [{ codigo: "", nombre: "General (sin sucursal)" }].concat(sucursales).forEach(function (s) {
+        const o = document.createElement("option");
+        o.value = s.codigo; o.textContent = s.nombre;
+        lista.appendChild(o);
+      });
+      lista.value = estado && estado.sucursal ? estado.sucursal.codigo : "";
+      form.hidden = false;
+    } catch (e) { form.hidden = true; }   // sin internet: no se puede cambiar ahora
+  }
+  $("form-sucursal").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    const codigo = $("sucursal-equipo").value;
+    const nuevo = validarOrigen(base() + (codigo ? "estado-" + codigo + ".json" : "estado.json"));
+    if (!nuevo) return;
+    $("menu-mensaje").textContent = "⏳ Cambiando de sucursal…";
+    try {   // solo se cambia si esa sucursal ya tiene sus precios publicados
+      const prueba = await conTiempo(nuevo + "?t=" + Date.now(), { cache: "no-store" }, 12000);
+      if (!prueba.ok) throw new Error("HTTP " + prueba.status);
+    } catch (err) {
+      $("menu-mensaje").textContent = "❌ Esa sucursal todavía no tiene precios publicados (o no hay internet). "
+        + "Publica desde la app en línea y vuelve a intentar.";
+      return;
+    }
+    origen = nuevo;
+    local("origen", nuevo);
+    await BD.guardar({ origen: nuevo }).catch(function () {});
+    await revisar(false);
+    $("menu-mensaje").textContent = ultimoError ? "❌ " + ultimoError
+      : "✅ Este equipo ahora usa los precios de: " + (estado.sucursal ? estado.sucursal.nombre : "General");
+    rellenarMenu();
+    reportar(true);
+  });
 
   $("form-nombre").addEventListener("submit", async function (e) {
     e.preventDefault();
@@ -391,6 +483,7 @@
     $("m-desvincular").textContent = "🔗 Desvincular este equipo";
     $("nombre-equipo").value = equipo.nombre;
     $("dlg-menu").showModal();
+    rellenarSucursales();
     reportar(true).then(rellenarMenu);
     reiniciarCierreMenu();
   }
@@ -416,6 +509,9 @@
       ["Última revisión", ultimaRevisionOk ? fecha(ultimaRevisionOk) : "sin conexión desde que se abrió"],
       ["Consultas por subir", String(pendientesN)],
       ["Equipo", nombreEquipo()],
+      ["Sucursal", estado && estado.sucursal ? estado.sucursal.nombre
+                   + (estado.excepciones_cantidad ? " (" + estado.excepciones_cantidad + " precios propios)" : "")
+                   : "General"],
       ["Reporte al panel", resultadoReporte],
       ["App", "versión " + APP_VERSION + (versionNueva ? " (instalando la " + versionNueva + "…)" : "")
               + (nativo() ? " · app " + (nativo().tipo === "android" ? "Android" : "Windows")
@@ -718,7 +814,7 @@
     const desdeEnlace = validarOrigen(params.get("estado") ? location.href : "");
     let guardado = {};
     try { guardado = await BD.leer(["origen", "estado", "catalogo", "img_logo", "img_qr", "revisado",
-                                    "equipo_id", "equipo_nombre", "fotos_mapa", "fotos_ref"]); }
+                                    "equipo_id", "equipo_nombre", "fotos_mapa", "fotos_ref", "excepciones"]); }
     catch (e) { guardado = {}; }
     await cargarEquipo(guardado);
     origen = desdeEnlace || guardado.origen || validarOrigen(local("origen")) ||
@@ -736,7 +832,9 @@
     if (guardado.estado && Array.isArray(guardado.catalogo)) {
       estado = guardado.estado;
       ultimaRevisionOk = Number(guardado.revisado) || 0;
-      productos = new Map(guardado.catalogo.map(function (p) { return [String(p[0]), p]; }));
+      catalogoBase = guardado.catalogo;
+      excepciones = Array.isArray(guardado.excepciones) ? guardado.excepciones : [];
+      armarProductos();
       ponerImagen("logo", guardado.img_logo || null);
       ponerImagen("qr", guardado.img_qr || null);
       fotosMapa = guardado.fotos_mapa || {}; fotosRef = guardado.fotos_ref || null;

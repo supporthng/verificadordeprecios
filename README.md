@@ -233,4 +233,16 @@ Mientras no haya sucursales, todo funciona como una sola tienda.
   el equipo queda en la sucursal en cuya zona está (cada sucursal con su punto y su radio).
 - **Informes:** cada consulta queda anotada con su sucursal; el registro se puede ver por sucursal.
 
-Próximas fases: equipos sin internet por sucursal; precios propios desde Google y desde el SQL Server de cada sucursal.
+### Fase 2: equipos sin internet por sucursal
+
+Requiere **sql/MIGRACION_007_equipos_por_sucursal.sql** (después de la 006).
+
+- Al publicar, además de `estado.json` (general) se publica `estado-<sucursal>.json` por sucursal: el mismo catálogo
+  general más un archivo pequeño `excepciones-<sucursal>-<huella>.json` con sus precios propios. El equipo descarga
+  el catálogo general una sola vez y aplica encima los de su sucursal (también sin internet).
+- Vincular un equipo a una sucursal: enlace propio en Equipos sin internet › Equipos de una sucursal, o desde el menú
+  ⚙ del equipo › **Cambiar sucursal** (lista publicada en `sucursales.json`, solo sucursales activas).
+- El equipo reporta su sucursal (tabla de equipos) y sus consultas se suben con ella. Si falta la migración 007,
+  reporta igual sin la sucursal.
+
+Próxima fase: precios propios desde Google y desde el SQL Server de cada sucursal.
