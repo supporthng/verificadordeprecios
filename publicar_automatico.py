@@ -14,6 +14,14 @@ def main():
     if not os.path.exists(os.path.join(".streamlit", "secrets.toml")):
         print("Falta el secreto STREAMLIT_SECRETS en GitHub: la revisión automática está apagada.")
         return 0
+    # Respaldo diario de todo el sistema (se guardan los últimos 14 en la nube privada «respaldos»).
+    try:
+        import respaldo
+        hecho = respaldo.automatico()
+        if hecho:
+            print(f"Respaldo automático guardado: {hecho}")
+    except Exception as exc:   # el respaldo nunca impide mantener los precios al día
+        print(f"::warning::No se pudo guardar el respaldo automático: {exc}")
     import publicar_equipos as pe
     antes = pe.estado()
     if antes is None:

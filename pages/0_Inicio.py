@@ -368,6 +368,7 @@ ACCESOS = [
     ("admin", "pages/16_Instaladores.py", "Instaladores", "📦"),
     ("logo", "pages/12_Apariencia.py", "Apariencia", "🎨"),
     ("usuarios", "pages/5_Administrador_Usuarios.py", "Usuarios", "👥"),
+    ("admin", "pages/17_Respaldo.py", "Respaldo", "💾"),
     (None, "consulta_precios.py", "Pantalla del verificador", "🏷️"),
     (None, "pages/8_Escaner_Movil.py", "Escáner móvil", "📱"),
 ]

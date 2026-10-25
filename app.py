@@ -618,6 +618,7 @@ MENU = {
     "Administración": [
         ("usuarios", "pages/5_Administrador_Usuarios.py", "Usuarios", "👥"),
         ("sucursales", "pages/15_Sucursales.py", "Sucursales", "🏬"),
+        ("admin", "pages/17_Respaldo.py", "Respaldo", "💾"),
     ],
     "SQL Server": [
         ("fuentes", "pages/2_Fuentes_de_datos.py", "Servidores", "🔌"),
@@ -627,7 +628,7 @@ MENU = {
 # Configuración común a todas las sucursales: solo la ven los usuarios generales.
 SOLO_GENERAL = {"pages/10_Inventarios.py", "pages/11_Seleccion_Fuentes.py", "pages/7_Google_Drive.py",
                 "pages/14_Equipos_sin_internet.py", "pages/12_Apariencia.py", "pages/9_Ubicacion_Movil.py",
-                "pages/2_Fuentes_de_datos.py", "pages/3_Consulta_Bases_de_Datos.py"}
+                "pages/2_Fuentes_de_datos.py", "pages/3_Consulta_Bases_de_Datos.py", "pages/17_Respaldo.py"}
 
 
 st.session_state["paginas_solo_general"] = SOLO_GENERAL

@@ -256,3 +256,15 @@ Requiere **sql/MIGRACION_007_equipos_por_sucursal.sql** (después de la 006).
   reporta igual sin la sucursal.
 
 Pendiente: un SQL Server distinto por sucursal (hoy hay un solo conector y una sola configuración de Google).
+
+## Respaldo y restauración
+
+Administración › **Respaldo** (solo el administrador general):
+- **Crear respaldo:** descarga un `.zip` con inventarios y productos, sucursales, usuarios, fuentes de precios
+  (Google, SQL Server), ubicación, apariencia, logo, QR y fotos (opcional: registro de consultas).
+  Puede guardar también una copia en la nube privada `respaldos` de Supabase.
+- **Automáticos:** la revisión de GitHub (`publicar_automatico.py`) guarda uno por día y conserva los últimos 14.
+- **Restaurar:** desde un archivo o desde la nube; se eligen las partes. Antes se guarda una copia del estado
+  actual (`antes-de-restaurar-…zip`). Escribe encima (lo que no está en el respaldo se deja como está); los
+  inventarios se emparejan por nombre y se ajustan las sucursales que los usan.
+- El respaldo contiene datos sensibles (usuarios con sus claves cifradas y la conexión a Google): guardarlo seguro.
