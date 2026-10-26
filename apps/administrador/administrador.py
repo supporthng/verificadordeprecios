@@ -747,6 +747,13 @@ class Api:
             anotar_actualizacion(f"error al actualizar: {e}")
             return {"error": "No se pudo descargar la actualización: " + mensaje(e)}
 
+    def abrir_en_navegador(self, url):
+        """Desde el panel: abrir una página de Prezio (p. ej. el verificador) en el navegador, sin dejar la ventana sin salida."""
+        if str(url).startswith(self._prezio.sitio + "/"):
+            webbrowser.open(str(url))
+            return {"ok": True}
+        return {"error": "Solo se pueden abrir páginas de Prezio."}
+
     def abrir_enlace(self, url):
         if str(url).startswith("https://"):
             webbrowser.open(str(url))
@@ -772,7 +779,7 @@ for _n in ("estado", "activar", "desactivar", "entrar", "elegir_negocio", "abrir
            "columnas", "muestra", "inventarios", "adoptar_fuente", "guardar_fuente", "fuentes", "quitar_fuente", "enviar_ahora", "guardar_frecuencia",
            "arranque", "registro", "version_nueva", "actualizar", "abrir_enlace"):
     setattr(Api, _n, _solo(Api._desde_la_app)(getattr(Api, _n)))
-for _n in ("salir", "ir_app", "mostrar_inicio"):
+for _n in ("salir", "ir_app", "mostrar_inicio", "abrir_en_navegador"):
     setattr(Api, _n, _solo(Api._desde_prezio)(getattr(Api, _n)))
 
 

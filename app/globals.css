@@ -518,5 +518,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 /* ---------- dentro de la app Prezio Administrador */
 .subnav-app { font: inherit; font-size: .88rem; font-weight: 650; background: #fff7d6; color: var(--tinta); border: 1px solid #f3df8a; border-radius: 999px;
   padding: 5px 11px; margin: 6px 0 6px 4px; cursor: pointer; align-self: center; white-space: nowrap; }
-.subnav .subnav-app:first-of-type { margin-left: auto; }
-.subnav .subnav-app + .subnav-verificador { margin-left: 6px; }
+.barra .subnav-app { margin: 0; }
+.barra nav { flex-wrap: wrap; }
+/* En la app la barra queda fija arriba para poder volver desde cualquier página del panel */
+[data-en-app] .barra { position: sticky; top: 0; z-index: 30; background: var(--papel, #fff); }
