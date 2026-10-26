@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Marca } from "./Marca";
-import { BotonSalir, NavegacionApp, SoloWeb } from "./EnApp";
+import { BotonSalir, MenuLateralApp, SoloWeb } from "./EnApp";
 import { supabaseServidor } from "@/lib/supabase/server";
 
 /** Barra superior del panel: logotipo, negocio actual y salir. «Cambiar de negocio» solo para quien tiene varios
@@ -19,10 +19,11 @@ export async function Barra({ negocio }: { negocio?: { nombre: string; slug: str
     }
   }
   return (
+    <>
+    {negocio && <MenuLateralApp negocio={negocio} />}
     <header className="barra">
       <nav>
         <SoloWeb><Link href="/negocios" style={{ textDecoration: "none" }}><Marca tamano={24} /></Link></SoloWeb>
-        <NavegacionApp />
         {negocio && <span className="chip">{negocio.nombre}</span>}
       </nav>
       <nav>
@@ -30,5 +31,6 @@ export async function Barra({ negocio }: { negocio?: { nombre: string; slug: str
         <BotonSalir />
       </nav>
     </header>
+    </>
   );
 }

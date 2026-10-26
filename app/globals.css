@@ -518,7 +518,21 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 /* ---------- dentro de la app Prezio Administrador */
 .subnav-app { font: inherit; font-size: .88rem; font-weight: 650; background: #fff7d6; color: var(--tinta); border: 1px solid #f3df8a; border-radius: 999px;
   padding: 5px 11px; margin: 6px 0 6px 4px; cursor: pointer; align-self: center; white-space: nowrap; }
-.barra .subnav-app { margin: 0; }
-.barra nav { flex-wrap: wrap; }
-/* En la app la barra queda fija arriba para poder volver desde cualquier página del panel */
-[data-en-app] .barra { position: sticky; top: 0; z-index: 30; background: var(--papel, #fff); }
+/* En la app el panel lleva el mismo menú lateral de la pantalla de la app (y no su barra ni sus pestañas de arriba) */
+[data-en-app] body { padding-left: 232px; }
+[data-en-app] .barra, [data-en-app] .subnav { display: none; }
+.menu-app { position: fixed; inset: 0 auto 0 0; width: 232px; z-index: 50; box-sizing: border-box; display: flex; flex-direction: column;
+  padding: 20px 14px; background: #102a43; color: #fff; overflow-y: auto; }
+.menu-app-marca { display: flex; flex-direction: column; gap: 2px; padding: 0 6px; }
+.menu-app-marca small { color: #9fb3c8; font-size: .78rem; margin-left: 36px; }
+.menu-app-negocio { margin: 18px 6px 14px; font-size: 1.02rem; }
+.menu-app nav { display: flex; flex-direction: column; gap: 2px; }
+.menu-app nav button, .menu-app nav a { font: inherit; text-align: left; text-decoration: none; padding: 10px 12px; border-radius: 9px; border: 0; background: none;
+  color: #c9d6e3; font-weight: 600; cursor: pointer; display: flex; gap: 10px; align-items: center; }
+.menu-app nav svg { width: 18px; height: 18px; flex: none; }
+.menu-app nav [aria-current="page"] { background: rgba(255, 255, 255, .1); color: #fff; box-shadow: inset 3px 0 0 #ffd23f; }
+.menu-app nav button:hover, .menu-app nav a:hover { background: rgba(255, 255, 255, .06); color: #fff; }
+.menu-app-grupo { margin: 14px 12px 4px; font-size: .74rem; color: #8aa1b8; font-weight: 700; letter-spacing: .04em; }
+.menu-app-punto { width: 6px; height: 6px; border-radius: 50%; background: #ffd23f; margin: 0 6px; flex: none; }
+.menu-app-pie { margin-top: auto; padding: 0 6px; }
+.menu-app-pie button { font: inherit; background: none; border: 0; color: #fff; text-decoration: underline; padding: 0; cursor: pointer; }
