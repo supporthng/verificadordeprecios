@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prezio Administrador</title>
+<style>
+  :root {
+    --tinta: #102a43; --tinta-2: #243b53; --tinta-3: #334e68; --gris: #5b6b7c; --linea: #dde3ea; --fondo: #f3f5f7; --papel: #fff;
+    --etiqueta: #ffd23f; --error: #b42318; --error-fondo: #fef3f2; --bien: #1f7a4d; --bien-fondo: #ecfdf3; --aviso: #7a5b00; --aviso-fondo: #fffbea;
+    font-family: "Segoe UI", system-ui, sans-serif; color: var(--tinta); background: var(--fondo); font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; }
+  [hidden] { display: none !important; }
+  .actualizando { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(16, 42, 67, .78); }
+  .act-caja { background: #fff; border-radius: 16px; padding: 28px 32px; width: min(460px, 90vw); text-align: center; box-shadow: 0 20px 50px rgba(0, 0, 0, .3); }
+  .act-caja h2 { font-size: 1.15rem; margin: 12px 0 6px; }
+  .act-caja p { margin: 0 0 14px; }
+  .girando.grande-g { width: 34px; height: 34px; border-width: 3px; color: var(--tinta); margin: 0; }
+  h1, h2, h3 { margin: 0; }
+  .quieto { color: var(--gris); }
+  .pequeno { font-size: .87rem; }
+  .logo-app { display: inline-flex; align-items: center; gap: 12px; color: #fff; }
+  .logo-app svg { flex: none; filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .25)); }
+  .logo-app > span { display: flex; flex-direction: column; line-height: 1.05; font-size: .82rem; color: #bccbdb; font-weight: 600; letter-spacing: .02em; }
+  .logo-app strong { font-size: 1.45rem; color: #fff; font-weight: 800; letter-spacing: -.02em; }
+  .logo-app.chico { gap: 10px; }
+  .logo-app.chico strong { font-size: 1.12rem; }
+  .logo-app.chico > span { font-size: .72rem; }
+  .marca { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; letter-spacing: -.01em; }
+  .marca i { font-style: normal; background: var(--etiqueta); color: var(--tinta); padding: 2px 9px 3px; border-radius: 6px; position: relative; }
+  .marca i::before { content: ""; position: absolute; left: -5px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--fondo); }
+
+  /* formularios */
+  .fila { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .campo { display: flex; flex-direction: column; gap: 5px; flex: 1 1 200px; min-width: 0; margin-bottom: 12px; }
+  label, .etq { font-weight: 600; font-size: .86rem; }
+  input, select { font: inherit; padding: 9px 11px; border: 1px solid #c4ced9; border-radius: 9px; background: #fff; color: var(--tinta); width: 100%; }
+  input:focus, select:focus, button:focus-visible { outline: 3px solid rgba(16, 42, 67, .25); outline-offset: 1px; }
+  .opciones { display: flex; gap: 18px; flex-wrap: wrap; margin: 2px 0 12px; }
+  .opciones label { font-weight: 500; display: flex; gap: 7px; align-items: center; }
+  .opciones input, .casilla input { width: auto; }
+  .casilla { display: flex; gap: 8px; align-items: center; font-weight: 500; margin: 6px 0 12px; }
+  .boton { font: inherit; font-weight: 650; padding: 9px 16px; border-radius: 9px; border: 1px solid var(--tinta); background: var(--tinta); color: #fff; cursor: pointer; white-space: nowrap; }
+  .boton.secundario { background: #fff; color: var(--tinta); border-color: #c4ced9; }
+  .boton.grande { padding: 13px 22px; font-size: 1.03rem; }
+  .boton.ancho { width: 100%; }
+  .boton.peligro { color: var(--error); border-color: #f1c4bf; background: #fff; }
+  .boton:disabled { opacity: .5; cursor: default; }
+  .aviso { padding: 10px 12px; border-radius: 9px; margin: 12px 0 0; font-size: .92rem; line-height: 1.4; }
+  .aviso.error { background: var(--error-fondo); color: var(--error); }
+  .aviso.bien { background: var(--bien-fondo); color: var(--bien); }
+  .aviso.nota { background: var(--aviso-fondo); color: var(--aviso); }
+  .chip { display: inline-block; font-size: .76rem; font-weight: 650; padding: 2px 8px; border-radius: 999px; background: var(--fondo); color: var(--tinta-2); }
+  .chip.bien { background: var(--bien-fondo); color: var(--bien); }
+  .chip.error { background: var(--error-fondo); color: var(--error); }
+  .girando { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: giro .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes giro { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .girando { animation-duration: 2s; } }
+
+  /* entrar */
+  .entrar { min-height: 100vh; display: grid; grid-template-columns: minmax(320px, 44%) 1fr; }
+  .entrar-lado { background: var(--tinta); color: #fff; padding: 48px 44px; display: flex; flex-direction: column; justify-content: space-between;
+    background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .035) 0 16px, transparent 16px 32px); }
+  .entrar-lado .marca { font-size: 1.5rem; }
+  .entrar-lado .marca i::before { background: var(--tinta); }
+  .entrar-lado h1 { font-size: 2rem; line-height: 1.15; margin-top: 40px; max-width: 14em; }
+  .entrar-lado p { color: #bccbdb; max-width: 30em; line-height: 1.5; }
+  .entrar-form { display: grid; place-items: center; padding: 32px; }
+  .entrar-caja { width: min(420px, 100%); }
+  .entrar-caja h2 { font-size: 1.45rem; margin-bottom: 4px; }
+  .pestanas { display: flex; gap: 4px; background: #e6ebf0; padding: 4px; border-radius: 10px; margin: 18px 0; }
+  .pestanas button { flex: 1; font: inherit; font-weight: 600; padding: 8px; border: 0; border-radius: 8px; background: none; color: var(--tinta-3); cursor: pointer; }
+  .pestanas button[aria-selected="true"] { background: #fff; color: var(--tinta); box-shadow: 0 1px 2px rgba(16, 42, 67, .12); }
+  .negocios-lista { display: grid; gap: 8px; margin-top: 16px; }
+  .negocios-lista button { text-align: left; font: inherit; padding: 14px 16px; border: 1px solid var(--linea); border-radius: 12px; background: #fff; cursor: pointer; }
+  .negocios-lista button strong { display: block; }
+
+  /* app */
+  .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  .lateral { background: var(--tinta); color: #fff; display: flex; flex-direction: column; padding: 20px 14px; position: sticky; top: 0; height: 100vh; }
+  .lateral .marca i::before { background: var(--tinta); }
+  .negocio-actual { margin: 22px 6px 18px; }
+  .negocio-actual strong { display: block; font-size: 1.05rem; line-height: 1.25; }
+  .negocio-actual span { color: #9fb3c8; font-size: .84rem; }
+  .lateral nav { display: flex; flex-direction: column; gap: 2px; }
+  .lateral nav button { font: inherit; text-align: left; padding: 10px 12px; border-radius: 9px; border: 0; background: none; color: #c9d6e3; font-weight: 600; cursor: pointer; display: flex; gap: 10px; align-items: center; }
+  .lateral nav button svg { width: 18px; height: 18px; flex: none; }
+  .lateral nav button[aria-current="page"] { background: rgba(255, 255, 255, .1); color: #fff; box-shadow: inset 3px 0 0 var(--etiqueta); }
+  .lateral nav .grupo { margin: 14px 12px 4px; font-size: .74rem; color: #8aa1b8; font-weight: 700; letter-spacing: .04em; }
+  .lateral nav .punto { width: 6px; height: 6px; border-radius: 50%; background: #ffd23f; margin: 0 6px 0 6px; flex: none; }
+  .negocio-activado { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--linea); border-radius: 12px; background: #fff; margin: 0 0 18px; }
+  .negocio-activado strong { font-size: 1.1rem; }
+  .negocio-activado code { font-size: .86rem; color: var(--gris); letter-spacing: .04em; }
+  input.licencia { font-size: 1.15rem; letter-spacing: .06em; text-transform: uppercase; font-family: Consolas, "Segoe UI Mono", monospace; }
+  .enlace { background: none; border: 0; padding: 0; color: var(--tinta-3); text-decoration: underline; cursor: pointer; font: inherit; }
+  .lateral .pie { margin-top: auto; font-size: .82rem; color: #9fb3c8; padding: 0 6px; }
+  .lateral .pie button { font: inherit; background: none; border: 0; color: #fff; text-decoration: underline; padding: 0; cursor: pointer; margin-top: 6px; }
+  .contenido { padding: 28px 34px 60px; max-width: 1060px; width: 100%; }
+  .contenido > h1 { font-size: 1.55rem; margin-bottom: 4px; }
+  .contenido > .quieto { margin: 0 0 20px; }
+  .tarjeta { background: var(--papel); border: 1px solid var(--linea); border-radius: 14px; padding: 20px 22px; margin-bottom: 16px; }
+  .tarjeta > h2 { font-size: 1.08rem; margin-bottom: 4px; }
+  .tarjeta > p.quieto { margin: 0 0 14px; }
+  .accesos { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .accesos button { font: inherit; text-align: left; padding: 14px; border: 1px solid var(--linea); border-radius: 12px; background: #fff; cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
+  .accesos button:hover { border-color: var(--tinta-3); }
+  .accesos button strong { font-size: .98rem; }
+  .accesos button span { font-size: .8rem; color: var(--gris); }
+  .accesos button.principal { background: var(--tinta); color: #fff; border-color: var(--tinta); }
+  .accesos button.principal span { color: #bccbdb; }
+  .resumen { display: flex; gap: 28px; flex-wrap: wrap; margin: 4px 0 14px; }
+  .resumen div strong { display: block; font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+  .resumen div span { font-size: .82rem; color: var(--gris); }
+
+  /* asistente */
+  .pasos { display: flex; gap: 0; margin: 0 0 18px; counter-reset: paso; }
+  .pasos li { list-style: none; flex: 1; position: relative; padding-top: 34px; font-size: .84rem; font-weight: 600; color: var(--gris); text-align: center; }
+  .pasos li::before { counter-increment: paso; content: counter(paso); position: absolute; top: 0; left: 50%; margin-left: -14px; width: 28px; height: 28px; border-radius: 50%;
+    display: grid; place-items: center; background: #e2e8ef; color: var(--tinta-3); font-weight: 700; z-index: 1; }
+  .pasos li::after { content: ""; position: absolute; top: 13px; left: -50%; right: 50%; height: 2px; background: #e2e8ef; }
+  .pasos li:first-child::after { display: none; }
+  .pasos li.hecho::before { background: var(--bien); color: #fff; content: "✓"; }
+  .pasos li.hecho::after, .pasos li.activo::after { background: var(--bien); }
+  .pasos li.activo { color: var(--tinta); }
+  .pasos li.activo::before { background: var(--tinta); color: #fff; }
+  .servidores { display: grid; gap: 8px; margin-top: 14px; }
+  .servidor { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center; padding: 12px 14px; border: 1px solid var(--linea); border-radius: 12px; background: #fff; }
+  .servidor .icono { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: .78rem; color: #fff; }
+  .m-sqlserver { background: #a4262c; } .m-mysql { background: #00758f; } .m-postgresql { background: #336791; } .m-firebird { background: #d4580b; }
+  .servidor strong { display: block; }
+  .servidor small { color: var(--gris); }
+  .elegido { display: flex; gap: 12px; align-items: center; padding: 12px 14px; background: var(--fondo); border-radius: 12px; margin-bottom: 14px; }
+  .elegido .icono { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; font-weight: 800; font-size: .7rem; color: #fff; flex: none; }
+  .elegido button { margin-left: auto; }
+  .elegido strong, .elegido small { display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 10px; }
+  th { text-align: left; color: var(--gris); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--linea); }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--linea); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .fuente { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; padding: 14px 0; border-top: 1px solid var(--linea); }
+  .fuente:first-of-type { border-top: 0; }
+  .fuente h3 { font-size: 1rem; }
+  .fuente .acciones { display: flex; gap: 8px; align-items: center; grid-row: span 2; }
+  pre { background: #0f2236; color: #d8e3ee; padding: 12px; border-radius: 10px; font-size: .78rem; max-height: 300px; overflow: auto; white-space: pre-wrap; margin: 10px 0 0; }
+  details summary { cursor: pointer; color: var(--tinta-2); font-weight: 600; font-size: .9rem; margin: 6px 0; }
+  .aviso-nueva { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+</style>
+</head>
+<body>
+<!-- ============================================================ actualizando (al abrir, si hay versión nueva) -->
+<div class="actualizando" id="actualizando" hidden role="status" aria-live="polite">
+  <div class="act-caja">
+    <span class="girando grande-g" id="act-girando"></span>
+    <h2 id="act-texto">Buscando actualizaciones…</h2>
+    <p class="quieto" id="act-detalle"></p>
+    <button class="boton" type="button" id="act-seguir" hidden>Seguir con esta versión</button>
+  </div>
+</div>
+
+<!-- ============================================================ entrar -->
+<section class="entrar" id="v-entrar" hidden>
+  <div class="entrar-lado">
+    <span class="logo-app"><svg width="64" height="64" viewBox="0 0 256 256" role="img" aria-label="Prezio Administrador"><defs><linearGradient id="la-fondo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d4470"/><stop offset="1" stop-color="#0b1f33"/></linearGradient><linearGradient id="la-oro" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset=".55" stop-color="#ffd23f"/><stop offset="1" stop-color="#ffb81c"/></linearGradient><linearGradient id="la-oro2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe680"/><stop offset="1" stop-color="#ffbf1f"/></linearGradient></defs><rect x="8" y="8" width="240" height="240" rx="58" fill="url(#la-fondo)"/><g transform="rotate(-14 128 122)"><path d="M42 72 Q42 56 58 56 H164 Q173 56 179 63 L220 112 Q228 122 220 132 L179 181 Q173 188 164 188 H58 Q42 188 42 172 Z" fill="#06121f" opacity=".35" transform="translate(4 9)"/><path d="M42 72 Q42 56 58 56 H164 Q173 56 179 63 L220 112 Q228 122 220 132 L179 181 Q173 188 164 188 H58 Q42 188 42 172 Z" fill="url(#la-oro)"/><g transform="translate(186 100)" fill="#102a43"><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(0)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(45)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(90)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(135)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(180)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(225)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(270)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(315)"/><circle r="13"/><circle r="5.5" fill="url(#la-oro)"/></g><path fill-rule="evenodd" fill="#102a43" d="M78 84 H126 A37 37 0 0 1 126 158 H104 V170 H78 Z M104 107 V135 H124 A14 14 0 0 0 124 107 Z"/></g><circle cx="188" cy="190" r="45" fill="#0b1f33"/><circle cx="188" cy="190" r="37" fill="#ffffff"/><g fill="none" stroke="#102a43" stroke-width="7" stroke-linecap="round"><ellipse cx="188" cy="173" rx="19" ry="7"/><path d="M169 173 V206 Q169 214 188 214 Q207 214 207 206 V173 M169 190 Q169 198 188 198 Q207 198 207 190"/></g></svg><span><strong>Prezio</strong>Administrador</span></span>
+    <div>
+      <h1>Administra tu negocio y conecta tu sistema de facturación.</h1>
+      <p>Tus precios llegan solos a los verificadores de cada sucursal, aunque se caiga el internet.</p>
+    </div>
+    <p class="pequeno" id="version-entrar"></p>
+  </div>
+  <div class="entrar-form">
+    <form class="entrar-caja" id="f-entrar" autocomplete="on">
+      <p class="negocio-activado"><span class="quieto pequeno">Negocio</span><strong id="e-negocio-nombre"></strong><code id="e-licencia"></code></p>
+      <h2>Entrar</h2>
+      <p class="quieto pequeno">Con el usuario y la clave que te dio el dueño del negocio.</p>
+      <div class="pestanas" role="tablist">
+        <button type="button" role="tab" data-modo="usuario" aria-selected="true">Con usuario</button>
+        <button type="button" role="tab" data-modo="correo" aria-selected="false">Con correo</button>
+      </div>
+      <div data-solo="usuario">
+        <div class="campo"><label for="e-usuario">Usuario</label><input id="e-usuario" autocomplete="username" spellcheck="false"></div>
+      </div>
+      <div data-solo="correo" hidden>
+        <div class="campo"><label for="e-correo">Correo</label><input id="e-correo" type="email" autocomplete="email"></div>
+      </div>
+      <div class="campo"><label for="e-clave">Clave</label><input id="e-clave" type="password" autocomplete="current-password"></div>
+      <label class="casilla"><input type="checkbox" id="e-recordar" checked> Recordarme en esta PC</label>
+      <button class="boton grande ancho" type="submit" id="b-entrar">Entrar</button>
+      <p class="aviso error" id="e-error" role="alert" hidden></p>
+      <p class="pequeno" style="margin-top: 22px"><button type="button" class="enlace" id="b-otra-licencia">Usar otra licencia en esta PC</button></p>
+    </form>
+  </div>
+</section>
+
+<!-- ============================================================ activar (la primera vez) -->
+<section class="entrar" id="v-activar" hidden>
+  <div class="entrar-lado"><span class="logo-app"><svg width="64" height="64" viewBox="0 0 256 256" role="img" aria-label="Prezio Administrador"><defs><linearGradient id="lb-fondo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d4470"/><stop offset="1" stop-color="#0b1f33"/></linearGradient><linearGradient id="lb-oro" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset=".55" stop-color="#ffd23f"/><stop offset="1" stop-color="#ffb81c"/></linearGradient><linearGradient id="lb-oro2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe680"/><stop offset="1" stop-color="#ffbf1f"/></linearGradient></defs><rect x="8" y="8" width="240" height="240" rx="58" fill="url(#lb-fondo)"/><g transform="rotate(-14 128 122)"><path d="M42 72 Q42 56 58 56 H164 Q173 56 179 63 L220 112 Q228 122 220 132 L179 181 Q173 188 164 188 H58 Q42 188 42 172 Z" fill="#06121f" opacity=".35" transform="translate(4 9)"/><path d="M42 72 Q42 56 58 56 H164 Q173 56 179 63 L220 112 Q228 122 220 132 L179 181 Q173 188 164 188 H58 Q42 188 42 172 Z" fill="url(#lb-oro)"/><g transform="translate(186 100)" fill="#102a43"><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(0)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(45)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(90)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(135)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(180)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(225)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(270)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(315)"/><circle r="13"/><circle r="5.5" fill="url(#lb-oro)"/></g><path fill-rule="evenodd" fill="#102a43" d="M78 84 H126 A37 37 0 0 1 126 158 H104 V170 H78 Z M104 107 V135 H124 A14 14 0 0 0 124 107 Z"/></g><circle cx="188" cy="190" r="45" fill="#0b1f33"/><circle cx="188" cy="190" r="37" fill="#ffffff"/><g fill="none" stroke="#102a43" stroke-width="7" stroke-linecap="round"><ellipse cx="188" cy="173" rx="19" ry="7"/><path d="M169 173 V206 Q169 214 188 214 Q207 214 207 206 V173 M169 190 Q169 198 188 198 Q207 198 207 190"/></g></svg><span><strong>Prezio</strong>Administrador</span></span>
+    <div>
+      <h1>Activa Prezio Administrador para tu negocio.</h1>
+      <p>Usa la licencia que te dio tu proveedor de Prezio. Se hace una sola vez en esta PC.</p>
+    </div>
+    <p class="pequeno" id="version-activar"></p>
+  </div>
+  <div class="entrar-form">
+    <form class="entrar-caja" id="f-activar">
+      <h2>Activar</h2>
+      <p class="quieto pequeno">La licencia también está en el panel web del negocio, en Resumen.</p>
+      <div class="campo" style="margin-top: 16px"><label for="a-licencia">Licencia del negocio</label>
+        <input id="a-licencia" class="licencia" autocomplete="off" spellcheck="false" maxlength="24" placeholder="PREZIO-XXXX-XXXX-XXXX"></div>
+      <button class="boton grande ancho" type="submit" id="b-activar">Activar</button>
+      <p class="aviso error" id="a-error-activar" role="alert" hidden></p>
+    </form>
+  </div>
+</section>
+
+<!-- ============================================================ app -->
+<div class="app" id="v-app" hidden>
+  <aside class="lateral">
+    <span class="logo-app chico"><svg width="36" height="36" viewBox="0 0 256 256" role="img" aria-label="Prezio Administrador"><defs><linearGradient id="lc-fondo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d4470"/><stop offset="1" stop-color="#0b1f33"/></linearGradient><linearGradient id="lc-oro" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset=".55" stop-color="#ffd23f"/><stop offset="1" stop-color="#ffb81c"/></linearGradient><linearGradient id="lc-oro2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe680"/><stop offset="1" stop-color="#ffbf1f"/></linearGradient></defs><rect x="0" y="0" width="256" height="256" rx="52" fill="url(#lc-fondo)"/><g transform="translate(128 128) scale(1.12) translate(-132 -122)"><g transform="rotate(-14 128 122)"><path d="M42 72 Q42 56 58 56 H164 Q173 56 179 63 L220 112 Q228 122 220 132 L179 181 Q173 188 164 188 H58 Q42 188 42 172 Z" fill="#06121f" opacity=".35" transform="translate(4 9)"/><path d="M42 72 Q42 56 58 56 H164 Q173 56 179 63 L220 112 Q228 122 220 132 L179 181 Q173 188 164 188 H58 Q42 188 42 172 Z" fill="url(#lc-oro)"/><g transform="translate(186 100)" fill="#102a43"><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(0)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(45)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(90)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(135)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(180)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(225)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(270)"/><rect x="-5" y="-21" width="10" height="13" rx="2" transform="rotate(315)"/><circle r="13"/><circle r="5.5" fill="url(#lc-oro)"/></g><path fill-rule="evenodd" fill="#102a43" d="M78 84 H126 A37 37 0 0 1 126 158 H104 V170 H78 Z M104 107 V135 H124 A14 14 0 0 0 124 107 Z"/></g></g></svg><span><strong>Prezio</strong>Administrador</span></span>
+    <div class="negocio-actual"><strong id="n-nombre"></strong><span id="n-cuenta"></span></div>
+    <nav aria-label="Secciones">
+      <button data-ir="inicio" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Inicio</button>
+      <button data-ir="base"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>Base de datos</button>
+      <button data-ir="copia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg>Copia automática</button>
+      <span class="grupo">Panel del negocio</span>
+      <button data-panel=""><span class="punto"></span>Resumen</button>
+      <button data-panel="sucursales"><span class="punto"></span>Sucursales</button>
+      <button data-panel="inventarios"><span class="punto"></span>Inventarios</button>
+      <button data-panel="apariencia"><span class="punto"></span>Apariencia</button>
+      <button data-panel="equipos"><span class="punto"></span>Equipos</button>
+      <button data-panel="usuarios"><span class="punto"></span>Usuarios</button>
+    </nav>
+    <div class="pie">
+      <div id="pie-equipo"></div>
+      <button type="button" id="b-salir">Salir</button>
+    </div>
+  </aside>
+
+  <main class="contenido">
+    <p class="aviso nota aviso-nueva" id="nueva" hidden><span id="nueva-texto"></span><button class="boton" id="nueva-boton" type="button">Descargar</button></p>
+
+    <!-- ---------------------------------------------------------- inicio -->
+    <section id="s-inicio">
+      <h1 id="saludo">Hola</h1>
+      <p class="quieto">Todo lo de tu negocio, en un solo lugar.</p>
+      <div class="tarjeta">
+        <h2>Panel del negocio</h2>
+        <p class="quieto">Se abre aquí mismo, ya con tu sesión. Para volver, usa «Base de datos» o «Copia automática» arriba del panel.</p>
+        <div class="accesos">
+          <button class="principal" data-panel=""><strong>Resumen</strong><span>Consultas y reporte</span></button>
+          <button data-panel="sucursales"><strong>Sucursales</strong><span>Precios, ubicación y QR</span></button>
+          <button data-panel="inventarios"><strong>Inventarios</strong><span>Productos y precios</span></button>
+          <button data-panel="apariencia"><strong>Apariencia</strong><span>Logo y colores</span></button>
+          <button data-panel="equipos"><strong>Equipos</strong><span>Verificadores</span></button>
+          <button data-panel="usuarios"><strong>Usuarios</strong><span>Accesos y permisos</span></button>
+        </div>
+        <p class="aviso error" id="panel-error" role="alert" hidden></p>
+      </div>
+      <div class="tarjeta">
+        <h2>Base de datos del negocio</h2>
+        <div class="resumen">
+          <div><strong id="r-fuentes">0</strong><span>bases conectadas</span></div>
+          <div><strong id="r-cada">10</strong><span>minutos entre copias</span></div>
+          <div><strong id="r-inicio">—</strong><span>con Windows</span></div>
+        </div>
+        <button class="boton" data-ir="base" type="button">Conectar o revisar la base de datos</button>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- base de datos -->
+    <section id="s-base" hidden>
+      <h1>Base de datos</h1>
+      <p class="quieto">Conecta el sistema de facturación: los precios se copian solos a Prezio. Las claves de la base se quedan en esta PC.</p>
+
+      <div class="tarjeta" id="t-fuentes" hidden>
+        <h2>Bases conectadas del negocio</h2>
+        <p class="quieto pequeno">Se ven igual en cualquier PC con esta app. Solo la clave de la base se queda en cada PC.</p>
+        <div id="lista-fuentes"></div>
+        <p class="aviso" id="fuentes-aviso" role="status" hidden></p>
+        <button class="boton" type="button" id="b-nueva-base">Conectar otra base de datos</button>
+      </div>
+
+      <div class="tarjeta" id="t-asistente">
+        <h2 id="t-asistente-titulo">Conectar una base de datos</h2>
+        <ol class="pasos" id="pasos"><li>Servidor</li><li>Autorizar</li><li>Tabla y columnas</li><li>Inventario</li></ol>
+
+        <!-- paso 1 -->
+        <div id="p1">
+          <div class="fila">
+            <button class="boton grande" type="button" id="b-buscar">Buscar servidores en mi red</button>
+            <span class="quieto pequeno" id="redes-texto"></span>
+          </div>
+          <div class="servidores" id="servidores"></div>
+          <p class="aviso error" id="buscar-error" role="alert" hidden></p>
+          <details id="manual">
+            <summary>¿No aparece? Escríbelo a mano</summary>
+            <div class="fila">
+              <div class="campo" style="flex: 0 1 190px"><label for="m-motor">Tipo</label>
+                <select id="m-motor"><option value="sqlserver">SQL Server</option><option value="mysql">MySQL / MariaDB</option><option value="postgresql">PostgreSQL</option><option value="firebird">Firebird</option></select></div>
+              <div class="campo"><label for="m-host">IP o nombre del servidor</label><input id="m-host" placeholder="192.168.1.10 o SERVIDOR" spellcheck="false"></div>
+              <div class="campo" style="flex: 0 1 110px"><label for="m-puerto">Puerto</label><input id="m-puerto" inputmode="numeric" placeholder="1433"></div>
+              <div class="campo" style="flex: 0 1 170px" id="m-inst-c"><label for="m-instancia">Instancia</label><input id="m-instancia" placeholder="SQLEXPRESS" spellcheck="false"></div>
+            </div>
+            <button class="boton secundario" type="button" id="b-manual">Usar este servidor</button>
+            <details><summary>Buscar en otra red</summary>
+              <div class="fila"><div class="campo"><label for="m-redes">Redes (separadas por coma)</label><input id="m-redes" placeholder="192.168.10.0/24"></div>
+              <button class="boton secundario" type="button" id="b-buscar-red" style="margin-bottom: 12px">Buscar</button></div>
+            </details>
+          </details>
+        </div>
+
+        <!-- paso 2 -->
+        <form id="p2" hidden>
+          <div class="elegido" id="elegido"></div>
+          <div id="a-sqlserver" class="opciones">
+            <label><input type="radio" name="auth" value="sql" checked> Usuario y clave de SQL Server</label>
+            <label><input type="radio" name="auth" value="windows"> Usuario de Windows de esta PC</label>
+          </div>
+          <div class="fila" id="a-credenciales">
+            <div class="campo"><label for="a-usuario">Usuario de la base</label><input id="a-usuario" autocomplete="off" spellcheck="false"></div>
+            <div class="campo"><label for="a-clave">Clave de la base</label><input id="a-clave" type="password" autocomplete="new-password"></div>
+          </div>
+          <div class="campo" id="a-ruta-c" hidden><label for="a-ruta">Ruta o alias de la base</label><input id="a-ruta" placeholder="C:\Sistema\DATOS.FDB" spellcheck="false"></div>
+          <div class="fila">
+            <button class="boton" type="submit" id="b-autorizar">Autorizar y ver las bases</button>
+            <button class="boton secundario" type="button" data-volver="1">Elegir otro servidor</button>
+          </div>
+          <p class="aviso error" id="a-error" role="alert" hidden></p>
+          <p class="quieto pequeno">Recomendado: un usuario de solo lectura. Prezio nunca escribe en tu base.</p>
+        </form>
+
+        <!-- paso 3 -->
+        <div id="p3" hidden>
+          <div class="elegido" id="elegido3"></div>
+          <div class="fila">
+            <div class="campo" id="t-base-c"><label for="t-base">Base de datos</label><select id="t-base"></select></div>
+            <div class="campo"><label for="t-tabla">Tabla o vista de productos</label><select id="t-tabla"></select></div>
+            <div class="campo" style="flex: 0 1 200px"><label for="t-filtro">Filtrar tablas</label><input id="t-filtro" placeholder="produc, artic…"></div>
+          </div>
+          <div class="fila" id="t-columnas" hidden>
+            <div class="campo"><label for="c-codigo">Columna del código de barras</label><select id="c-codigo"></select></div>
+            <div class="campo"><label for="c-nombre">Columna del nombre</label><select id="c-nombre"></select></div>
+            <div class="campo"><label for="c-precio">Columna del precio</label><select id="c-precio"></select></div>
+          </div>
+          <div class="fila">
+            <button class="boton secundario" type="button" id="b-muestra" disabled>Ver muestra</button>
+            <button class="boton" type="button" id="b-a4" disabled>Siguiente</button>
+            <button class="boton secundario" type="button" data-volver="2">Atrás</button>
+          </div>
+          <div id="muestra"></div>
+          <p class="aviso error" id="t-error" role="alert" hidden></p>
+        </div>
+
+        <!-- paso 4 -->
+        <div id="p4" hidden>
+          <div class="elegido" id="elegido4"></div>
+          <div class="opciones" style="flex-direction: column; gap: 8px">
+            <label><input type="radio" name="destino" value="nuevo" checked> Crear un inventario nuevo:</label>
+          </div>
+          <div class="campo" style="max-width: 420px"><input id="d-nombre" maxlength="60" aria-label="Nombre del inventario nuevo"></div>
+          <div class="opciones"><label><input type="radio" name="destino" value="existente"> Llenar un inventario que ya existe:</label></div>
+          <div class="campo" style="max-width: 420px"><select id="d-existente" aria-label="Inventario existente"></select></div>
+          <label class="casilla"><input type="checkbox" id="d-principal" checked> Usarlo para los precios de la sucursal Principal</label>
+          <div class="fila">
+            <button class="boton grande" type="button" id="b-guardar">Guardar y enviar los precios</button>
+            <button class="boton secundario" type="button" data-volver="3">Atrás</button>
+          </div>
+          <p class="aviso" id="d-aviso" role="status" hidden></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- copia automática -->
+    <section id="s-copia" hidden>
+      <h1>Copia automática</h1>
+      <p class="quieto">Esta PC envía a Prezio solo los precios que cambiaron. Los verificadores los guardan y siguen funcionando sin internet.</p>
+      <div class="tarjeta">
+        <h2>Cada cuánto</h2>
+        <div class="fila">
+          <div class="campo" style="flex: 0 1 180px"><label for="k-cada">Minutos entre copias</label><input id="k-cada" type="number" min="1" max="1440"></div>
+          <button class="boton secundario" type="button" id="b-cada" style="margin-bottom: 12px">Guardar</button>
+          <button class="boton" type="button" id="b-enviar" style="margin-bottom: 12px">Enviar ahora</button>
+        </div>
+        <p class="aviso" id="k-aviso" role="status" hidden></p>
+      </div>
+      <div class="tarjeta">
+        <h2>Con Windows</h2>
+        <p class="quieto">Para que copie aunque nadie abra esta app (al encender la PC). Windows pedirá permiso de administrador.</p>
+        <div class="fila"><span id="k-inicio" class="chip">—</span><button class="boton secundario" type="button" id="b-inicio"></button></div>
+        <p class="aviso" id="k-inicio-aviso" role="status" hidden></p>
+      </div>
+      <div class="tarjeta">
+        <h2>Registro</h2>
+        <button class="boton secundario" type="button" id="b-registro">Ver las últimas líneas</button>
+        <pre id="registro" hidden></pre>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const ESPERA_PUENTE = 120;
+async function puente() {
+  for (let i = 0; i < ESPERA_PUENTE && !(window.pywebview && window.pywebview.api); i++) await new Promise((r) => setTimeout(r, 250));
+  if (!(window.pywebview && window.pywebview.api)) throw new Error("La app no terminó de abrir. Ciérrala y ábrela de nuevo.");
+  return window.pywebview.api;
+}
+async function api(metodo, ...args) {
+  try {
+    const f = (await puente())[metodo];
+    if (typeof f !== "function") return { error: "La app no terminó de abrir bien. Ciérrala y vuelve a abrirla; si sigue igual, reinstálala." };
+    return await f(...args);
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+function aviso(el, r, bien) {
+  el.hidden = false;
+  el.className = "aviso " + (r && r.error ? "error" : "bien");
+  el.textContent = r && r.error ? r.error : bien;
+}
+function ocupado(boton, si, texto) {
+  if (si) { boton.dataset.texto = boton.textContent; boton.disabled = true; boton.innerHTML = `<span class="girando"></span>${texto || "Un momento…"}`; }
+  else { boton.disabled = false; boton.textContent = boton.dataset.texto || boton.textContent; }
+}
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const MOTOR = { sqlserver: ["SQL", "SQL Server", 1433], mysql: ["My", "MySQL / MariaDB", 3306], postgresql: ["PG", "PostgreSQL", 5432], firebird: ["FB", "Firebird", 3050] };
+const hora = (t) => t ? new Date(t * 1000).toLocaleString("es-DO", { dateStyle: "short", timeStyle: "short" }) : "todavía no";
+
+// ============================================================ estado y vistas
+let E = null;
+function vista(id) { ["v-activar", "v-entrar", "v-app"].forEach((v) => { $("#" + v).hidden = v !== id; }); }
+async function refrescar() {
+  E = await api("estado");
+  if (E.error) { vista("v-entrar"); $("#e-error").hidden = false; $("#e-error").textContent = E.error; return; }
+  $("#version-entrar").textContent = `Versión ${E.version} · ${E.equipo}`;
+  $("#version-activar").textContent = `Versión ${E.version} · ${E.equipo}`;
+  if (!E.activacion) return vista("v-activar");
+  $("#e-negocio-nombre").textContent = E.activacion.nombre;
+  $("#e-licencia").textContent = E.activacion.licencia;
+  const s = E.sesion;
+  if (!s || !s.negocio) return vista("v-entrar");
+  vista("v-app");
+  $("#n-nombre").textContent = s.negocio.nombre;
+  $("#n-cuenta").textContent = s.cuenta || "";
+  $("#saludo").textContent = s.nombre ? `Hola, ${s.nombre.split(" ")[0]}` : `Hola`;
+  $("#pie-equipo").textContent = `${E.equipo} · versión ${E.version}`;
+  $("#r-fuentes").textContent = E.conector.fuentes;
+  api("inventarios").then((x) => { if (x.inventarios) $("#r-fuentes").textContent = x.inventarios.filter((i) => i.origen === "conector").length; });
+  $("#r-cada").textContent = E.conector.cada_min;
+  $("#r-inicio").textContent = E.conector.inicio ? "Sí" : "No";
+}
+function ir(seccion) {
+  ["inicio", "base", "copia"].forEach((x) => { $("#s-" + x).hidden = x !== seccion; });
+  $$(".lateral nav button").forEach((b) => b.setAttribute("aria-current", b.dataset.ir === seccion ? "page" : "false"));
+  if (seccion === "base") cargarFuentes();
+  if (seccion === "copia") cargarCopia();
+  if (seccion === "inicio") refrescar();
+}
+$$("[data-ir]").forEach((b) => b.onclick = () => ir(b.dataset.ir));
+
+// ============================================================ entrar
+let modo = "usuario";
+$$(".pestanas button").forEach((b) => b.onclick = () => {
+  modo = b.dataset.modo;
+  $$(".pestanas button").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+  $$("[data-solo]").forEach((x) => { x.hidden = x.dataset.solo !== modo; });
+});
+$("#f-entrar").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const b = $("#b-entrar"); ocupado(b, true, "Entrando…");
+  const r = await api("entrar", { modo, usuario: $("#e-usuario").value, correo: $("#e-correo").value,
+    clave: $("#e-clave").value, recordar: $("#e-recordar").checked });
+  ocupado(b, false);
+  if (r.error) { $("#e-error").hidden = false; $("#e-error").textContent = r.error; return; }
+  $("#e-error").hidden = true; $("#e-clave").value = "";
+  refrescar(); ir("inicio");
+};
+$("#b-salir").onclick = async () => { await api("salir"); refrescar(); };
+// ---- activar con la licencia
+$("#a-licencia").oninput = (ev) => {
+  const t = ev.target, crudo = t.value.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^PREZIO/, "").slice(0, 12);
+  t.value = "PREZIO" + (crudo ? "-" + crudo.match(/.{1,4}/g).join("-") : "");
+  if (crudo === "" && !ev.inputType?.startsWith("insert")) t.value = "";
+};
+$("#f-activar").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const b = $("#b-activar"); ocupado(b, true, "Activando…");
+  const r = await api("activar", $("#a-licencia").value);
+  ocupado(b, false);
+  const e = $("#a-error-activar");
+  if (r.error) { e.hidden = false; e.className = "aviso error"; e.textContent = r.error; return; }
+  e.hidden = true;
+  await refrescar();
+  if (r.aviso) { $("#e-error").hidden = false; $("#e-error").className = "aviso nota"; $("#e-error").textContent = r.aviso; }
+  $("#e-usuario").focus();
+};
+$("#b-otra-licencia").onclick = async (ev) => {
+  const b = ev.target;
+  if (!b.dataset.seguro) { b.dataset.seguro = "1"; b.textContent = "¿Seguro? Toca otra vez para escribir otra licencia"; setTimeout(() => { delete b.dataset.seguro; b.textContent = "Usar otra licencia en esta PC"; }, 4000); return; }
+  await api("desactivar"); refrescar();
+};
+
+// ============================================================ panel
+$$("[data-panel]").forEach((b) => b.onclick = async () => {
+  const antes = b.innerHTML;
+  b.disabled = true; b.insertAdjacentHTML("afterbegin", `<span class="girando"></span>`);
+  const r = await api("abrir_panel", b.dataset.panel);   // la ventana pasa al panel (aquí mismo)
+  b.disabled = false; b.innerHTML = antes;
+  if (r.error) { ir("inicio"); $("#panel-error").hidden = false; $("#panel-error").textContent = r.error; }
+});
+
+// ============================================================ base de datos: lo configurado
+let asistenteAbierto = false;
+const horaIso = (t) => t ? new Date(t).toLocaleString("es-DO", { dateStyle: "short", timeStyle: "short" }) : "todavía no";
+function mostrarAsistente(si) { $("#t-asistente").hidden = !si; }
+async function cargarFuentes() {
+  const [inv, loc] = await Promise.all([api("inventarios"), api("fuentes")]);
+  const locales = Object.fromEntries((loc.fuentes || []).map((f) => [f.id, f]));
+  const lista = (inv.inventarios || []).filter((i) => i.origen === "conector");
+  $("#t-fuentes").hidden = !lista.length;
+  $("#b-nueva-base").hidden = asistenteAbierto;
+  mostrarAsistente(!lista.length || asistenteAbierto);
+  $("#t-asistente-titulo").textContent = lista.length ? "Conectar otra base de datos" : "Conectar una base de datos";
+  $("#lista-fuentes").innerHTML = lista.map((i) => {
+    const c = i.conexion, e = i.estado || {}, l = locales[i.id];
+    const donde = i.de_esta_pc ? "Se envía desde esta PC" : i.equipo ? `Configurada en ${esc(i.equipo)}` : "Ninguna PC la envía todavía";
+    const detalle = c ? `${esc(c.servidor)} · tabla ${esc(c.tabla)} · columnas ${esc(c.columnas.join(", "))}` : "Conectada con una versión anterior de la app";
+    const ultimo = i.de_esta_pc && l && l.hora ? hora(l.hora) : horaIso(e.ultimo);
+    let accion;
+    if (i.de_esta_pc) accion = `<button class="boton peligro" type="button" data-quitar="${esc(i.id)}">Dejar de enviar</button>`;
+    else if (c) accion = `<form class="fila" data-adoptar="${esc(i.id)}">
+        ${c.pide_clave ? `<div class="campo" style="flex: 0 1 260px; margin-bottom: 0"><input type="password" data-clave autocomplete="new-password" placeholder="Clave de la base" aria-label="Clave de la base de datos de ${esc(i.nombre)}"></div>` : ""}
+        <button class="boton secundario" type="submit">Enviar desde esta PC</button></form>`;
+    else accion = `<span class="quieto pequeno">Ábrela una vez en la PC donde se creó para verla aquí.</span>`;
+    return `<div class="fuente">
+      <div><h3>${esc(i.nombre)}</h3><span class="quieto pequeno">${detalle}</span></div>
+      <div class="acciones"><span class="chip ${e.error ? "error" : e.productos ? "bien" : ""}">${e.error ? "con error" : e.productos ? Number(e.productos).toLocaleString("es-DO") + " productos" : "sin enviar"}</span></div>
+      <span class="quieto pequeno">${donde} · Último envío: ${ultimo}${e.error ? " · " + esc(e.error) : ""}</span>
+      <div style="margin-top: 8px">${accion}</div>
+    </div>`;
+  }).join("");
+  $$("[data-quitar]").forEach((b) => b.onclick = async () => {
+    if (!confirmar(b)) return;
+    await api("quitar_fuente", b.dataset.quitar); cargarFuentes();
+  });
+  $$("[data-adoptar]").forEach((f) => f.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const b = f.querySelector("button"); ocupado(b, true, "Conectando…");
+    const clave = f.querySelector("[data-clave]");
+    const r = await api("adoptar_fuente", { inventario_id: f.dataset.adoptar, clave: clave ? clave.value : "" });
+    ocupado(b, false);
+    aviso($("#fuentes-aviso"), r, r.mensaje);
+    if (!r.error) { cargarFuentes(); setTimeout(cargarFuentes, 6000); setTimeout(cargarFuentes, 20000); }
+  });
+}
+$("#b-nueva-base").onclick = () => { asistenteAbierto = true; paso(1); cargarFuentes(); $("#t-asistente").scrollIntoView({ behavior: "smooth" }); };
+function confirmar(b) {
+  if (b.dataset.seguro) return true;
+  b.dataset.seguro = "1"; b.textContent = "¿Seguro? Toca otra vez";
+  setTimeout(() => { delete b.dataset.seguro; b.textContent = "Dejar de enviar"; }, 4000);
+  return false;
+}
+
+// ============================================================ asistente
+const W = { servidor: null, bases: [], base: "", tablas: [], tabla: "", cols: [] };
+function paso(n) {
+  [1, 2, 3, 4].forEach((i) => { $("#p" + i).hidden = i !== n; });
+  $$("#pasos li").forEach((li, i) => { li.className = i + 1 < n ? "hecho" : i + 1 === n ? "activo" : ""; });
+}
+paso(1);
+$$("[data-volver]").forEach((b) => b.onclick = () => paso(Number(b.dataset.volver)));
+
+function tarjetaServidor(s, conBoton) {
+  const m = MOTOR[s.motor];
+  const donde = s.host + (s.instancia ? "\\" + s.instancia : "") + (s.puerto && s.puerto !== m[2] ? ":" + s.puerto : "");
+  return `<span class="icono m-${s.motor}">${m[0]}</span>
+    <div><strong>${esc(m[1])}${s.version ? ` <span class="chip">${esc(s.version)}</span>` : ""}</strong>
+    <small>${esc(donde)}${s.equipo ? " · equipo " + esc(s.equipo) : ""}</small></div>${conBoton ? `<button class="boton" type="button">Elegir</button>` : ""}`;
+}
+async function buscar(redes) {
+  const b = $("#b-buscar"); ocupado(b, true, "Buscando en la red… (unos segundos)");
+  $("#servidores").innerHTML = ""; $("#buscar-error").hidden = true;
+  const r = await api("buscar_servidores", redes || "");
+  ocupado(b, false);
+  if (r.error) { aviso($("#buscar-error"), r); return; }
+  $("#redes-texto").textContent = r.redes && r.redes.length ? "Red: " + r.redes.join(", ") : "";
+  if (!r.servidores.length) {
+    $("#buscar-error").hidden = false; $("#buscar-error").className = "aviso nota";
+    $("#buscar-error").textContent = "No apareció ningún servidor. Revisa que el servidor esté encendido y su firewall permita la conexión, o escríbelo a mano.";
+    $("#manual").open = true; return;
+  }
+  $("#servidores").innerHTML = r.servidores.map((s, i) => `<div class="servidor" data-i="${i}">${tarjetaServidor(s, true)}</div>`).join("");
+  $$("#servidores .servidor").forEach((el) => el.querySelector("button").onclick = () => elegirServidor(r.servidores[Number(el.dataset.i)]));
+}
+$("#b-buscar").onclick = () => buscar();
+$("#b-buscar-red").onclick = () => buscar($("#m-redes").value);
+$("#m-motor").onchange = () => { const m = $("#m-motor").value; $("#m-puerto").placeholder = MOTOR[m][2]; $("#m-inst-c").hidden = m !== "sqlserver"; };
+$("#b-manual").onclick = () => {
+  const host = $("#m-host").value.trim();
+  if (!host) { $("#m-host").focus(); return; }
+  elegirServidor({ motor: $("#m-motor").value, host, puerto: Number($("#m-puerto").value) || null, instancia: $("#m-instancia").value.trim() });
+};
+function elegirServidor(s) {
+  W.servidor = s;
+  $("#elegido").innerHTML = tarjetaServidor(s, false);
+  const sql = s.motor === "sqlserver", fb = s.motor === "firebird";
+  $("#a-sqlserver").hidden = !sql;
+  $("#a-ruta-c").hidden = !fb;
+  $("#a-usuario").placeholder = { sqlserver: "sa o un usuario de lectura", mysql: "root o un usuario de lectura", postgresql: "postgres", firebird: "SYSDBA" }[s.motor];
+  $("#a-error").hidden = true;
+  credencialesSegunAuth();
+  paso(2);
+  $("#a-usuario").focus();
+}
+function credencialesSegunAuth() {
+  const windows = W.servidor && W.servidor.motor === "sqlserver" && $("input[name=auth]:checked").value === "windows";
+  $("#a-credenciales").hidden = windows;
+}
+$$("input[name=auth]").forEach((r) => r.onchange = credencialesSegunAuth);
+function datosConexion() {
+  return { ...W.servidor, auth: $("input[name=auth]:checked").value, usuario: $("#a-usuario").value, clave: $("#a-clave").value, ruta: $("#a-ruta").value };
+}
+$("#p2").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const b = $("#b-autorizar"); ocupado(b, true, "Probando la entrada…");
+  const r = await api("autorizar", datosConexion());
+  ocupado(b, false);
+  if (r.error) { aviso($("#a-error"), r); return; }
+  W.bases = r.bases; W.nombre = r.nombre;
+  $("#a-clave").value = "";
+  const res = `<span class="icono m-${W.servidor.motor}">${MOTOR[W.servidor.motor][0]}</span><div><strong>${esc(r.nombre)}</strong><small class="quieto">Autorizado</small></div>`;
+  $("#elegido3").innerHTML = res;
+  $("#t-base-c").hidden = W.servidor.motor === "firebird";
+  $("#t-base").innerHTML = r.bases.map((x) => `<option>${esc(x)}</option>`).join("");
+  const sug = r.bases.find((x) => /fact|vent|sistema|erp|pos|tienda|comerc|inventar/i.test(x));
+  if (sug) $("#t-base").value = sug;
+  paso(3);
+  cargarTablas();
+};
+async function cargarTablas() {
+  W.base = $("#t-base").value;
+  $("#t-tabla").innerHTML = `<option>Cargando…</option>`; $("#t-columnas").hidden = true; $("#muestra").innerHTML = ""; $("#t-error").hidden = true;
+  $("#b-muestra").disabled = $("#b-a4").disabled = true;
+  const r = await api("tablas", W.base);
+  if (r.error) { aviso($("#t-error"), r); $("#t-tabla").innerHTML = ""; return; }
+  W.tablas = r.tablas; pintarTablas();
+}
+function pintarTablas() {
+  const f = $("#t-filtro").value.trim().toLowerCase();
+  const lista = W.tablas.filter((t) => !f || t.toLowerCase().includes(f));
+  $("#t-tabla").innerHTML = `<option value="">— elige (${lista.length}) —</option>` + lista.slice(0, 800).map((t) => `<option>${esc(t)}</option>`).join("");
+  const sug = lista.find((t) => /(^|\.)(productos?|articulos?|items?|inventario|mercancia)$/i.test(t));
+  if (sug && !f) { $("#t-tabla").value = sug; cargarColumnas(); }
+}
+$("#t-base").onchange = cargarTablas;
+$("#t-filtro").oninput = pintarTablas;
+$("#t-tabla").onchange = cargarColumnas;
+async function cargarColumnas() {
+  W.tabla = $("#t-tabla").value;
+  $("#t-columnas").hidden = true; $("#muestra").innerHTML = ""; $("#t-error").hidden = true;
+  $("#b-muestra").disabled = $("#b-a4").disabled = true;
+  if (!W.tabla) return;
+  const r = await api("columnas", W.base, W.tabla);
+  if (r.error) { aviso($("#t-error"), r); return; }
+  for (const c of ["codigo", "nombre", "precio"]) {
+    $("#c-" + c).innerHTML = `<option value="">— elige —</option>` + r.columnas.map((x) => `<option>${esc(x)}</option>`).join("");
+    if (r.sugeridas[c]) $("#c-" + c).value = r.sugeridas[c];
+  }
+  $("#t-columnas").hidden = false;
+  revisarColumnas();
+  if (r.sugeridas.codigo && r.sugeridas.nombre && r.sugeridas.precio) verMuestra();
+}
+const mapeo = () => ({ tabla: W.tabla, codigo: $("#c-codigo").value, nombre: $("#c-nombre").value, precio: $("#c-precio").value });
+function revisarColumnas() { const m = mapeo(); $("#b-muestra").disabled = !(m.codigo && m.nombre && m.precio); }
+["codigo", "nombre", "precio"].forEach((c) => $("#c-" + c).onchange = () => { revisarColumnas(); $("#b-a4").disabled = true; $("#muestra").innerHTML = ""; });
+async function verMuestra() {
+  const b = $("#b-muestra"); ocupado(b, true, "Leyendo…");
+  const r = await api("muestra", W.base, mapeo());
+  ocupado(b, false); revisarColumnas();
+  if (r.error) { aviso($("#t-error"), r); return; }
+  $("#t-error").hidden = true;
+  if (!r.productos.length) { aviso($("#t-error"), { error: "Esas columnas no dan productos con código, nombre y precio válidos. Prueba otras." }); return; }
+  $("#muestra").innerHTML = `<table><thead><tr><th>Código</th><th>Nombre</th><th class="num">Precio</th></tr></thead><tbody>` +
+    r.productos.map((p) => `<tr><td>${esc(p.codigo)}</td><td>${esc(p.nombre)}</td><td class="num">${p.precio.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>`).join("") +
+    `</tbody></table>` + (r.descartadas ? `<p class="quieto pequeno">${r.descartadas} de ${r.leidas} filas de la muestra no tienen código, nombre o precio válido y no se envían.</p>` : "");
+  $("#b-a4").disabled = false;
+}
+$("#b-muestra").onclick = verMuestra;
+$("#b-a4").onclick = async () => {
+  $("#elegido4").innerHTML = `<span class="icono m-${W.servidor.motor}">${MOTOR[W.servidor.motor][0]}</span><div><strong>${esc(W.nombre)}${W.servidor.motor !== "firebird" ? " · " + esc(W.base) : ""}</strong><small class="quieto">Tabla ${esc(W.tabla)}</small></div>`;
+  $("#d-nombre").value = `Sistema · ${W.servidor.motor === "firebird" ? W.tabla : W.base}`.slice(0, 60);
+  const r = await api("inventarios");
+  const lista = r.inventarios || [];
+  $("#d-existente").innerHTML = lista.length ? lista.map((i) => `<option value="${esc(i.id)}">${esc(i.nombre)}${i.origen !== "manual" && i.origen !== "conector" ? " (hoy desde " + esc(i.origen) + ")" : ""}</option>`).join("") : `<option value="">No hay inventarios</option>`;
+  $("input[name=destino][value=existente]").disabled = !lista.length;
+  $("#d-aviso").hidden = true;
+  paso(4);
+};
+$("#b-guardar").onclick = async () => {
+  const b = $("#b-guardar"); ocupado(b, true, "Guardando…");
+  const existente = $("input[name=destino]:checked").value === "existente";
+  const r = await api("guardar_fuente", { base: W.base, mapeo: mapeo(), inventario_id: existente ? $("#d-existente").value : "",
+    nuevo_nombre: existente ? "" : $("#d-nombre").value, principal: $("#d-principal").checked });
+  ocupado(b, false);
+  if (r.error) { aviso($("#d-aviso"), r); return; }
+  $("#d-aviso").hidden = true;
+  asistenteAbierto = false; paso(1);
+  aviso($("#fuentes-aviso"), r, r.mensaje);
+  cargarFuentes(); setTimeout(cargarFuentes, 6000); setTimeout(cargarFuentes, 20000);
+};
+
+// ============================================================ copia automática
+async function cargarCopia() {
+  const r = await api("fuentes");
+  if (document.activeElement !== $("#k-cada") && !$("#k-cada").dataset.tocado) $("#k-cada").value = r.cada_min || 10;
+  $("#k-inicio").textContent = r.inicio ? "Arranca con Windows" : "No arranca con Windows";
+  $("#k-inicio").className = "chip " + (r.inicio ? "bien" : "");
+  $("#b-inicio").textContent = r.inicio ? "Quitar el arranque" : "Arrancar con Windows";
+  $("#b-inicio").dataset.activar = r.inicio ? "" : "1";
+}
+$("#k-cada").oninput = () => { $("#k-cada").dataset.tocado = "1"; };
+$("#b-cada").onclick = async () => { delete $("#k-cada").dataset.tocado; const r = await api("guardar_frecuencia", $("#k-cada").value); aviso($("#k-aviso"), r, `Guardado: cada ${r.cada_min} minutos.`); };
+$("#b-enviar").onclick = async () => {
+  const b = $("#b-enviar"); ocupado(b, true, "Enviando…");
+  const r = await api("enviar_ahora"); ocupado(b, false);
+  aviso($("#k-aviso"), r, r.error ? "" : `Listo: ${r.enviados} enviados, ${r.sin_cambios} sin cambios${r.errores ? ", " + r.errores + " con error (mira el registro)" : ""}.`);
+};
+$("#b-inicio").onclick = async () => {
+  const b = $("#b-inicio"); ocupado(b, true, "Esperando permiso de Windows…");
+  const r = await api("arranque", Boolean(b.dataset.activar)); ocupado(b, false);
+  aviso($("#k-inicio-aviso"), r, r.inicio ? "Listo: copia al encender la PC, aunque nadie abra la app." : "Listo: ya no arranca con Windows.");
+  cargarCopia();
+};
+$("#b-registro").onclick = async () => { const r = await api("registro"); $("#registro").hidden = false; $("#registro").textContent = (r.lineas || []).join("\n") || "Sin registros todavía."; };
+
+// ============================================================ inicio
+(async () => {
+  await refrescar();
+  const desdePanel = (location.hash || "").slice(1);
+  if (["base", "copia", "inicio"].includes(desdePanel) && E && E.sesion && E.sesion.negocio) ir(desdePanel);
+  // Al abrir: si hay versión nueva publicada, se instala sola y la app se vuelve a abrir.
+  const v = await api("version_nueva");
+  if (v.version) {
+    $("#actualizando").hidden = false;
+    $("#act-texto").textContent = `Actualizando Prezio Administrador a la versión ${v.version}…`;
+    const r = await api("actualizar");
+    if (r.error) {
+      $("#act-texto").textContent = r.error;
+      $("#act-detalle").textContent = "Puedes seguir trabajando; se intentará de nuevo la próxima vez que abras la app.";
+      $("#act-girando").hidden = true; $("#act-seguir").hidden = false;
+    } else if (r.version) {
+      $("#act-detalle").textContent = "Si Windows pregunta, toca «Sí». La app se cierra y se vuelve a abrir sola en unos segundos.";
+    } else {
+      $("#actualizando").hidden = true;
+    }
+  }
+})();
+$("#act-seguir").onclick = () => { $("#actualizando").hidden = true; };
+</script>
+</body>
+</html>

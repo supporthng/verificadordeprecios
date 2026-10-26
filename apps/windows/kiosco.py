@@ -1,15 +1,16 @@
-"""Consulta de Precios para Windows: verificador de precios tipo quiosco.
+"""Prezio para Windows: verificador de precios tipo quiosco.
 
-- Abre la app sin internet (GitHub Pages) a pantalla completa, siempre encima, sin bordes.
+- Abre Prezio (SITIO/equipo) a pantalla completa, siempre encima, sin bordes.
 - Usa WebView2 (el motor de Microsoft Edge, ya incluido en Windows 10/11): los precios
   quedan guardados en el equipo y funciona SIN internet.
 - Bloquea Alt+Tab, Alt+Esc, Ctrl+Esc, Ctrl+Shift+Esc, Alt+F4, Alt+Espacio y la tecla Windows.
 - Oculta la barra de tareas (Inicio) mientras está abierta; vuelve a aparecer al cerrar la app.
-- No se puede cerrar ni minimizar: se sale SOLO con ⚙ o ✕ de la app, con la clave de salida.
+- No se puede cerrar ni minimizar: se sale SOLO desde el menú ⓘ › «Salir de la app», con la clave de salida.
+- Se actualiza sola: al abrir y cada hora revisa SITIO/apps.json e instala la versión nueva en silencio.
 - Una sola copia abierta a la vez.
 
 Ctrl+Alt+Supr no se puede bloquear desde un programa (es una protección de Windows). Para un
-bloqueo total, usar además "Acceso asignado" de Windows (ver la guía en Equipos sin internet).
+bloqueo total, usar además "Acceso asignado" de Windows.
 """
 import ctypes
 import json
@@ -24,13 +25,16 @@ from ctypes import wintypes
 
 import webview
 
-DIRECCION = "https://supporthng.github.io/verificadordeprecios/"
-VERSION = "1.2.0"
-# Solo se aceptan actualizaciones publicadas en el repositorio del negocio.
-ORIGEN_ACTUALIZACION = "https://github.com/supporthng/verificadordeprecios/releases/download/"
-DATOS = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ConsultaPrecios", "WebView")
+# La compilación (GitHub Actions) reemplaza estos tres valores.
+SITIO = "https://prezio-jade.vercel.app"
+VERSION = "1.0.0"
+# Solo se aceptan actualizaciones publicadas en las descargas de Prezio.
+ORIGEN_ACTUALIZACION = "https://github.com/supporthng/prezio/releases/download/"
+DIRECCION = SITIO + "/equipo"
+DATOS = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Prezio", "WebView")
 REGISTRO = os.path.join(os.path.dirname(DATOS), "actualizacion.log")
-APPS_JSON = DIRECCION + "apps.json"
+APPS_JSON = SITIO + "/apps.json"
+CADA_REVISION_S = 60 * 60
 
 
 def anotar(texto):
@@ -60,7 +64,7 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 # --------------------------------------------------------------------------- una sola copia
 def ya_abierta():
     kernel32.CreateMutexW.restype = wintypes.HANDLE
-    kernel32.CreateMutexW(None, False, "Local\\ConsultaPreciosKiosco")
+    kernel32.CreateMutexW(None, False, "Local\\PrezioKiosco")
     return ctypes.get_last_error() == 183   # ERROR_ALREADY_EXISTS
 
 
@@ -201,7 +205,7 @@ barra = BarraDeTareas()
 
 # --------------------------------------------------------------------------- puente con la app web
 class Kiosco:
-    """Lo que la app web puede pedir (window.pywebview.api.*), solo tras la clave de salida."""
+    """Lo que la página /equipo puede pedir (window.pywebview.api.*); salir, solo tras la clave de salida."""
 
     def __init__(self):
         self._ventana = None
@@ -228,8 +232,16 @@ class Kiosco:
             self._ventana.destroy()
         return True
 
-    def actualizar(self, url):
-        """Descargar el instalador nuevo, instalarlo en silencio y volver a abrir la app."""
+    def cerrar(self):
+        """Botón ✕: cierra la app (no hay Ajustes que abrir en Windows)."""
+        return self.salir()
+
+    def buscarActualizacion(self):
+        """Desde el menú del equipo: revisar ahora y avisar en pantalla."""
+        threading.Thread(target=self._revisar, args=(True,), name="revisar-ahora", daemon=True).start()
+        return True
+
+    def _instalar_desde(self, url):
         if not isinstance(url, str) or not url.startswith(ORIGEN_ACTUALIZACION) or not url.endswith(".exe"):
             anotar(f"actualización rechazada (dirección no permitida): {url!r}")
             return False
@@ -239,27 +251,43 @@ class Kiosco:
         threading.Thread(target=self._actualizar, args=(url,), name="actualizar-app", daemon=True).start()
         return True
 
-    def revisar_al_abrir(self):
-        """Al abrir la app: si apps.json trae una versión nueva, se instala sola (sin preguntar)."""
-        time.sleep(20)          # dejar que la app abra y cargue los precios
-        for intento in range(3):
-            try:
-                pedido = urllib.request.Request(f"{APPS_JSON}?t={int(time.time())}",
-                                                headers={"Cache-Control": "no-cache", "User-Agent": "ConsultaPrecios/" + VERSION})
-                with urllib.request.urlopen(pedido, timeout=20) as r:
-                    info = json.loads(r.read().decode("utf-8")).get("windows") or {}
-                nueva = str(info.get("version") or "")
-                if nueva and version_mayor(nueva, VERSION):
-                    anotar(f"al abrir: hay versión nueva {nueva} (esta es {VERSION})")
-                    self.actualizar(str(info.get("url") or ""))
-                return
-            except Exception as exc:
-                anotar(f"al abrir: no se pudo revisar apps.json ({exc})")
-                time.sleep(60)
-
-    def _avisar(self, estado):
+    def _revisar(self, avisar=False):
+        """Lee apps.json; si trae una versión más nueva, se instala sola (sin preguntar)."""
+        if avisar:
+            self._avisar("buscando")
         try:
-            self._ventana.evaluate_js(f"window.__actualizacionApp && window.__actualizacionApp('{estado}')")
+            pedido = urllib.request.Request(f"{APPS_JSON}?t={int(time.time())}",
+                                            headers={"Cache-Control": "no-cache", "User-Agent": "Prezio/" + VERSION})
+            with urllib.request.urlopen(pedido, timeout=20) as r:
+                info = json.loads(r.read().decode("utf-8")).get("windows") or {}
+            nueva = str(info.get("version") or "")
+            if nueva and version_mayor(nueva, VERSION):
+                anotar(f"hay versión nueva {nueva} (esta es {VERSION})")
+                if not self._instalar_desde(str(info.get("url") or "")) and avisar:
+                    self._avisar("error", "dirección de descarga no permitida")
+            elif avisar:
+                self._avisar("al_dia")
+            return True
+        except Exception as exc:
+            anotar(f"no se pudo revisar apps.json ({exc})")
+            if avisar:
+                self._avisar("error", f"no se pudo leer apps.json: {exc}")
+            return False
+
+    def revisar_cada_rato(self):
+        time.sleep(5)           # dejar que la app abra y cargue los precios
+        while True:
+            for _ in range(5):
+                if self._revisar():
+                    break
+                time.sleep(60)
+            time.sleep(CADA_REVISION_S)
+
+    def _avisar(self, estado, detalle=""):
+        """Avisa a la pantalla; en un error manda también el motivo (para saber qué falló)."""
+        try:
+            motivo = json.dumps(str(detalle)[:140])
+            self._ventana.evaluate_js(f"window.__prezioActualizacion && window.__prezioActualizacion('{estado}', {motivo})")
         except Exception:
             pass
 
@@ -267,8 +295,8 @@ class Kiosco:
         try:
             anotar(f"descargando {url}")
             self._avisar("descargando")
-            destino = os.path.join(tempfile.gettempdir(), f"Instalador_Consulta_de_Precios_{int(time.time())}.exe")
-            pedido = urllib.request.Request(url, headers={"User-Agent": "ConsultaPrecios/" + VERSION})
+            destino = os.path.join(tempfile.gettempdir(), f"Instalador_Prezio_{int(time.time())}.exe")
+            pedido = urllib.request.Request(url, headers={"User-Agent": "Prezio/" + VERSION})
             with urllib.request.urlopen(pedido, timeout=180) as respuesta, open(destino, "wb") as archivo:
                 while True:
                     bloque = respuesta.read(1 << 16)
@@ -290,7 +318,7 @@ class Kiosco:
         except Exception as exc:
             anotar(f"error al actualizar: {exc}")
             self._actualizando = False
-            self._avisar("error")
+            self._avisar("error", exc)
 
     def recargar(self):
         if self._ventana:
@@ -304,9 +332,9 @@ def main():
     os.makedirs(DATOS, exist_ok=True)
     api = Kiosco()
     ventana = webview.create_window(
-        "Consulta de Precios", DIRECCION, js_api=api,
+        "Prezio", DIRECCION, js_api=api,
         fullscreen=True, frameless=True, on_top=True, easy_drag=False,
-        background_color="#F4F8FF", text_select=False, zoomable=False, confirm_close=False)
+        background_color="#102A43", text_select=False, zoomable=False, confirm_close=False)
     api._ventana = ventana
 
     def al_cerrar():
@@ -323,7 +351,7 @@ def main():
     ventana.events.minimized += al_minimizar
     teclado.poner()
     barra.ocultar()
-    threading.Thread(target=api.revisar_al_abrir, name="revisar-actualizacion", daemon=True).start()
+    threading.Thread(target=api.revisar_cada_rato, name="revisar-actualizacion", daemon=True).start()
     import atexit
     atexit.register(barra.mostrar)      # pase lo que pase, la barra de tareas vuelve al salir
     # private_mode=False + storage_path: los precios guardados sobreviven al cerrar y reiniciar.
