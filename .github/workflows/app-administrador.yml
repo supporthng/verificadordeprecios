@@ -1,0 +1,69 @@
+name: App Administrador
+# Compila Prezio Administrador (panel + conector de SQL Server con ventanas), lo publica en Releases › «administrador»
+# y anota la versión en public/apps.json (el panel muestra la descarga y el programa avisa si hay versión nueva).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["apps/administrador/**", "conector/**", ".github/workflows/app-administrador.yml"]
+permissions:
+  contents: write
+concurrency: { group: apps-json, cancel-in-progress: false }
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", architecture: x64 }
+      - name: Versión y dirección
+        shell: pwsh
+        env:
+          SITIO: ${{ vars.PREZIO_SITIO }}
+        run: |
+          $version = "2.0.${{ github.run_number }}"   # 2.0.N: siempre mayor que la 2.0.0 que ya traen las PCs
+          $f = "apps/administrador/administrador.py"
+          $t = Get-Content $f -Raw -Encoding utf8
+          $t = $t -replace '(?m)^VERSION = "[^"]*"', "VERSION = `"$version`""
+          if (-not $t.Contains("VERSION = `"$version`"")) { throw "No se pudo poner la versión $version en administrador.py" }
+          if ($env:SITIO) { $t = $t -replace 'SITIO = "[^"]*"', "SITIO = `"$($env:SITIO.TrimEnd('/'))`"" }
+          Set-Content $f $t -Encoding utf8 -NoNewline
+          Select-String -Path $f -Pattern '^(SITIO|VERSION) ='
+          "VERSION_APP=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Crear la app
+        shell: pwsh
+        run: ./apps/administrador/build_windows.ps1
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+      - name: Construir instalador
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:VERSION_APP" "apps\administrador\PrezioAdministrador.iss"
+      - uses: actions/upload-artifact@v4
+        with: { name: Prezio-Administrador, path: dist_instalador/Instalador_Prezio_Administrador.exe }
+      - name: Publicar y anotar la versión
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view administrador >/dev/null 2>&1 || gh release create administrador --title "Prezio Administrador" --notes "Panel y conector de SQL Server para Windows. Se descarga desde Prezio › Inventarios." --latest=false
+          gh release upload administrador dist_instalador/Instalador_Prezio_Administrador.exe --clobber
+          URL="https://github.com/${{ github.repository }}/releases/download/administrador/Instalador_Prezio_Administrador.exe"
+          git checkout -- apps/administrador/administrador.py
+          for intento in 1 2 3; do
+            git pull --rebase --quiet origin main
+            python - "$URL" "$VERSION_APP" <<'PY'
+          import json, sys, datetime
+          p = "public/apps.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["administrador"] = {"version": sys.argv[2], "url": sys.argv[1],
+                                "fecha": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
+          open(p, "w", encoding="utf-8", newline="\n").write(json.dumps(d, indent=2, ensure_ascii=False) + "\n")
+          PY
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -qam "Prezio Administrador $VERSION_APP publicado" && git push --quiet origin HEAD:main && break
+            sleep 5
+          done
